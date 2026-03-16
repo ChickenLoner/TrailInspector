@@ -10,6 +10,9 @@ pub fn run() {
             commands::ingest::load_directory,
             commands::query::search,
             commands::query::get_field_values,
+            commands::stats::get_timeline,
+            commands::stats::get_top_fields,
+            commands::stats::get_identity_summary_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TrailInspector");
