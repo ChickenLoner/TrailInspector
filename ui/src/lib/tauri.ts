@@ -13,9 +13,10 @@ export async function loadDirectory(
 
 export async function search(
   page: number = 0,
-  pageSize: number = 100
+  pageSize: number = 100,
+  query?: string
 ): Promise<SearchResult> {
-  return invoke<SearchResult>("search", { page, pageSize });
+  return invoke<SearchResult>("search", { page, pageSize, query: query ?? null });
 }
 
 export async function getFieldValues(

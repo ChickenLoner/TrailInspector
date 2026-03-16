@@ -1,5 +1,6 @@
 use tauri::State;
 use trail_inspector_core::model::CloudTrailRecord;
+use trail_inspector_core::query::{execute, parse_query, Query};
 use crate::state::AppState;
 
 #[derive(Debug, serde::Serialize)]
@@ -25,8 +26,13 @@ pub struct RecordRow {
     pub raw: CloudTrailRecord,
 }
 
+/// Search the loaded dataset.
+///
+/// `query` supports the TrailInspector syntax:
+///   `eventName=ConsoleLogin AND awsRegion=us-east-1 earliest=-24h`
 #[tauri::command]
 pub async fn search(
+    query: Option<String>,
     page: Option<usize>,
     page_size: Option<usize>,
     state: State<'_, AppState>,
@@ -37,12 +43,19 @@ pub async fn search(
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
     let store = guard.as_ref().ok_or("No dataset loaded")?;
 
-    let total = store.len();
-    let start = page * page_size;
-    let end = (start + page_size).min(total);
+    let parsed = match query.as_deref().map(str::trim) {
+        Some(q) if !q.is_empty() => {
+            parse_query(q).map_err(|e| format!("Query error: {e}"))?
+        }
+        _ => Query::default(),
+    };
 
-    let records: Vec<RecordRow> = store.records[start..end]
+    let result = execute(store, &parsed, page, page_size);
+
+    let records: Vec<RecordRow> = result
+        .record_ids
         .iter()
+        .filter_map(|&id| store.get_record(id))
         .map(|r| RecordRow {
             id: r.id,
             timestamp: r.timestamp,
@@ -60,7 +73,7 @@ pub async fn search(
 
     Ok(SearchResult {
         records,
-        total,
+        total: result.total,
         page,
         page_size,
     })

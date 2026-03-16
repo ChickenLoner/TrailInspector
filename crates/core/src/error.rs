@@ -14,4 +14,7 @@ pub enum CoreError {
 
     #[error("ZIP error: {0}")]
     Zip(#[from] zip::result::ZipError),
+
+    #[error("Query parse error: {0}")]
+    Query(String),
 }
