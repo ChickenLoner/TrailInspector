@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #1a1b1e;
+  --bg-secondary: #25262b;
+  --bg-tertiary: #2c2e33;
+  --border: #373a40;
+  --text-primary: #c1c2c5;
+  --text-secondary: #909296;
+  --text-bright: #e9ecef;
+  --accent-blue: #4dabf7;
+  --accent-green: #69db7c;
+  --accent-yellow: #ffd43b;
+  --accent-red: #ff6b6b;
+  --accent-orange: #ffa94d;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.mono { font-family: monospace; }
+.text-bright { color: var(--text-bright); }
+.text-muted { color: var(--text-secondary); }
+.text-error { color: var(--accent-red); }
+.text-success { color: var(--accent-green); }
+.text-warning { color: var(--accent-yellow); }
+.text-info { color: var(--accent-blue); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-error { background: rgba(255, 107, 107, 0.15); color: var(--accent-red); }
+.badge-info { background: rgba(77, 171, 247, 0.15); color: var(--accent-blue); }

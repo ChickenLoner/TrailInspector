@@ -1,0 +1,35 @@
+{
+  "productName": "TrailInspector",
+  "version": "0.1.0",
+  "identifier": "com.trailinspector.app",
+  "build": {
+    "frontendDist": "../../ui/dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "cd ../../ui && npm run dev",
+    "beforeBuildCommand": "cd ../../ui && npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "TrailInspector",
+        "width": 1400,
+        "height": 900,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
