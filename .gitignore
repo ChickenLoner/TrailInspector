@@ -21,3 +21,4 @@ target
 #.idea/
 
 /samples/
+.claude/settings.local.json
