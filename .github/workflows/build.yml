@@ -80,9 +80,11 @@ jobs:
             patchelf
 
       # ── Frontend ──────────────────────────────────────────
+      # --legacy-peer-deps needed: @tailwindcss/vite@4 declares peer vite@"^5||^6||^7"
+      # but this project uses vite@8 (works at runtime, just a peer dep declaration lag)
       - name: Install frontend dependencies
         working-directory: ui
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build frontend
         working-directory: ui
