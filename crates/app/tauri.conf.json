@@ -1,7 +1,7 @@
 {
   "productName": "TrailInspector",
   "version": "0.1.0",
-  "identifier": "com.trailinspector.app",
+  "identifier": "io.github.chicken0248.trailinspector",
   "build": {
     "frontendDist": "../../ui/dist",
     "devUrl": "http://127.0.0.1:5500",
@@ -23,6 +23,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Warawut Manosong (Chicken0248)",
+    "copyright": "© 2026 Warawut Manosong",
+    "shortDescription": "AWS CloudTrail log analyzer for blue team investigations",
+    "longDescription": "TrailInspector is an offline desktop tool for analyzing AWS CloudTrail logs. Load exported .json.gz or ZIP archives, search with SPL-like syntax, and surface MITRE ATT&CK-mapped detections — no AWS credentials required.",
+    "category": "DeveloperTool",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

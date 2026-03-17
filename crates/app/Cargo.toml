@@ -2,6 +2,11 @@
 name = "trail-inspector-app"
 version = "0.1.0"
 edition = "2021"
+authors = ["Warawut Manosong <chicken0248@github>"]
+description = "AWS CloudTrail log analyzer — Tauri desktop app"
+license = "MIT"
+repository = "https://github.com/Chicken0248/TrailInspector"
+homepage = "https://github.com/Chicken0248/TrailInspector"
 
 [lib]
 name = "trail_inspector_app_lib"

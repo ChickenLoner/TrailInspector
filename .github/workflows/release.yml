@@ -1,15 +1,13 @@
-name: CI Build
+name: Release
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+    tags:
+      - 'v*.*.*'
 
 jobs:
   # ────────────────────────────────────────────────────────────
-  # Fast core-library unit tests (no GUI deps needed)
+  # Fast core-library unit tests before committing to full build
   # ────────────────────────────────────────────────────────────
   test:
     name: Core tests
@@ -29,7 +27,7 @@ jobs:
         run: cargo test -p trail-inspector-core
 
   # ────────────────────────────────────────────────────────────
-  # Cross-platform Tauri bundle
+  # Cross-platform Tauri bundles
   # ────────────────────────────────────────────────────────────
   build:
     name: Build (${{ matrix.os }})
@@ -80,7 +78,7 @@ jobs:
             patchelf
 
       # ── Frontend ──────────────────────────────────────────
-      # --legacy-peer-deps needed: @tailwindcss/vite@4 declares peer vite@"^5||^6||^7"
+      # --legacy-peer-deps: @tailwindcss/vite@4 declares peer vite@"^5||^6||^7"
       # but this project uses vite@8 (works at runtime, just a peer dep declaration lag)
       - name: Install frontend dependencies
         working-directory: ui
@@ -98,12 +96,12 @@ jobs:
         working-directory: crates/app
         run: cargo tauri build
 
-      # ── Upload artifacts ──────────────────────────────────
+      # ── Upload artifacts for release job ──────────────────
       - name: Upload Windows installer (.msi)
         if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: TrailInspector-windows-msi
+          name: TrailInspector-windows
           path: target/release/bundle/msi/*.msi
           if-no-files-found: error
 
@@ -127,6 +125,35 @@ jobs:
         if: matrix.platform == 'macos'
         uses: actions/upload-artifact@v4
         with:
-          name: TrailInspector-macos-dmg
+          name: TrailInspector-macos
           path: target/release/bundle/dmg/*.dmg
           if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────
+  # Publish GitHub Release with all binaries + RELEASE.md notes
+  # ────────────────────────────────────────────────────────────
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE.md
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/TrailInspector-windows/*.msi
+            artifacts/TrailInspector-linux-deb/*.deb
+            artifacts/TrailInspector-linux-appimage/*.AppImage
+            artifacts/TrailInspector-macos/*.dmg

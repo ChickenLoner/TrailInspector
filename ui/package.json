@@ -1,7 +1,10 @@
 {
-  "name": "ui",
+  "name": "trailinspector-ui",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "AWS CloudTrail log analyzer — React frontend",
+  "author": "Warawut Manosong (Chicken0248)",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

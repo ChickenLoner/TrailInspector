@@ -2,6 +2,10 @@
 name = "trail-inspector-core"
 version = "0.1.0"
 edition = "2021"
+authors = ["Warawut Manosong <chicken0248@github>"]
+description = "Core parsing, indexing, query, and detection library for TrailInspector"
+license = "MIT"
+repository = "https://github.com/Chicken0248/TrailInspector"
 
 [dependencies]
 serde = { workspace = true }
