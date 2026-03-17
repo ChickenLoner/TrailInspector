@@ -9,6 +9,7 @@ import { TimelineChart } from "./components/viz/TimelineChart";
 import { AppShell } from "./components/layout/AppShell";
 import { search, getTimeline } from "./lib/tauri";
 import type { RecordRow, SearchResult, TimeBucket } from "./types/cloudtrail";
+import type { Tab } from "./components/layout/Sidebar";
 import "./styles/globals.css";
 
 const TIME_PRESETS = [
@@ -31,6 +32,10 @@ export default function App() {
   const [queryText, setQueryText] = useState("");
   const [filterFragment, setFilterFragment] = useState("");
   const [timePreset, setTimePreset] = useState("");
+
+  // Tab + identity navigation
+  const [activeTab, setActiveTab] = useState<Tab>("search");
+  const [selectedIdentity, setSelectedIdentity] = useState<string | undefined>();
 
   // Timeline state
   const [timelineBuckets, setTimelineBuckets] = useState<TimeBucket[]>([]);
@@ -125,6 +130,12 @@ export default function App() {
     [queryText, filterFragment, runQuery]
   );
 
+  // Clicking a user in the filter panel jumps to the Identity tab
+  const handleUserSelect = useCallback((user: string) => {
+    setSelectedIdentity(user);
+    setActiveTab("identity");
+  }, []);
+
   // Clicking a FieldStats bar inserts a filter into the query
   const handleFilterSelect = useCallback(
     (field: string, value: string) => {
@@ -134,8 +145,21 @@ export default function App() {
         runQuery(next, filterFragment, timePreset);
         return next;
       });
+      setActiveTab("search");
     },
     [filterFragment, timePreset, runQuery]
+  );
+
+  // "View Evidence" from AlertDetail — apply the rule's pre-built query and jump to Search
+  const handleViewEvidence = useCallback(
+    (query: string) => {
+      setQueryText(query);
+      setFilterFragment("");
+      setTimePreset("");
+      runQuery(query, "", "");
+      setActiveTab("search");
+    },
+    [runQuery]
   );
 
   // Ctrl+K: focus query bar
@@ -269,7 +293,7 @@ export default function App() {
 
       {/* Main area: filter panel + table + detail */}
       <div className="flex flex-1 overflow-hidden">
-        <FilterPanel onFilterChange={handleFilterChange} />
+        <FilterPanel onFilterChange={handleFilterChange} onUserSelect={handleUserSelect} />
 
         <div className="flex flex-col flex-1 overflow-hidden">
           {results && (
@@ -297,6 +321,10 @@ export default function App() {
           searchView={searchView}
           query={activeQuery}
           onFilterSelect={handleFilterSelect}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          selectedIdentity={selectedIdentity}
+          onViewEvidence={handleViewEvidence}
         />
       </div>
       <StatusBar recordCount={recordCount} loaded={loaded} />

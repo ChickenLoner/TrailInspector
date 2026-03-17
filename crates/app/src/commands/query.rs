@@ -4,6 +4,7 @@ use trail_inspector_core::query::{execute, parse_query, Query};
 use crate::state::AppState;
 
 #[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub records: Vec<RecordRow>,
     pub total: usize,
@@ -12,6 +13,7 @@ pub struct SearchResult {
 }
 
 #[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordRow {
     pub id: u64,
     pub timestamp: i64,
@@ -19,6 +21,7 @@ pub struct RecordRow {
     pub event_name: String,
     pub event_source: String,
     pub aws_region: String,
+    #[serde(rename = "sourceIPAddress")]
     pub source_ip_address: Option<String>,
     pub user_name: Option<String>,
     pub user_arn: Option<String>,
@@ -105,6 +108,7 @@ pub async fn get_field_values(
         "accountId" => &store.idx_account_id,
         "errorCode" => &store.idx_error_code,
         "identityType" => &store.idx_identity_type,
+        "userAgent" => &store.idx_user_agent,
         _ => return Err(format!("Unknown field: {field}")),
     };
 

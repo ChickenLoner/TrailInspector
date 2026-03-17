@@ -11,7 +11,7 @@ const PLACEHOLDER = 'eventName=ConsoleLogin AND awsRegion=us-east-1 earliest=-24
 
 const FIELD_HINTS = [
   "eventName", "eventSource", "awsRegion", "sourceIPAddress",
-  "userName", "userArn", "accountId", "errorCode", "identityType",
+  "userName", "userArn", "accountId", "errorCode", "identityType", "userAgent",
 ];
 
 export function QueryBar({ value, onChange, onSubmit, disabled }: Props) {

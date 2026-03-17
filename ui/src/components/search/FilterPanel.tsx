@@ -8,6 +8,9 @@ interface FilterSection {
 }
 
 const FILTER_SECTIONS: FilterSection[] = [
+  { field: "userName", label: "User" },
+  { field: "sourceIPAddress", label: "Source IP" },
+  { field: "userAgent", label: "User Agent" },
   { field: "eventName", label: "Event Name" },
   { field: "awsRegion", label: "Region" },
   { field: "errorCode", label: "Error Code" },
@@ -17,9 +20,11 @@ const FILTER_SECTIONS: FilterSection[] = [
 interface Props {
   /** Called whenever active filters change. Returns a partial query string fragment. */
   onFilterChange: (fragment: string) => void;
+  /** Called when a user name is clicked — triggers Identity tab navigation. */
+  onUserSelect?: (user: string) => void;
 }
 
-export function FilterPanel({ onFilterChange }: Props) {
+export function FilterPanel({ onFilterChange, onUserSelect }: Props) {
   const [sections, setSections] = useState<Record<string, FieldValue[]>>({});
   const [checked, setChecked] = useState<Record<string, Set<string>>>({});
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -51,14 +56,9 @@ export function FilterPanel({ onFilterChange }: Props) {
         const vals = newChecked[field];
         if (!vals || vals.size === 0) continue;
         const values = [...vals];
-        if (values.length === 1) {
-          parts.push(`${field}=${values[0]}`);
-        } else {
-          // Multiple values for same field: use OR grouping
-          // For now, add each as separate token (engine treats as AND — TODO OR support)
-          // As a practical UX choice: just use the first selected value
-          parts.push(`${field}=${values[0]}`);
-        }
+        // Always quote the value so multi-word values (e.g. user agents) are not split
+        const val = values[0].replace(/"/g, '\\"');
+        parts.push(`${field}="${val}"`);
       }
       return parts.join(" AND ");
     },
@@ -160,38 +160,59 @@ export function FilterPanel({ onFilterChange }: Props) {
                 ) : (
                   values.map(({ value, count }) => {
                     const isChecked = activeSet.has(value);
+                    const canInspect = field === "userName" && !!onUserSelect;
                     return (
-                      <button
+                      <div
                         key={value}
-                        onClick={() => toggleValue(field, value)}
-                        className="w-full flex items-center gap-2 px-3 py-0.5 text-left"
+                        className="flex items-center"
                         style={{
                           background: isChecked ? "rgba(77, 171, 247, 0.08)" : "none",
-                          border: "none",
-                          cursor: "pointer",
                         }}
                       >
-                        <span
-                          style={{
-                            width: 10,
-                            height: 10,
-                            border: `1px solid ${isChecked ? "var(--accent-blue)" : "var(--border)"}`,
-                            background: isChecked ? "var(--accent-blue)" : "transparent",
-                            borderRadius: 2,
-                            flexShrink: 0,
-                          }}
-                        />
-                        <span
-                          className="flex-1 text-xs overflow-hidden text-ellipsis whitespace-nowrap"
-                          style={{ color: isChecked ? "var(--text-bright)" : "var(--text-primary)" }}
-                          title={value}
+                        <button
+                          onClick={() => toggleValue(field, value)}
+                          className="flex-1 flex items-center gap-2 px-3 py-0.5 text-left"
+                          style={{ background: "none", border: "none", cursor: "pointer", minWidth: 0 }}
                         >
-                          {value}
-                        </span>
-                        <span className="text-xs" style={{ color: "var(--text-secondary)", flexShrink: 0 }}>
-                          {count.toLocaleString()}
-                        </span>
-                      </button>
+                          <span
+                            style={{
+                              width: 10,
+                              height: 10,
+                              border: `1px solid ${isChecked ? "var(--accent-blue)" : "var(--border)"}`,
+                              background: isChecked ? "var(--accent-blue)" : "transparent",
+                              borderRadius: 2,
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span
+                            className="flex-1 text-xs overflow-hidden text-ellipsis whitespace-nowrap"
+                            style={{ color: isChecked ? "var(--text-bright)" : "var(--text-primary)" }}
+                            title={value}
+                          >
+                            {value}
+                          </span>
+                          <span className="text-xs" style={{ color: "var(--text-secondary)", flexShrink: 0 }}>
+                            {count.toLocaleString()}
+                          </span>
+                        </button>
+                        {canInspect && (
+                          <button
+                            onClick={() => onUserSelect(value)}
+                            title="Open in Identity view"
+                            style={{
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              color: "var(--text-secondary)",
+                              padding: "0 6px",
+                              fontSize: 11,
+                              flexShrink: 0,
+                            }}
+                          >
+                            →
+                          </button>
+                        )}
+                      </div>
                     );
                   })
                 )}

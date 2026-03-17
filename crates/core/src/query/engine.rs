@@ -46,39 +46,17 @@ fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u64> {
         }
     };
 
-    if query.filters.is_empty() {
+    if query.filter_groups.is_empty() {
         return time_candidates;
     }
 
     let candidate_set: HashSet<u64> = time_candidates.into_iter().collect();
 
-    // Collect positive and negative filter ID sets
-    let mut pos_sets: Vec<HashSet<u64>> = Vec::new();
-    let mut neg_sets: Vec<HashSet<u64>> = Vec::new();
-
-    for filter in &query.filters {
-        let ids: HashSet<u64> = match_field_filter(store, filter).into_iter().collect();
-        if filter.negated {
-            neg_sets.push(ids);
-        } else {
-            pos_sets.push(ids);
-        }
-    }
-
-    // Intersect: start with candidate_set, apply positive filters, remove negative
-    let mut result = candidate_set;
-
-    // Sort pos_sets by size ascending to prune early (cheapest intersections first)
-    pos_sets.sort_unstable_by_key(|s| s.len());
-    for pos in &pos_sets {
-        result.retain(|id| pos.contains(id));
-        if result.is_empty() {
-            return vec![];
-        }
-    }
-
-    for neg in &neg_sets {
-        result.retain(|id| !neg.contains(id));
+    // Union over OR-groups: each group is AND'd internally, then the results are OR'd.
+    let mut result: HashSet<u64> = HashSet::new();
+    for group in &query.filter_groups {
+        let group_result = compute_and_group(store, &candidate_set, group);
+        result.extend(group_result);
     }
 
     // Return IDs in time-sorted order
@@ -88,6 +66,43 @@ fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u64> {
         .filter(|id| result.contains(id))
         .cloned()
         .collect()
+}
+
+/// Evaluate one AND-group against the candidate set, returning matching IDs.
+fn compute_and_group(
+    store: &Store,
+    candidates: &HashSet<u64>,
+    filters: &[crate::query::filter::FieldFilter],
+) -> HashSet<u64> {
+    let mut pos_sets: Vec<HashSet<u64>> = Vec::new();
+    let mut neg_sets: Vec<HashSet<u64>> = Vec::new();
+
+    for filter in filters {
+        let ids: HashSet<u64> = match_field_filter(store, filter).into_iter().collect();
+        if filter.negated {
+            neg_sets.push(ids);
+        } else {
+            pos_sets.push(ids);
+        }
+    }
+
+    // Intersect: start with candidates, apply positive filters, subtract negatives
+    let mut result = candidates.clone();
+
+    // Sort by size ascending to prune early (cheapest intersections first)
+    pos_sets.sort_unstable_by_key(|s| s.len());
+    for pos in &pos_sets {
+        result.retain(|id| pos.contains(id));
+        if result.is_empty() {
+            return HashSet::new();
+        }
+    }
+
+    for neg in &neg_sets {
+        result.retain(|id| !neg.contains(id));
+    }
+
+    result
 }
 
 /// Return the record IDs that match the given field filter (ignoring the `negated` flag —
@@ -103,6 +118,7 @@ fn match_field_filter(store: &Store, filter: &FieldFilter) -> Vec<u64> {
         FieldName::AccountId => &store.idx_account_id,
         FieldName::ErrorCode => &store.idx_error_code,
         FieldName::IdentityType => &store.idx_identity_type,
+        FieldName::UserAgent => &store.idx_user_agent,
     };
 
     match &filter.mode {

@@ -7,6 +7,7 @@ import type {
   TimelineResult,
   FieldValueCount,
   IdentitySummary,
+  Alert,
 } from "../types/cloudtrail";
 
 export async function loadDirectory(
@@ -57,4 +58,8 @@ export async function getTopFields(
 
 export async function getIdentitySummary(arn: string): Promise<IdentitySummary> {
   return invoke<IdentitySummary>("get_identity_summary_cmd", { arn });
+}
+
+export async function runDetections(): Promise<Alert[]> {
+  return invoke<Alert[]>("run_detections");
 }

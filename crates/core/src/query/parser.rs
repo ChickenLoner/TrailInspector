@@ -26,20 +26,34 @@ pub fn parse_query(input: &str) -> Result<Query, CoreError> {
 
     let tokens = tokenize(input);
 
+    // Split the token stream on OR, building one AND-group per OR-clause.
+    // Time tokens (earliest=/latest=) are applied globally across all OR-groups.
+    let mut current_group: Vec<FieldFilter> = Vec::new();
+
     for token in &tokens {
-        // Skip AND/OR conjunctions (we treat everything as AND for now)
-        if token.eq_ignore_ascii_case("AND") || token.eq_ignore_ascii_case("OR") {
+        if token.eq_ignore_ascii_case("OR") {
+            // Flush the current AND-group into filter_groups
+            if !current_group.is_empty() {
+                query.filter_groups.push(std::mem::take(&mut current_group));
+            }
             continue;
         }
-        // Time tokens
+        if token.eq_ignore_ascii_case("AND") {
+            // Implicit within the current group — skip the keyword
+            continue;
+        }
         if token.starts_with("earliest=") || token.starts_with("latest=") {
             parse_time_token(token, &mut query)?;
             continue;
         }
-        // Field filter tokens
         if let Some(filter) = parse_filter_token(token)? {
-            query.filters.push(filter);
+            current_group.push(filter);
         }
+    }
+
+    // Flush any remaining group
+    if !current_group.is_empty() {
+        query.filter_groups.push(current_group);
     }
 
     Ok(query)
@@ -192,35 +206,48 @@ mod tests {
     #[test]
     fn test_exact_filter() {
         let q = parse_query("eventName=ConsoleLogin").unwrap();
-        assert_eq!(q.filters.len(), 1);
-        assert_eq!(q.filters[0].field, FieldName::EventName);
-        assert!(!q.filters[0].negated);
-        assert!(matches!(&q.filters[0].mode, MatchMode::Exact(v) if v == "ConsoleLogin"));
+        assert_eq!(q.filter_groups.len(), 1);
+        assert_eq!(q.filter_groups[0].len(), 1);
+        assert_eq!(q.filter_groups[0][0].field, FieldName::EventName);
+        assert!(!q.filter_groups[0][0].negated);
+        assert!(matches!(&q.filter_groups[0][0].mode, MatchMode::Exact(v) if v == "ConsoleLogin"));
     }
 
     #[test]
     fn test_negated_filter() {
         let q = parse_query("errorCode!=AccessDenied").unwrap();
-        assert_eq!(q.filters.len(), 1);
-        assert!(q.filters[0].negated);
+        assert_eq!(q.filter_groups.len(), 1);
+        assert!(q.filter_groups[0][0].negated);
     }
 
     #[test]
     fn test_wildcard_prefix() {
         let q = parse_query("eventName=Create*").unwrap();
-        assert!(matches!(&q.filters[0].mode, MatchMode::Prefix(p) if p == "create"));
+        assert!(matches!(&q.filter_groups[0][0].mode, MatchMode::Prefix(p) if p == "create"));
     }
 
     #[test]
     fn test_multiple_filters() {
         let q = parse_query("eventName=ConsoleLogin AND awsRegion=us-east-1").unwrap();
-        assert_eq!(q.filters.len(), 2);
+        // Both in the same AND-group
+        assert_eq!(q.filter_groups.len(), 1);
+        assert_eq!(q.filter_groups[0].len(), 2);
+    }
+
+    #[test]
+    fn test_or_filters() {
+        let q = parse_query("eventName=ConsoleLogin OR eventName=AssumeRole").unwrap();
+        // Two separate OR-groups
+        assert_eq!(q.filter_groups.len(), 2);
+        assert_eq!(q.filter_groups[0].len(), 1);
+        assert_eq!(q.filter_groups[1].len(), 1);
     }
 
     #[test]
     fn test_relative_time() {
         let q = parse_query("eventName=CreateUser earliest=-24h").unwrap();
-        assert_eq!(q.filters.len(), 1);
+        assert_eq!(q.filter_groups.len(), 1);
+        assert_eq!(q.filter_groups[0].len(), 1);
         assert!(q.time_range.is_some());
         let tr = q.time_range.unwrap();
         assert!(tr.start_ms > 0);
@@ -230,7 +257,8 @@ mod tests {
     #[test]
     fn test_unknown_field_skipped() {
         let q = parse_query("unknownField=value eventName=CreateUser").unwrap();
-        assert_eq!(q.filters.len(), 1);
-        assert_eq!(q.filters[0].field, FieldName::EventName);
+        assert_eq!(q.filter_groups.len(), 1);
+        assert_eq!(q.filter_groups[0].len(), 1);
+        assert_eq!(q.filter_groups[0][0].field, FieldName::EventName);
     }
 }

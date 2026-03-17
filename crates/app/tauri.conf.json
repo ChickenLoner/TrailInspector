@@ -4,7 +4,7 @@
   "identifier": "com.trailinspector.app",
   "build": {
     "frontendDist": "../../ui/dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:5500",
     "beforeDevCommand": "cd ../../ui && npm run dev",
     "beforeBuildCommand": "cd ../../ui && npm run build"
   },

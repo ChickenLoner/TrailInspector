@@ -8,6 +8,7 @@ use std::path::Path;
 
 /// Progress event emitted during ingestion
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProgressEvent {
     pub files_total: usize,
     pub files_done: usize,
@@ -28,6 +29,7 @@ pub struct Store {
     pub idx_account_id: HashMap<String, Vec<u64>>,
     pub idx_error_code: HashMap<String, Vec<u64>>,
     pub idx_identity_type: HashMap<String, Vec<u64>>,
+    pub idx_user_agent: HashMap<String, Vec<u64>>,
 
     // Sorted by timestamp for range queries
     pub time_sorted_ids: Vec<u64>,
@@ -47,6 +49,7 @@ impl Store {
             idx_account_id: HashMap::new(),
             idx_error_code: HashMap::new(),
             idx_identity_type: HashMap::new(),
+            idx_user_agent: HashMap::new(),
             time_sorted_ids: Vec::new(),
         }
     }
@@ -120,6 +123,9 @@ impl Store {
                 }
                 if let Some(t) = &rec.record.user_identity.identity_type {
                     Self::index_push(&mut self.idx_identity_type, t, id);
+                }
+                if let Some(ua) = &rec.record.user_agent {
+                    Self::index_push(&mut self.idx_user_agent, ua, id);
                 }
             }
 

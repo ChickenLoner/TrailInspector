@@ -10,6 +10,7 @@ pub enum FieldName {
     AccountId,
     ErrorCode,
     IdentityType,
+    UserAgent,
 }
 
 impl FieldName {
@@ -24,6 +25,7 @@ impl FieldName {
             "accountId" => Some(Self::AccountId),
             "errorCode" => Some(Self::ErrorCode),
             "identityType" | "userIdentity.type" => Some(Self::IdentityType),
+            "userAgent" => Some(Self::UserAgent),
             _ => None,
         }
     }
@@ -54,15 +56,22 @@ pub struct TimeRange {
     pub end_ms: i64,
 }
 
-/// A fully parsed query ready for execution
+/// A fully parsed query ready for execution.
+///
+/// Stored in Disjunctive Normal Form (DNF):
+/// - The outer Vec is OR'd: any group matching is a match.
+/// - Each inner Vec is AND'd: all filters in a group must match.
+///
+/// Example: `eventName=A OR eventName=B` →
+///   filter_groups = [[{eventName=A}], [{eventName=B}]]
 #[derive(Debug, Clone, Default)]
 pub struct Query {
-    pub filters: Vec<FieldFilter>,
+    pub filter_groups: Vec<Vec<FieldFilter>>,
     pub time_range: Option<TimeRange>,
 }
 
 impl Query {
     pub fn is_empty(&self) -> bool {
-        self.filters.is_empty() && self.time_range.is_none()
+        self.filter_groups.is_empty() && self.time_range.is_none()
     }
 }

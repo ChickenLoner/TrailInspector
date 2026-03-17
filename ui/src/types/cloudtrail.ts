@@ -86,11 +86,42 @@ export interface IdentityEventSummary {
   errorCodes: string[];
 }
 
+export interface TimelineEvent {
+  id: number;
+  timestampMs: number;
+  eventTime: string;
+  eventName: string;
+  awsRegion: string;
+  sourceIp?: string;
+  errorCode?: string;
+  userAgent?: string;
+  requestParameters?: Record<string, unknown>;
+}
+
 export interface IdentitySummary {
   arn: string;
   totalEvents: number;
   firstSeenMs: number;
   lastSeenMs: number;
   byEvent: IdentityEventSummary[];
-  recentEventIds: number[];
+  events: TimelineEvent[];
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Detection types
+// ---------------------------------------------------------------------------
+
+export type Severity = "info" | "low" | "medium" | "high" | "critical";
+
+export interface Alert {
+  ruleId: string;
+  severity: Severity;
+  title: string;
+  description: string;
+  matchingRecordIds: number[];
+  metadata: Record<string, string>;
+  mitreTactic: string;
+  mitreTechnique: string;
+  /** Pre-built query — apply to the search bar to see matching events. */
+  query: string;
 }

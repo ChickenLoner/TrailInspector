@@ -17,6 +17,7 @@ pub struct CloudTrailRecord {
     pub event_source: String,
     pub event_name: String,
     pub aws_region: String,
+    #[serde(rename = "sourceIPAddress")]
     pub source_ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub user_identity: UserIdentity,

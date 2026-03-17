@@ -7,6 +7,7 @@ use crate::store::Store;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TimeBucket {
     pub start_ms: i64,
     pub end_ms: i64,
@@ -14,6 +15,7 @@ pub struct TimeBucket {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TimelineResult {
     pub buckets: Vec<TimeBucket>,
     pub total: usize,
@@ -109,6 +111,7 @@ pub fn top_field_values(
                 "accountId" => r.record.user_identity.account_id.as_deref(),
                 "errorCode" => r.record.error_code.as_deref(),
                 "identityType" => r.record.user_identity.identity_type.as_deref(),
+                "userAgent" => r.record.user_agent.as_deref(),
                 _ => None,
             };
             if let Some(v) = val {
@@ -132,6 +135,7 @@ pub fn top_field_values(
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IdentityEventSummary {
     pub event_name: String,
     pub count: usize,
@@ -140,20 +144,37 @@ pub struct IdentityEventSummary {
     pub error_codes: Vec<String>,
 }
 
+/// A single event in the identity timeline (lightweight — no full raw record).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineEvent {
+    pub id: u64,
+    pub timestamp_ms: i64,
+    pub event_time: String,
+    pub event_name: String,
+    pub aws_region: String,
+    pub source_ip: Option<String>,
+    pub error_code: Option<String>,
+    pub user_agent: Option<String>,
+    pub request_parameters: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IdentitySummary {
     pub arn: String,
     pub total_events: usize,
     pub first_seen_ms: i64,
     pub last_seen_ms: i64,
-    /// Per-eventName breakdown
+    /// Per-eventName breakdown (sorted by count desc)
     pub by_event: Vec<IdentityEventSummary>,
-    /// Chronologically sorted event IDs (up to 1000 for IPC safety)
-    pub recent_event_ids: Vec<u64>,
+    /// Chronological event feed (up to 500 for IPC safety)
+    pub events: Vec<TimelineEvent>,
 }
 
 pub fn get_identity_summary(store: &Store, arn: &str) -> Option<IdentitySummary> {
-    let ids = store.idx_user_arn.get(arn)?;
+    let ids = store.idx_user_arn.get(arn)
+        .or_else(|| store.idx_user_name.get(arn))?;
 
     if ids.is_empty() {
         return None;
@@ -207,13 +228,23 @@ pub fn get_identity_summary(store: &Store, arn: &str) -> Option<IdentitySummary>
         .collect();
     by_event_vec.sort_unstable_by(|a, b| b.count.cmp(&a.count));
 
-    // Return up to 1000 recent event IDs (IPC safety: large payloads are just IDs)
-    let recent_event_ids: Vec<u64> = timed_ids
+    // Build chronological event feed (up to 500 — IPC safety)
+    let events: Vec<TimelineEvent> = timed_ids
         .iter()
-        .rev()
-        .take(1000)
-        .map(|(_, id)| *id)
-        .rev()
+        .take(500)
+        .filter_map(|&(ts, id)| {
+            store.get_record(id).map(|r| TimelineEvent {
+                id,
+                timestamp_ms: ts,
+                event_time: r.record.event_time.clone(),
+                event_name: r.record.event_name.clone(),
+                aws_region: r.record.aws_region.clone(),
+                source_ip: r.record.source_ip_address.clone(),
+                error_code: r.record.error_code.clone(),
+                user_agent: r.record.user_agent.clone(),
+                request_parameters: r.record.request_parameters.clone(),
+            })
+        })
         .collect();
 
     Some(IdentitySummary {
@@ -222,6 +253,6 @@ pub fn get_identity_summary(store: &Store, arn: &str) -> Option<IdentitySummary>
         first_seen_ms,
         last_seen_ms,
         by_event: by_event_vec,
-        recent_event_ids,
+        events,
     })
 }
