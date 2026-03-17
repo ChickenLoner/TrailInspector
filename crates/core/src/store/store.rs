@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use crate::model::IndexedRecord;
 use rayon::prelude::*;
 use crate::ingest::{decompress::{read_log_file, read_zip_entries}, parser::parse_records};
-use crate::error::CoreError;
+use crate::error::{CoreError, IngestWarning};
 use std::path::Path;
 
 /// Progress event emitted during ingestion
@@ -55,11 +55,13 @@ impl Store {
 
     /// Load all log files from a directory, processing in parallel.
     /// Calls `on_progress` callback after each file is processed.
+    /// Returns `(records_loaded, warnings)` — file-level errors are collected as
+    /// non-fatal warnings so a single corrupt file does not abort the whole batch.
     pub fn load_directory<F>(
         &mut self,
         root: &Path,
         on_progress: F,
-    ) -> Result<usize, CoreError>
+    ) -> Result<(usize, Vec<IngestWarning>), CoreError>
     where
         F: Fn(ProgressEvent) + Send + Sync,
     {
@@ -110,9 +112,26 @@ impl Store {
         // Sequential ingest into store (indexes must be built single-threaded)
         let mut total_records = 0usize;
         let mut files_done = 0usize;
+        let mut warnings: Vec<IngestWarning> = Vec::new();
 
         for result in results {
-            let (path_str, src_idx, mut batch) = result?;
+            let (path_str, src_idx, mut batch) = match result {
+                Ok(v) => v,
+                Err(e) => {
+                    // Extract the file path from the error for the warning message
+                    let file = match &e {
+                        CoreError::Io { path, .. } => Some(path.clone()),
+                        CoreError::PermissionDenied { path } => Some(path.clone()),
+                        CoreError::Json { path, .. } => Some(path.clone()),
+                        CoreError::CorruptGzip { path, .. } => Some(path.clone()),
+                        _ => None,
+                    };
+                    warnings.push(IngestWarning { message: e.to_string(), file });
+                    files_done += 1;
+                    on_progress(ProgressEvent { files_total, files_done, records_total: total_records });
+                    continue;
+                }
+            };
             let file_idx = src_idx as usize;
 
             // Ensure file path is registered
@@ -172,7 +191,7 @@ impl Store {
         pairs.sort_unstable_by_key(|(ts, _)| *ts);
         self.time_sorted_ids = pairs.into_iter().map(|(_, id)| id).collect();
 
-        Ok(total_records)
+        Ok((total_records, warnings))
     }
 
     fn index_push(idx: &mut HashMap<String, Vec<u64>>, key: &str, id: u64) {

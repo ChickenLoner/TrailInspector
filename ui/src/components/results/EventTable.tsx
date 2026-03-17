@@ -87,10 +87,10 @@ export function EventTable({ records, total, page, pageSize, onPageChange, selec
                   alignItems: "center",
                   cursor: "pointer",
                   background: isSelected
-                    ? "rgba(77, 171, 247, 0.12)"
+                    ? "rgba(60,149,209,0.12)"
                     : virtualRow.index % 2 === 0
-                    ? "var(--bg-primary)"
-                    : "var(--bg-secondary)",
+                    ? "#1a1a1a"
+                    : "#2a2a2a",
                   borderLeft: isSelected ? "2px solid var(--accent-blue)" : "2px solid transparent",
                 }}
               >

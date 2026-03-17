@@ -1,6 +1,6 @@
 use tauri::ipc::Channel;
 use tauri::State;
-use trail_inspector_core::store::{ProgressEvent, Store};
+use trail_inspector_core::store::{ProgressEvent, Store, IngestWarning};
 use crate::state::AppState;
 use std::path::Path;
 
@@ -8,7 +8,7 @@ use std::path::Path;
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum IngestProgress {
     Progress(ProgressEvent),
-    Complete { records_total: usize },
+    Complete { records_total: usize, warnings: Vec<IngestWarning> },
     #[allow(dead_code)]
     Error { message: String },
 }
@@ -25,16 +25,18 @@ pub async fn load_directory(
     let result = tokio::task::spawn_blocking(move || {
         let mut store = Store::new();
         let on_prog = on_progress.clone();
-        let total = store.load_directory(&root, move |evt| {
+        let (total, warnings) = store.load_directory(&root, move |evt| {
             let _ = on_prog.send(IngestProgress::Progress(evt));
         })?;
-        Ok::<(Store, usize, Channel<IngestProgress>), trail_inspector_core::error::CoreError>((store, total, on_progress))
+        Ok::<(Store, usize, Vec<IngestWarning>, Channel<IngestProgress>), trail_inspector_core::error::CoreError>(
+            (store, total, warnings, on_progress)
+        )
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))?
     .map_err(|e| format!("Ingest error: {e}"))?;
 
-    let (new_store, total, on_progress) = result;
+    let (new_store, total, warnings, on_progress) = result;
 
     {
         let mut guard = state.store.write().map_err(|e| format!("Lock error: {e}"))?;
@@ -43,6 +45,7 @@ pub async fn load_directory(
 
     let _ = on_progress.send(IngestProgress::Complete {
         records_total: total,
+        warnings,
     });
 
     Ok(total)

@@ -1,18 +1,31 @@
 @import "tailwindcss";
 
 :root {
-  --bg-primary: #1a1b1e;
-  --bg-secondary: #25262b;
-  --bg-tertiary: #2c2e33;
-  --border: #373a40;
-  --text-primary: #c1c2c5;
-  --text-secondary: #909296;
-  --text-bright: #e9ecef;
-  --accent-blue: #4dabf7;
-  --accent-green: #69db7c;
-  --accent-yellow: #ffd43b;
-  --accent-red: #ff6b6b;
-  --accent-orange: #ffa94d;
+  /* Splunk-inspired dark palette */
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #242424;
+  --bg-tertiary: #2e2e2e;
+  --bg-hover: #383838;
+  --border: #3d3d3d;
+  --border-vis: #4a4a4a;
+  --text-primary: #ffffff;
+  --text-secondary: #b0b4bc;
+  --text-bright: #ffffff;
+  --text-dimmed: #6c717a;
+
+  /* Splunk accent colors */
+  --accent-green: #65a637;
+  --accent-blue: #3c95d1;
+  --accent-yellow: #f8be34;
+  --accent-red: #d41f1f;
+  --accent-orange: #c96d16;
+
+  /* Severity shortcuts */
+  --sev-critical: #d41f1f;
+  --sev-high: #c96d16;
+  --sev-medium: #f8be34;
+  --sev-low: #3c95d1;
+  --sev-info: #65a637;
 }
 
 * {
@@ -52,5 +65,5 @@ body {
   font-size: 11px;
   font-weight: 600;
 }
-.badge-error { background: rgba(255, 107, 107, 0.15); color: var(--accent-red); }
-.badge-info { background: rgba(77, 171, 247, 0.15); color: var(--accent-blue); }
+.badge-error { background: rgba(212, 31, 31, 0.15); color: var(--accent-red); }
+.badge-info { background: rgba(60, 149, 209, 0.15); color: var(--accent-blue); }

@@ -1,0 +1,130 @@
+name: CI Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # Fast core-library unit tests (no GUI deps needed)
+  # ────────────────────────────────────────────────────────────
+  test:
+    name: Core tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Run core tests
+        run: cargo test -p trail-inspector-core
+
+  # ────────────────────────────────────────────────────────────
+  # Cross-platform Tauri bundle
+  # ────────────────────────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.os }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Rust ──────────────────────────────────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # ── Node.js ───────────────────────────────────────────
+      - name: Install Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      # ── Linux system dependencies (Tauri/WebKit) ──────────
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      # ── Frontend ──────────────────────────────────────────
+      - name: Install frontend dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ui
+        run: npm run build
+
+      # ── Tauri bundle ──────────────────────────────────────
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Tauri app
+        working-directory: crates/app
+        run: cargo tauri build
+
+      # ── Upload artifacts ──────────────────────────────────
+      - name: Upload Windows installer (.msi)
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrailInspector-windows-msi
+          path: target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload Linux .deb package
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrailInspector-linux-deb
+          path: target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+      - name: Upload Linux AppImage
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrailInspector-linux-appimage
+          path: target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+      - name: Upload macOS .dmg
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrailInspector-macos-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error

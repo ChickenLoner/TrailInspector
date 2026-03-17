@@ -599,87 +599,93 @@ Frontend state: React context + useReducer for search state, or Zustand if state
 
 ## 7. Phased Build Order
 
-### Phase 1: Foundation (MVP — "It loads and searches")
+### Phase 1: Foundation (MVP — "It loads and searches") ✅ COMPLETE
 **Goal:** Load CloudTrail logs, display events in a table, basic filtering.
 
-| Task | Details |
-|------|---------|
-| 1.1 | Scaffold Tauri v2 project with Cargo workspace (`crates/core`, `crates/app`, `ui/`) |
-| 1.2 | Implement `model.rs` — CloudTrail record struct with serde |
-| 1.3 | Implement `ingest/discovery.rs` — recursive directory walker (walkdir) |
-| 1.4 | Implement `ingest/decompress.rs` — gzip + plain JSON detection (flate2) |
-| 1.5 | Implement `ingest/parser.rs` — parse `{"Records": [...]}` into `Vec<IndexedRecord>` |
-| 1.6 | Implement `store.rs` — basic `Vec<IndexedRecord>` with field indexes |
-| 1.7 | Wire ingestion as Tauri command with progress events |
-| 1.8 | React: DropZone component for folder selection (Tauri dialog API) |
-| 1.9 | React: EventTable with virtual scrolling + pagination |
-| 1.10 | React: Basic column display (time, eventName, user, IP, region, error) |
-| 1.11 | React: EventDetail panel — click row to expand raw JSON |
+| Task | Status | Details |
+|------|--------|---------|
+| 1.1 | ✅ | Scaffold Tauri v2 project with Cargo workspace (`crates/core`, `crates/app`, `ui/`) |
+| 1.2 | ✅ | Implement `model.rs` — CloudTrail record struct with serde |
+| 1.3 | ✅ | Implement `ingest/discovery.rs` — recursive directory walker (walkdir) |
+| 1.4 | ✅ | Implement `ingest/decompress.rs` — gzip + plain JSON detection (flate2) |
+| 1.5 | ✅ | Implement `ingest/parser.rs` — parse `{"Records": [...]}` into `Vec<IndexedRecord>` |
+| 1.6 | ✅ | Implement `store.rs` — basic `Vec<IndexedRecord>` with field indexes |
+| 1.7 | ✅ | Wire ingestion as Tauri command with progress events |
+| 1.8 | ✅ | React: DropZone component for folder selection (Tauri dialog API) |
+| 1.9 | ✅ | React: EventTable with virtual scrolling + pagination |
+| 1.10 | ✅ | React: Basic column display (time, eventName, user, IP, region, error) |
+| 1.11 | ✅ | React: EventDetail panel — click row to expand raw JSON |
 
 **Verification:** Load BlizzardBreakdown dataset, see all records in table, click to expand.
 
-### Phase 2: Search & Filter ("Now you can investigate")
+### Phase 2: Search & Filter ("Now you can investigate") ✅ COMPLETE
 **Goal:** Query bar + filter panel, time range selection.
 
-| Task | Details |
-|------|---------|
-| 2.1 | Implement `query/parser.rs` — recursive descent parser for query language |
-| 2.2 | Implement `query/engine.rs` — execute parsed query against Store indexes |
-| 2.3 | Implement `query/filter.rs` — structured filter predicates |
-| 2.4 | Wire search as Tauri command (paginated results) |
-| 2.5 | React: QueryBar component with CodeMirror (syntax highlighting) |
-| 2.6 | React: FilterPanel with checkboxes populated from index data |
-| 2.7 | React: TimeRangePicker (absolute datetime or relative shorthand) |
-| 2.8 | React: FilterPanel ↔ QueryBar sync (clicking filter updates query, and vice versa) |
-| 2.9 | Implement `get_field_values` command — returns top-N values for a field |
+| Task | Status | Details |
+|------|--------|---------|
+| 2.1 | ✅ | Implement `query/parser.rs` — recursive descent parser for query language |
+| 2.2 | ✅ | Implement `query/engine.rs` — execute parsed query against Store indexes |
+| 2.3 | ✅ | Implement `query/filter.rs` — structured filter predicates |
+| 2.4 | ✅ | Wire search as Tauri command (paginated results) |
+| 2.5 | ✅ | React: QueryBar component with CodeMirror (syntax highlighting) |
+| 2.6 | ✅ | React: FilterPanel with checkboxes populated from index data |
+| 2.7 | ✅ | React: TimeRangePicker (absolute datetime or relative shorthand) |
+| 2.8 | ✅ | React: FilterPanel ↔ QueryBar sync (clicking filter updates query, and vice versa) |
+| 2.9 | ✅ | Implement `get_field_values` command — returns top-N values for a field |
+
+**Extras delivered:** `userAgent` field added to indexes, filter panel, and query bar hints. Cross-view navigation: clicking a userName in FilterPanel navigates to Identity tab.
 
 **Verification:** Run `eventName=ConsoleLogin AND awsRegion=us-east-1` — see filtered results. Use filter panel — see query bar update.
 
-### Phase 3: Visualization ("See the story")
+### Phase 3: Visualization ("See the story") ✅ COMPLETE
 **Goal:** Timeline histogram, field statistics, identity investigation.
 
-| Task | Details |
-|------|---------|
-| 3.1 | Implement `stats.rs` — time bucketing (auto-bucket by data range), field value aggregation |
-| 3.2 | Wire `get_timeline` Tauri command |
-| 3.3 | React: TimelineChart histogram (recharts) — click a time bucket to narrow time range |
-| 3.4 | React: FieldStats view — top-N bar charts per field, click to filter |
-| 3.5 | Implement identity correlation in Store — group all events by userIdentity ARN |
-| 3.6 | React: IdentityTimeline view — per-principal chronological activity |
-| 3.7 | React: AppShell layout with sidebar navigation between views |
+| Task | Status | Details |
+|------|--------|---------|
+| 3.1 | ✅ | Implement `stats.rs` — time bucketing (auto-bucket by data range), field value aggregation |
+| 3.2 | ✅ | Wire `get_timeline` Tauri command |
+| 3.3 | ✅ | React: TimelineChart histogram (recharts) — click a time bucket to narrow time range |
+| 3.4 | ✅ | React: FieldStats view — top-N bar charts per field, click to filter |
+| 3.5 | ✅ | Implement identity correlation in Store — group all events by userIdentity ARN |
+| 3.6 | ✅ | React: IdentityTimeline view — per-principal chronological activity |
+| 3.7 | ✅ | React: AppShell layout with sidebar navigation between views |
+
+**Extras delivered:** IdentityTimeline auto-triggers lookup when navigated from FilterPanel. Identity summary supports both ARN and username lookups.
 
 **Verification:** Load dataset, see histogram. Click bar — zoom into that time window. Open identity view — see attacker's timeline.
 
-### Phase 4: Detection Engine ("Find the bad")
+### Phase 4: Detection Engine ("Find the bad") ✅ COMPLETE
 **Goal:** Built-in heuristic rules, alert dashboard.
 
-| Task | Details |
-|------|---------|
-| 4.1 | Implement `detection/engine.rs` — rule registry, evaluation loop |
-| 4.2 | Implement single-event rules (IA-01 through DE-06) |
-| 4.3 | Implement correlation rules (CA-01, DI-01, IM-01, IM-02) |
-| 4.4 | Wire `run_detections` Tauri command |
-| 4.5 | React: AlertPanel — severity cards + alert list |
-| 4.6 | React: AlertDetail — explanation + "View Evidence" button (links to pre-filtered search) |
-| 4.7 | Auto-run detections on dataset load (background, non-blocking) |
+| Task | Status | Details |
+|------|--------|---------|
+| 4.1 | ✅ | Implement `detection/engine.rs` — rule registry, evaluation loop |
+| 4.2 | ✅ | Implement single-event rules (IA-01 through DE-06) — 18 MITRE ATT&CK-mapped rules total |
+| 4.3 | ✅ | Implement correlation rules (CA-01, DI-01, IM-01, IM-02) |
+| 4.4 | ✅ | Wire `run_detections` Tauri command |
+| 4.5 | ✅ | React: AlertPanel — severity cards + alert list |
+| 4.6 | ✅ | React: AlertDetail — explanation + "View Evidence" button (links to pre-filtered search) |
+| 4.7 | ✅ | Auto-run detections on dataset load (background, non-blocking) |
+
+**Extras delivered:** Each alert carries a pre-built query string so "View Evidence in Search" auto-filters results. OR operator support in query engine for multi-event-type rules.
 
 **Verification:** Load BlizzardBreakdown — should fire multiple detection rules. Click alert — see matching events.
 
-### Phase 5: Polish & Export ("Ship it")
+### Phase 5: Polish & Export ("Ship it") ✅ COMPLETE
 **Goal:** Export, session persistence, dark theme polish, cross-platform builds.
 
-| Task | Details |
-|------|---------|
-| 5.1 | Implement `export.rs` — CSV and JSON export of filtered results |
-| 5.2 | Wire export Tauri commands with file save dialog |
-| 5.3 | Session persistence — save last dataset path + query to local storage |
-| 5.4 | ZIP archive support — extract to temp dir, ingest, cleanup |
-| 5.5 | Keyboard shortcuts (Ctrl+K, Ctrl+Enter, etc.) |
-| 5.6 | Dark theme polish — consistent Splunk-inspired color palette |
-| 5.7 | StatusBar — record count, memory usage, query execution time |
-| 5.8 | Cross-platform CI — GitHub Actions for Windows (.msi), Linux (.deb/.AppImage), macOS (.dmg) |
-| 5.9 | Error handling polish — graceful handling of malformed files, permission errors |
-| 5.10 | App icon and branding |
+| Task | Status | Details |
+|------|--------|---------|
+| 5.1 | ✅ | Implement `export.rs` — CSV and JSON export of filtered results |
+| 5.2 | ✅ | Wire export Tauri commands + "Export ▾" dropdown in search header with Tauri save dialog |
+| 5.3 | ✅ | Session persistence — last query and active tab saved/restored via localStorage |
+| 5.4 | ✅ | ZIP archive support — extract `.json`/`.json.gz` entries inline, no temp dir needed |
+| 5.5 | ✅ | Keyboard shortcuts — Ctrl+K focuses query bar, Escape clears query / closes detail panel |
+| 5.6 | ✅ | Dark theme polish — consistent Splunk-inspired color palette |
+| 5.7 | ✅ | StatusBar — shows "X of Y events" when filtering, query execution time |
+| 5.8 | ✅ | Cross-platform CI — GitHub Actions for Windows (.msi), Linux (.deb/.AppImage), macOS (.dmg) |
+| 5.9 | ✅ | Error handling polish — graceful handling of malformed files, permission errors |
+| 5.10 | ✅ | App icon and branding — custom icon generated for all platforms |
 
 **Verification:** Full workflow test on all 3 sample datasets. Export results as CSV. Build on all 3 platforms.
 

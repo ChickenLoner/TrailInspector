@@ -1,10 +1,10 @@
 import { useState, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { loadDirectory } from "../../lib/tauri";
-import type { IngestProgressEvent } from "../../types/cloudtrail";
+import type { IngestProgressEvent, IngestWarning } from "../../types/cloudtrail";
 
 interface Props {
-  onLoaded: (recordCount: number) => void;
+  onLoaded: (recordCount: number, warnings: IngestWarning[]) => void;
 }
 
 export function DropZone({ onLoaded }: Props) {
@@ -21,12 +21,15 @@ export function DropZone({ onLoaded }: Props) {
     setProgress(null);
 
     try {
+      let capturedWarnings: IngestWarning[] = [];
       const total = await loadDirectory(selected, (evt: IngestProgressEvent) => {
         if (evt.type === "progress") {
           setProgress({ filesDone: evt.filesDone, filesTotal: evt.filesTotal, records: evt.recordsTotal });
+        } else if (evt.type === "complete") {
+          capturedWarnings = evt.warnings ?? [];
         }
       });
-      onLoaded(total);
+      onLoaded(total, capturedWarnings);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -46,8 +49,8 @@ export function DropZone({ onLoaded }: Props) {
         disabled={loading}
         className="px-8 py-4 rounded-lg text-sm font-semibold transition-colors"
         style={{
-          background: loading ? 'var(--bg-tertiary)' : 'var(--accent-blue)',
-          color: loading ? 'var(--text-secondary)' : '#0d1117',
+          background: loading ? 'var(--bg-tertiary)' : 'var(--accent-green)',
+          color: loading ? 'var(--text-secondary)' : '#ffffff',
           cursor: loading ? 'not-allowed' : 'pointer',
           border: 'none',
         }}
@@ -64,7 +67,7 @@ export function DropZone({ onLoaded }: Props) {
               className="h-full rounded-full transition-all"
               style={{
                 width: `${progress.filesTotal > 0 ? (progress.filesDone / progress.filesTotal) * 100 : 0}%`,
-                background: 'var(--accent-blue)',
+                background: 'var(--accent-green)',
               }}
             />
           </div>

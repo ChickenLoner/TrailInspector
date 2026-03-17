@@ -7,19 +7,19 @@ import type { Alert, Severity } from "../../types/cloudtrail";
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
 
 const SEVERITY_COLOR: Record<Severity, string> = {
-  critical: "#f85149",
-  high: "#e3a020",
-  medium: "#d29922",
-  low: "#58a6ff",
-  info: "#8b949e",
+  critical: "#d41f1f",
+  high: "#c96d16",
+  medium: "#f8be34",
+  low: "#3c95d1",
+  info: "#65a637",
 };
 
 const SEVERITY_BG: Record<Severity, string> = {
-  critical: "rgba(248,81,73,0.15)",
-  high: "rgba(227,160,32,0.15)",
-  medium: "rgba(210,153,34,0.12)",
-  low: "rgba(88,166,255,0.12)",
-  info: "rgba(139,148,158,0.12)",
+  critical: "rgba(212,31,31,0.18)",
+  high: "rgba(201,109,22,0.18)",
+  medium: "rgba(248,190,52,0.15)",
+  low: "rgba(60,149,209,0.15)",
+  info: "rgba(101,166,55,0.15)",
 };
 
 const SEVERITY_LABEL: Record<Severity, string> = {
@@ -137,7 +137,7 @@ function AlertRow({ alert, isSelected, onClick }: AlertRowProps) {
         gap: 10,
         padding: "10px 14px",
         borderBottom: "1px solid var(--border)",
-        background: isSelected ? "rgba(88,166,255,0.08)" : "var(--bg-primary)",
+        background: isSelected ? "rgba(60,149,209,0.08)" : "var(--bg-primary)",
         cursor: "pointer",
         borderLeft: isSelected ? "2px solid var(--accent-blue)" : "2px solid transparent",
         transition: "background 0.1s",

@@ -9,7 +9,7 @@ import { FilterPanel } from "./components/search/FilterPanel";
 import { TimelineChart } from "./components/viz/TimelineChart";
 import { AppShell } from "./components/layout/AppShell";
 import { search, getTimeline, exportCsv, exportJson } from "./lib/tauri";
-import type { RecordRow, SearchResult, TimeBucket } from "./types/cloudtrail";
+import type { RecordRow, SearchResult, TimeBucket, IngestWarning } from "./types/cloudtrail";
 import type { Tab } from "./components/layout/Sidebar";
 import "./styles/globals.css";
 
@@ -167,6 +167,11 @@ export default function App() {
   const [loadTimeMs, setLoadTimeMs] = useState<number | undefined>();
   const [queryTimeMs, setQueryTimeMs] = useState<number | undefined>();
 
+  // Ingest warnings (non-fatal file errors)
+  const [ingestWarnings, setIngestWarnings] = useState<IngestWarning[]>([]);
+  const [warningsBannerOpen, setWarningsBannerOpen] = useState(false);
+  const [warningsDismissed, setWarningsDismissed] = useState(false);
+
   // Ref for focusing the query input via Ctrl+K
   const queryInputRef = useRef<HTMLInputElement>(null);
 
@@ -249,9 +254,12 @@ export default function App() {
   );
 
   const handleLoaded = useCallback(
-    (count: number, elapsedMs?: number) => {
+    (count: number, warnings: IngestWarning[], elapsedMs?: number) => {
       setRecordCount(count);
       setLoaded(true);
+      setIngestWarnings(warnings);
+      setWarningsDismissed(false);
+      setWarningsBannerOpen(false);
       if (elapsedMs !== undefined) setLoadTimeMs(elapsedMs);
       fetchPage(0, "");
       fetchTimeline("");
@@ -350,7 +358,7 @@ export default function App() {
         >
           <span
             className="font-bold text-sm"
-            style={{ color: "var(--accent-blue)" }}
+            style={{ color: "var(--accent-green)" }}
           >
             TrailInspector
           </span>
@@ -387,10 +395,10 @@ export default function App() {
             onClick={() => handleTimePreset(value)}
             style={{
               background:
-                timePreset === value ? "var(--accent-blue)" : "var(--bg-tertiary)",
+                timePreset === value ? "var(--accent-green)" : "var(--bg-tertiary)",
               border: "1px solid var(--border)",
               color:
-                timePreset === value ? "#0d1117" : "var(--text-secondary)",
+                timePreset === value ? "#ffffff" : "var(--text-secondary)",
               padding: "1px 8px",
               borderRadius: 3,
               fontSize: 11,
@@ -412,7 +420,7 @@ export default function App() {
           <span
             className="text-xs ml-2 font-mono"
             style={{
-              color: "var(--accent-green, #3fb950)",
+              color: "var(--accent-green)",
               maxWidth: 400,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -475,6 +483,69 @@ export default function App() {
           onViewEvidence={handleViewEvidence}
         />
       </div>
+      {ingestWarnings.length > 0 && !warningsDismissed && (
+        <div
+          style={{
+            background: "#3a2800",
+            borderTop: "1px solid #7c5200",
+            color: "#f8be34",
+            fontSize: 12,
+            padding: "4px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexShrink: 0,
+            position: "relative",
+          }}
+        >
+          <span
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => setWarningsBannerOpen((v) => !v)}
+          >
+            {ingestWarnings.length} file{ingestWarnings.length > 1 ? "s" : ""} had issues — click to expand
+          </span>
+          <button
+            onClick={() => setWarningsDismissed(true)}
+            style={{
+              marginLeft: "auto",
+              background: "none",
+              border: "none",
+              color: "#f8be34",
+              cursor: "pointer",
+              fontSize: 16,
+              lineHeight: 1,
+            }}
+            title="Dismiss"
+          >
+            ×
+          </button>
+          {warningsBannerOpen && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: "calc(100% + 2px)",
+                left: 0,
+                right: 0,
+                background: "#1e1500",
+                border: "1px solid #7c5200",
+                padding: 12,
+                zIndex: 200,
+                maxHeight: 200,
+                overflowY: "auto",
+              }}
+            >
+              {ingestWarnings.map((w, i) => (
+                <div key={i} style={{ marginBottom: 4, fontSize: 11, fontFamily: "monospace" }}>
+                  <span style={{ color: "#f8be34" }}>{w.message}</span>
+                  {w.file && (
+                    <span style={{ color: "var(--text-dimmed)", marginLeft: 8 }}>{w.file}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <StatusBar
         recordCount={recordCount}
         loaded={loaded}

@@ -53,9 +53,14 @@ export interface FieldValue {
   count: number;
 }
 
+export interface IngestWarning {
+  message: string;
+  file?: string;
+}
+
 export type IngestProgressEvent =
   | { type: "progress"; filesTotal: number; filesDone: number; recordsTotal: number }
-  | { type: "complete"; recordsTotal: number }
+  | { type: "complete"; recordsTotal: number; warnings: IngestWarning[] }
   | { type: "error"; message: string };
 
 // ---------------------------------------------------------------------------

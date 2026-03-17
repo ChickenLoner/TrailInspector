@@ -90,7 +90,7 @@ export function QueryBar({ value, onChange, onSubmit, disabled, inputRef }: Prop
           color: "var(--text-bright)",
           fontSize: 13,
           fontFamily: "monospace",
-          caretColor: "var(--accent-blue)",
+          caretColor: "var(--accent-green)",
         }}
       />
 
@@ -148,9 +148,9 @@ export function QueryBar({ value, onChange, onSubmit, disabled, inputRef }: Prop
         onClick={() => onSubmit(localValue)}
         disabled={disabled}
         style={{
-          background: "var(--accent-blue)",
+          background: "var(--accent-green)",
           border: "none",
-          color: "#0d1117",
+          color: "#ffffff",
           cursor: disabled ? "not-allowed" : "pointer",
           padding: "3px 12px",
           borderRadius: 3,
