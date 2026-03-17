@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use crate::model::IndexedRecord;
 use rayon::prelude::*;
-use crate::ingest::{decompress::read_log_file, parser::parse_records};
+use crate::ingest::{decompress::{read_log_file, read_zip_entries}, parser::parse_records};
 use crate::error::CoreError;
 use std::path::Path;
 
@@ -67,16 +66,44 @@ impl Store {
         let paths = crate::ingest::discovery::find_log_files(root);
         let files_total = paths.len();
 
-        // Process files in parallel, collect (file_idx, records) pairs
-        let counter = AtomicU64::new(0);
-        let results: Vec<Result<(usize, Vec<IndexedRecord>), CoreError>> = paths
+        // Process files in parallel.
+        // Each result carries: (path_str, source_file_idx, records).
+        // ZIP files produce multiple batches — one per inner entry — all attributed to the
+        // same source file index so the path table stays compact.
+        let results: Vec<Result<(String, u32, Vec<IndexedRecord>), CoreError>> = paths
             .par_iter()
             .enumerate()
-            .map(|(file_idx, path)| {
-                let bytes = read_log_file(path)?;
-                let start_id = counter.fetch_add(0, Ordering::Relaxed); // placeholder; reassign below
-                let records = parse_records(&bytes, path, file_idx as u32, start_id)?;
-                Ok((file_idx, records))
+            .flat_map_iter(|(file_idx, path)| {
+                let path_str = path.to_string_lossy().into_owned();
+                let src_idx = file_idx as u32;
+
+                let is_zip = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.eq_ignore_ascii_case("zip"))
+                    .unwrap_or(false);
+
+                if is_zip {
+                    match read_zip_entries(path) {
+                        Ok(entries) => entries
+                            .into_iter()
+                            .map(|bytes| {
+                                let p = path_str.clone();
+                                parse_records(&bytes, path, src_idx, 0)
+                                    .map(|r| (p, src_idx, r))
+                            })
+                            .collect::<Vec<_>>(),
+                        Err(e) => vec![Err(e)],
+                    }
+                } else {
+                    match read_log_file(path) {
+                        Ok(bytes) => {
+                            vec![parse_records(&bytes, path, src_idx, 0)
+                                .map(|r| (path_str, src_idx, r))]
+                        }
+                        Err(e) => vec![Err(e)],
+                    }
+                }
             })
             .collect();
 
@@ -85,8 +112,8 @@ impl Store {
         let mut files_done = 0usize;
 
         for result in results {
-            let (file_idx, mut batch) = result?;
-            let path_str = paths[file_idx].to_string_lossy().to_string();
+            let (path_str, src_idx, mut batch) = result?;
+            let file_idx = src_idx as usize;
 
             // Ensure file path is registered
             while self.file_paths.len() <= file_idx {

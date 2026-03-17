@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { DropZone } from "./components/ingest/DropZone";
 import { EventTable } from "./components/results/EventTable";
 import { EventDetail } from "./components/results/EventDetail";
@@ -7,7 +8,7 @@ import { QueryBar } from "./components/search/QueryBar";
 import { FilterPanel } from "./components/search/FilterPanel";
 import { TimelineChart } from "./components/viz/TimelineChart";
 import { AppShell } from "./components/layout/AppShell";
-import { search, getTimeline } from "./lib/tauri";
+import { search, getTimeline, exportCsv, exportJson } from "./lib/tauri";
 import type { RecordRow, SearchResult, TimeBucket } from "./types/cloudtrail";
 import type { Tab } from "./components/layout/Sidebar";
 import "./styles/globals.css";
@@ -20,6 +21,123 @@ const TIME_PRESETS = [
   { label: "7d", value: "earliest=-7d" },
 ];
 
+const LS_QUERY_KEY = "trailinspector_last_query";
+const LS_TAB_KEY = "trailinspector_last_tab";
+
+// ── Export dropdown component ────────────────────────────────────────────────
+function ExportMenu({ query, disabled }: { query: string; disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handler);
+    return () => window.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const handleExport = useCallback(
+    async (format: "csv" | "json") => {
+      setOpen(false);
+      const filters =
+        format === "csv"
+          ? [{ name: "CSV", extensions: ["csv"] }]
+          : [{ name: "JSON", extensions: ["json"] }];
+      try {
+        const path = await save({ filters });
+        if (!path) return; // user cancelled
+        setExporting(true);
+        if (format === "csv") {
+          await exportCsv(query, path);
+        } else {
+          await exportJson(query, path);
+        }
+        alert(`Exported successfully to:\n${path}`);
+      } catch (e) {
+        alert(`Export failed: ${String(e)}`);
+      } finally {
+        setExporting(false);
+      }
+    },
+    [query]
+  );
+
+  return (
+    <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled || exporting}
+        title="Export results"
+        style={{
+          background: "var(--bg-tertiary)",
+          border: "1px solid var(--border)",
+          color: exporting ? "var(--text-secondary)" : "var(--text-primary)",
+          cursor: disabled || exporting ? "not-allowed" : "pointer",
+          padding: "3px 10px",
+          borderRadius: 3,
+          fontSize: 12,
+          fontWeight: 500,
+          opacity: disabled ? 0.5 : 1,
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+        }}
+      >
+        {exporting ? "Exporting…" : "Export ▾"}
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            right: 0,
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            zIndex: 100,
+            minWidth: 130,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+          }}
+        >
+          {(["csv", "json"] as const).map((fmt) => (
+            <button
+              key={fmt}
+              onClick={() => handleExport(fmt)}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                background: "none",
+                border: "none",
+                color: "var(--text-primary)",
+                padding: "7px 12px",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = "var(--bg-tertiary)")
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = "none")
+              }
+            >
+              Export {fmt.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [recordCount, setRecordCount] = useState(0);
@@ -28,18 +146,38 @@ export default function App() {
   const [selected, setSelected] = useState<RecordRow | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Search state
-  const [queryText, setQueryText] = useState("");
+  // Search state — restore from localStorage on first mount
+  const [queryText, setQueryText] = useState(
+    () => localStorage.getItem(LS_QUERY_KEY) ?? ""
+  );
   const [filterFragment, setFilterFragment] = useState("");
   const [timePreset, setTimePreset] = useState("");
 
-  // Tab + identity navigation
-  const [activeTab, setActiveTab] = useState<Tab>("search");
+  // Tab + identity navigation — restore from localStorage
+  const [activeTab, setActiveTab] = useState<Tab>(
+    () => (localStorage.getItem(LS_TAB_KEY) as Tab | null) ?? "search"
+  );
   const [selectedIdentity, setSelectedIdentity] = useState<string | undefined>();
 
   // Timeline state
   const [timelineBuckets, setTimelineBuckets] = useState<TimeBucket[]>([]);
   const timelineAbortRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Timing tracking
+  const [loadTimeMs, setLoadTimeMs] = useState<number | undefined>();
+  const [queryTimeMs, setQueryTimeMs] = useState<number | undefined>();
+
+  // Ref for focusing the query input via Ctrl+K
+  const queryInputRef = useRef<HTMLInputElement>(null);
+
+  // Persist query + tab to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem(LS_QUERY_KEY, queryText);
+  }, [queryText]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_TAB_KEY, activeTab);
+  }, [activeTab]);
 
   const buildQuery = useCallback(
     (q: string, f: string, t: string) =>
@@ -48,7 +186,6 @@ export default function App() {
   );
 
   const fetchTimeline = useCallback(async (fullQuery: string) => {
-    // Debounce timeline fetch
     if (timelineAbortRef.current) clearTimeout(timelineAbortRef.current);
     timelineAbortRef.current = setTimeout(async () => {
       try {
@@ -63,10 +200,12 @@ export default function App() {
   const fetchPage = useCallback(
     async (p: number, fullQuery: string) => {
       setLoading(true);
+      const t0 = performance.now();
       try {
         const r = await search(p, 100, fullQuery || undefined);
         setResults(r);
         setPage(p);
+        setQueryTimeMs(Math.round(performance.now() - t0));
       } catch (e) {
         console.error("Search error:", e);
       } finally {
@@ -110,19 +249,18 @@ export default function App() {
   );
 
   const handleLoaded = useCallback(
-    (count: number) => {
+    (count: number, elapsedMs?: number) => {
       setRecordCount(count);
       setLoaded(true);
+      if (elapsedMs !== undefined) setLoadTimeMs(elapsedMs);
       fetchPage(0, "");
       fetchTimeline("");
     },
     [fetchPage, fetchTimeline]
   );
 
-  // Clicking a histogram bar narrows the time range via an epoch-ms filter
   const handleTimeRangeSelect = useCallback(
     (startMs: number, endMs: number) => {
-      // Build an explicit epoch range fragment and append to query
       const fragment = `earliest=${startMs} latest=${endMs}`;
       setTimePreset(fragment);
       runQuery(queryText, filterFragment, fragment);
@@ -130,13 +268,11 @@ export default function App() {
     [queryText, filterFragment, runQuery]
   );
 
-  // Clicking a user in the filter panel jumps to the Identity tab
   const handleUserSelect = useCallback((user: string) => {
     setSelectedIdentity(user);
     setActiveTab("identity");
   }, []);
 
-  // Clicking a FieldStats bar inserts a filter into the query
   const handleFilterSelect = useCallback(
     (field: string, value: string) => {
       const fragment = `${field}="${value}"`;
@@ -150,7 +286,6 @@ export default function App() {
     [filterFragment, timePreset, runQuery]
   );
 
-  // "View Evidence" from AlertDetail — apply the rule's pre-built query and jump to Search
   const handleViewEvidence = useCallback(
     (query: string) => {
       setQueryText(query);
@@ -162,12 +297,20 @@ export default function App() {
     [runQuery]
   );
 
-  // Ctrl+K: focus query bar
+  // ── Global keyboard shortcuts ─────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Ctrl+K / Cmd+K — focus query bar
       if ((e.ctrlKey || e.metaKey) && e.key === "k") {
         e.preventDefault();
-        (document.getElementById("query-input") as HTMLInputElement)?.focus();
+        queryInputRef.current?.focus();
+        queryInputRef.current?.select();
+        return;
+      }
+
+      // Escape (global) — close detail panel when not inside query bar
+      if (e.key === "Escape" && document.activeElement !== queryInputRef.current) {
+        setSelected(null);
       }
     };
     window.addEventListener("keydown", handler);
@@ -175,6 +318,7 @@ export default function App() {
   }, []);
 
   const activeQuery = buildQuery(queryText, filterFragment, timePreset);
+  const queryActive = activeQuery.trim().length > 0;
 
   if (!loaded) {
     return (
@@ -185,10 +329,10 @@ export default function App() {
     );
   }
 
-  // The search view is the content rendered inside AppShell when on the Search tab
+  // The search view rendered inside AppShell on the Search tab
   const searchView = (
     <div className="flex flex-col" style={{ height: "100%" }}>
-      {/* Top bar: brand + query bar */}
+      {/* Top bar: brand + query bar + export */}
       <div
         className="flex items-center flex-shrink-0"
         style={{
@@ -211,13 +355,17 @@ export default function App() {
             TrailInspector
           </span>
         </div>
-        <div id="query-input" className="flex-1">
+        <div className="flex-1">
           <QueryBar
             value={queryText}
             onChange={setQueryText}
             onSubmit={handleQuerySubmit}
             disabled={loading}
+            inputRef={queryInputRef}
           />
+        </div>
+        <div className="px-2 flex-shrink-0">
+          <ExportMenu query={activeQuery} disabled={loading} />
         </div>
       </div>
 
@@ -327,7 +475,14 @@ export default function App() {
           onViewEvidence={handleViewEvidence}
         />
       </div>
-      <StatusBar recordCount={recordCount} loaded={loaded} />
+      <StatusBar
+        recordCount={recordCount}
+        loaded={loaded}
+        filteredCount={results?.total}
+        queryActive={queryActive}
+        loadTimeMs={loadTimeMs}
+        queryTimeMs={queryTimeMs}
+      />
     </div>
   );
 }

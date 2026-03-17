@@ -63,3 +63,11 @@ export async function getIdentitySummary(arn: string): Promise<IdentitySummary> 
 export async function runDetections(): Promise<Alert[]> {
   return invoke<Alert[]>("run_detections");
 }
+
+export async function exportCsv(query: string, path: string): Promise<void> {
+  return invoke<void>("export_csv", { query, path });
+}
+
+export async function exportJson(query: string, path: string): Promise<void> {
+  return invoke<void>("export_json", { query, path });
+}

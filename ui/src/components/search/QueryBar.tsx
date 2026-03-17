@@ -1,10 +1,12 @@
-import { useState, useCallback, useEffect, type KeyboardEvent } from "react";
+import { useState, useCallback, useEffect, useRef, type KeyboardEvent } from "react";
 
 interface Props {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
   disabled?: boolean;
+  /** Optional ref forwarded to the underlying <input> for external focus control */
+  inputRef?: React.RefObject<HTMLInputElement | null>;
 }
 
 const PLACEHOLDER = 'eventName=ConsoleLogin AND awsRegion=us-east-1 earliest=-24h';
@@ -14,8 +16,10 @@ const FIELD_HINTS = [
   "userName", "userArn", "accountId", "errorCode", "identityType", "userAgent",
 ];
 
-export function QueryBar({ value, onChange, onSubmit, disabled }: Props) {
+export function QueryBar({ value, onChange, onSubmit, disabled, inputRef }: Props) {
   const [localValue, setLocalValue] = useState(value);
+  const internalRef = useRef<HTMLInputElement>(null);
+  const resolvedRef = inputRef ?? internalRef;
 
   // Sync when external value changes (e.g., from filter panel)
   useEffect(() => {
@@ -31,9 +35,10 @@ export function QueryBar({ value, onChange, onSubmit, disabled }: Props) {
         setLocalValue("");
         onChange("");
         onSubmit("");
+        resolvedRef.current?.blur();
       }
     },
-    [localValue, onChange, onSubmit]
+    [localValue, onChange, onSubmit, resolvedRef]
   );
 
   const handleChange = useCallback(
@@ -67,6 +72,8 @@ export function QueryBar({ value, onChange, onSubmit, disabled }: Props) {
       </svg>
 
       <input
+        ref={resolvedRef}
+        id="query-input"
         type="text"
         value={localValue}
         onChange={handleChange}

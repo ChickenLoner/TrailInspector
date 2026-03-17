@@ -2,7 +2,7 @@ use tauri::State;
 use trail_inspector_core::query::{execute, parse_query, Query};
 use trail_inspector_core::stats::{
     build_timeline, get_identity_summary, top_field_values,
-    FieldValueCount, IdentitySummary, TimeBucket, TimelineResult,
+    FieldValueCount, IdentitySummary, TimelineResult,
 };
 use crate::state::AppState;
 

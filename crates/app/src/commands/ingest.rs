@@ -9,6 +9,7 @@ use std::path::Path;
 pub enum IngestProgress {
     Progress(ProgressEvent),
     Complete { records_total: usize },
+    #[allow(dead_code)]
     Error { message: String },
 }
 
