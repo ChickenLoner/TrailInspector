@@ -1,0 +1,10 @@
+pub mod initial_access;
+pub mod persistence;
+pub mod persistence_ext;
+pub mod defense_evasion;
+pub mod credential_access;
+pub mod discovery;
+pub mod exfiltration;
+pub mod impact;
+pub mod network;
+pub mod rds;

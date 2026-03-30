@@ -4137,7 +4137,7 @@ dependencies = [
 
 [[package]]
 name = "trail-inspector-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -4152,7 +4152,7 @@ dependencies = [
 
 [[package]]
 name = "trail-inspector-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "flate2",

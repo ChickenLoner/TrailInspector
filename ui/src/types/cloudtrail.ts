@@ -129,6 +129,8 @@ export interface Alert {
   metadata: Record<string, string>;
   mitreTactic: string;
   mitreTechnique: string;
+  /** AWS service category (e.g. "IAM", "S3", "VPC", "RDS") */
+  service: string;
   /** Pre-built query — apply to the search bar to see matching events. */
   query: string;
 }

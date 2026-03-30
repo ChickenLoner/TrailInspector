@@ -1,754 +1,172 @@
-# TrailInspector — Technical Implementation Plan
+# TrailInspector v0.2.0 — Implementation Plan
 
-> **CloudTrail Log Analyzer Desktop Application**
-> A cross-platform (Windows/Linux/macOS) standalone tool for analyzing AWS CloudTrail JSON exports with built-in detection rules, modeled after Splunk's investigation workflow.
-
----
-
-## Table of Contents
-
-1. [Architecture Overview](#1-architecture-overview)
-2. [Project Structure](#2-project-structure)
-3. [Rust Backend Design](#3-rust-backend-design)
-4. [React Frontend Design](#4-react-frontend-design)
-5. [Data Flow & IPC](#5-data-flow--ipc)
-6. [Built-in Detection Rules](#6-built-in-detection-rules)
-7. [Phased Build Order](#7-phased-build-order)
-8. [Known Technical Risks](#8-known-technical-risks)
+> **EG-CERT Recommendations: Detection Expansion, Session Grouping, IP Enrichment**
+> Evolving TrailInspector from a log viewer into a full investigation tool.
 
 ---
 
-## 1. Architecture Overview
+## Dependency Graph
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Tauri v2 Shell                     │
-│  ┌───────────────────────┐  ┌─────────────────────┐ │
-│  │    React Frontend      │  │    Rust Backend      │ │
-│  │    (Webview)           │◄─┤    (Core Library)    │ │
-│  │                        │  │                      │ │
-│  │  - Query Bar           │  │  - File Discovery    │ │
-│  │  - Filter Panel        │  │  - GZip Decompress   │ │
-│  │  - Timeline Histogram  │  │  - JSON Parsing      │ │
-│  │  - Event Table         │  │  - In-Memory Index   │ │
-│  │  - Detection Alerts    │  │  - Query Engine      │ │
-│  │  - Field Statistics    │  │  - Detection Engine   │ │
-│  │  - Identity Timeline   │  │  - Export Engine     │ │
-│  └───────────┬───────────┘  └──────────┬──────────┘ │
-│              │      Tauri IPC           │            │
-│              └──────────────────────────┘            │
-└─────────────────────────────────────────────────────┘
-```
+Phase 1 (restructure detection module)
+  ├──> Phase 2 (20 new rules: VPC, RDS, IAM, Defense Evasion)
+  │     └──> Phase 3 (20 more rules: EBS, Lambda, S3, encryption)
+  │           └──> Phase 4 (detections UI: service grouping + filtering)
+  ├──> Phase 5 (session engine in core)
+  │     └──> Phase 6 (sessions UI tab)
+  ├──> Phase 7 (GeoIP engine in core)
+  │     └──> Phase 8 (IP enrichment UI + geo anomaly rules)
+  └──> Phase 9 (session-alert correlation + AssumeRole chain linking)
 
-**Key Decisions:**
-- **Tauri v2** — Rust-native desktop framework, single binary output, ~5-10MB bundle
-- **Cargo workspace** — Core parsing/query logic lives in a standalone `core` crate (testable without Tauri), Tauri app crate wraps it
-- **In-memory indexed store** — Records loaded into memory with HashMap indexes on hot fields (eventName, sourceIPAddress, userIdentity, awsRegion, eventTime). For 1GB+ datasets, records stored in a `Vec<Record>` with indexes pointing to indices
-- **Streaming ingestion** — Files processed in parallel via rayon, progress streamed to frontend via Tauri v2 Channels (`tauri::ipc::Channel<T>`) for ordered, high-throughput progress updates
-- **Query engine** — Supports both structured filters AND a mini query language (`eventName=CreateUser AND sourceIPAddress!=10.*`)
-
----
-
-## 2. Project Structure
-
-```
-TrailInspector/
-├── Cargo.toml                    # Workspace root
-├── PLAN.md
-├── README.md
-├── LICENSE
-├── .gitignore
-│
-├── crates/
-│   ├── core/                     # Pure Rust library — no Tauri dependency
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── model.rs          # CloudTrail record structs
-│   │       ├── ingest/
-│   │       │   ├── mod.rs
-│   │       │   ├── discovery.rs  # Recursive file finder (.json, .json.gz, .zip)
-│   │       │   ├── decompress.rs # GZip + ZIP handling
-│   │       │   └── parser.rs     # JSON → Record parsing
-│   │       ├── store/
-│   │       │   ├── mod.rs
-│   │       │   ├── index.rs      # In-memory field indexes
-│   │       │   └── store.rs      # Record store (Vec<Record> + indexes)
-│   │       ├── query/
-│   │       │   ├── mod.rs
-│   │       │   ├── filter.rs     # Structured filter logic
-│   │       │   ├── parser.rs     # Query language parser
-│   │       │   └── engine.rs     # Query execution against store
-│   │       ├── detection/
-│   │       │   ├── mod.rs
-│   │       │   ├── engine.rs     # Rule evaluation engine
-│   │       │   └── rules/        # Individual rule definitions
-│   │       │       ├── mod.rs
-│   │       │       ├── initial_access.rs
-│   │       │       ├── persistence.rs
-│   │       │       ├── privilege_escalation.rs
-│   │       │       ├── defense_evasion.rs
-│   │       │       ├── credential_access.rs
-│   │       │       ├── discovery.rs
-│   │       │       ├── exfiltration.rs
-│   │       │       └── impact.rs
-│   │       ├── stats.rs          # Field statistics / aggregations
-│   │       └── export.rs         # CSV/JSON export
-│   │
-│   └── app/                      # Tauri application crate
-│       ├── Cargo.toml
-│       ├── tauri.conf.json
-│       ├── build.rs
-│       ├── icons/
-│       ├── capabilities/         # Tauri v2 permission capabilities
-│       └── src/
-│           ├── main.rs           # Tauri entry point
-│           ├── commands/         # Tauri IPC command handlers
-│           │   ├── mod.rs
-│           │   ├── ingest.rs     # load_directory, load_zip, get_progress
-│           │   ├── query.rs      # search, filter, get_field_values
-│           │   ├── stats.rs      # get_timeline, get_top_fields, get_identity_summary
-│           │   ├── detection.rs  # run_detections, get_alerts
-│           │   └── export.rs     # export_csv, export_json
-│           └── state.rs          # Tauri managed state (RwLock<Store> for concurrent reads)
-│
-├── ui/                           # React frontend (Vite + TypeScript)
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tsconfig.json
-│   ├── index.html
-│   └── src/
-│       ├── main.tsx
-│       ├── App.tsx
-│       ├── types/
-│       │   └── cloudtrail.ts     # TypeScript types mirroring Rust model
-│       ├── hooks/
-│       │   ├── useIngest.ts      # File loading + progress
-│       │   ├── useQuery.ts       # Search/filter state
-│       │   ├── useDetections.ts  # Detection results
-│       │   └── useStats.ts       # Statistics/aggregations
-│       ├── components/
-│       │   ├── layout/
-│       │   │   ├── AppShell.tsx       # Main layout with sidebar + content
-│       │   │   ├── Sidebar.tsx        # Navigation + loaded dataset info
-│       │   │   └── StatusBar.tsx      # Record count, load time, memory usage
-│       │   ├── ingest/
-│       │   │   ├── DropZone.tsx       # Drag-and-drop folder/zip loader
-│       │   │   └── ProgressBar.tsx    # Ingestion progress
-│       │   ├── search/
-│       │   │   ├── QueryBar.tsx       # Free-text query input (SPL-like)
-│       │   │   ├── FilterPanel.tsx    # Structured dropdown filters
-│       │   │   └── TimeRangePicker.tsx # Time window selection
-│       │   ├── results/
-│       │   │   ├── EventTable.tsx     # Virtualized event list
-│       │   │   ├── EventDetail.tsx    # Expandable raw JSON view
-│       │   │   └── Pagination.tsx     # Cursor-based pagination
-│       │   ├── viz/
-│       │   │   ├── TimelineChart.tsx  # Events-over-time histogram
-│       │   │   ├── FieldStats.tsx     # Top-N field value bar charts
-│       │   │   └── IdentityTimeline.tsx # Per-principal activity timeline
-│       │   └── detection/
-│       │       ├── AlertPanel.tsx     # Detection results with severity
-│       │       └── AlertDetail.tsx    # Alert explanation + matching events
-│       ├── lib/
-│       │   ├── tauri.ts          # Typed wrappers around invoke/listen
-│       │   └── queryLanguage.ts  # Client-side query syntax highlighting
-│       └── styles/
-│           └── globals.css       # Dark theme (Splunk-inspired)
-│
-└── samples/                      # Test data (gitignored)
+Phase 10 (polish + tests + docs) — after all above
 ```
 
 ---
 
-## 3. Rust Backend Design
+## Phase 1: Detection Module Restructuring ✅
 
-### 3.1 Data Model (`crates/core/src/model.rs`)
+Break monolithic `detection/mod.rs` (~1100 lines) into per-tactic files.
+
+- `crates/core/src/detection/rules/` directory with one file per tactic
+- Add `service: &'static str` to `DetectionRule`, `service: String` to `Alert`
+- `all_rules()` registry stays in `detection/mod.rs`, importing from submodules
+
+---
+
+## Phase 2: Detection Rules Batch 1 — Network/VPC + Defense Evasion + RDS + IAM (20 rules)
+
+| ID | Rule | Severity | Service |
+|----|------|----------|---------|
+| DE-05 | VPC Flow Log Deletion | Critical | VPC |
+| DE-06 | CloudWatch Log Group Deletion | High | CloudWatch |
+| DE-07 | CloudTrail S3 Bucket Changed | High | CloudTrail |
+| DE-08 | EventBridge Rule Disabled | Medium | EventBridge |
+| DE-09 | WAF Web ACL Deletion | High | WAF |
+| NW-01 | Security Group Ingress 0.0.0.0/0 | High | VPC |
+| NW-02 | Network ACL Allows All Traffic | Medium | VPC |
+| NW-03 | Internet Gateway Created | Info | VPC |
+| NW-04 | Route to 0.0.0.0/0 Modified | Medium | VPC |
+| NW-05 | VPC Peering Created | Info | VPC |
+| NW-06 | Security Group Deleted | Low | VPC |
+| NW-07 | Subnet Made Public | Medium | VPC |
+| NW-08 | NAT Gateway Deleted | Low | VPC |
+| PE-05 | MFA Device Deactivated | High | IAM |
+| PE-06 | IAM Policy Version Created (SetAsDefault) | Medium | IAM |
+| PE-07 | Cross-Account AssumeRole | Medium | STS |
+| CA-05 | Root Console Login | Critical | IAM |
+| RDS-01 | RDS Deletion Protection Disabled | High | RDS |
+| RDS-02 | RDS Public Snapshot Restore | High | RDS |
+| RDS-03 | RDS Master Password Changed | Medium | RDS |
+
+---
+
+## Phase 3: Detection Rules Batch 2 — EBS, Lambda, S3, Encryption, Resource Sharing (20 rules)
+
+| ID | Rule | Severity | Service |
+|----|------|----------|---------|
+| EBS-01 | EBS Default Encryption Disabled | High | EBS |
+| EBS-02 | EBS Snapshot Made Public | Critical | EBS |
+| EBS-03 | EBS Volume Detached | Low | EBS |
+| EBS-04 | EBS Snapshot Deleted | Medium | EBS |
+| EBS-05 | EBS Default KMS Key Changed | Medium | EBS |
+| LM-01 | Lambda Public Access via Resource Policy | High | Lambda |
+| LM-02 | Lambda Env Variables Updated | Low | Lambda |
+| EX-02 | S3 Bucket Deleted | Medium | S3 |
+| EX-03 | S3 Bulk Download (50+ GetObject in 5min) | Medium | S3 |
+| EX-04 | S3 Bucket Logging Disabled | Medium | S3 |
+| EX-05 | S3 Bucket Encryption Removed | High | S3 |
+| RS-01 | EC2 AMI Made Public | High | EC2 |
+| RS-02 | SSM Document Made Public | High | SSM |
+| RS-03 | RDS Snapshot Made Public | High | RDS |
+| DE-10 | CloudFront Logging Disabled | Medium | CloudFront |
+| DE-11 | SQS Queue Encryption Removed | Medium | SQS |
+| DE-12 | SNS Topic Encryption Removed | Medium | SNS |
+| CA-06 | KMS Key Scheduled for Deletion | High | KMS |
+| DE-13 | Route53 Hosted Zone Deleted | Medium | Route53 |
+| IM-03 | SES Email Identity Verification | Low | SES |
+
+---
+
+## Phase 4: Enhanced Detections UI — Service Grouping + Filtering
+
+- Group-by toggle: Severity | Service | MITRE Tactic with collapsible sections
+- Severity filter chips (Critical/High/Medium/Low/Info toggle)
+- Search box to filter by title or rule ID
+- Summary counts, MITRE ATT&CK external links
+
+---
+
+## Phase 5: Session Grouping Engine (Core)
+
+Compute sessions from `(identity, source_ip, time_gap)` — O(n) over time-sorted records.
 
 ```rust
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use chrono::{DateTime, Utc};
-
-/// Top-level CloudTrail file wrapper
-#[derive(Debug, Deserialize)]
-pub struct CloudTrailFile {
-    #[serde(rename = "Records")]
-    pub records: Vec<CloudTrailRecord>,
-}
-
-/// Raw CloudTrail record — deserialize all known fields, capture extras
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudTrailRecord {
-    pub event_version: Option<String>,
-    pub event_time: String,                   // ISO 8601, indexed
-    pub event_source: String,                 // e.g., "iam.amazonaws.com", indexed
-    pub event_name: String,                   // e.g., "CreateUser", indexed
-    pub aws_region: String,                   // indexed
-    pub source_ip_address: Option<String>,    // indexed
-    pub user_agent: Option<String>,
-    pub user_identity: UserIdentity,
-    pub request_parameters: Option<serde_json::Value>,  // keep as raw JSON
-    pub response_elements: Option<serde_json::Value>,   // keep as raw JSON
-    pub additional_event_data: Option<serde_json::Value>, // contains MFAUsed, etc.
-    pub error_code: Option<String>,           // indexed
-    pub error_message: Option<String>,
-    pub request_id: Option<String>,
-    #[serde(rename = "eventID")]
-    pub event_id: Option<String>,
-    pub event_type: Option<String>,
-    pub read_only: Option<bool>,
-    pub management_event: Option<bool>,
-    pub recipient_account_id: Option<String>, // indexed
-    pub event_category: Option<String>,
-    pub shared_event_id: Option<String>,
-    pub session_credential_from_console: Option<String>,
-    #[serde(default)]
-    pub resources: Vec<Resource>,             // present in data events
-
-    // Capture any fields not explicitly modeled
-    #[serde(flatten)]
-    pub extra: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UserIdentity {
-    #[serde(rename = "type")]
-    pub identity_type: Option<String>,        // indexed
-    pub principal_id: Option<String>,
-    pub arn: Option<String>,                  // indexed
-    pub account_id: Option<String>,           // indexed
-    pub access_key_id: Option<String>,        // indexed
-    pub user_name: Option<String>,            // indexed
-    pub session_context: Option<serde_json::Value>,
-    pub invoked_by: Option<String>,
-
-    #[serde(flatten)]
-    pub extra: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Resource {
-    pub account_id: Option<String>,
-    #[serde(rename = "type")]
-    pub resource_type: Option<String>,
-    #[serde(rename = "ARN")]
-    pub arn: Option<String>,
-}
-
-/// Internal record with parsed timestamp and assigned ID
-pub struct IndexedRecord {
-    pub id: u64,
-    pub timestamp: i64,          // epoch millis, for fast range queries
-    pub source_file: u32,        // index into file path table (saves memory)
-    pub record: CloudTrailRecord,
+pub struct Session {
+    pub id: u32,
+    pub identity_key: String,
+    pub source_ip: String,
+    pub first_event_ms: i64,
+    pub last_event_ms: i64,
+    pub event_count: usize,
+    pub event_ids: Vec<u64>,
+    pub error_count: usize,
+    pub unique_event_names: Vec<String>,
+    pub unique_regions: Vec<String>,
+    pub alert_count: usize,
 }
 ```
 
-### 3.2 Ingestion Pipeline (`crates/core/src/ingest/`)
+New IPC commands: `list_sessions`, `get_session_detail`.
 
-```
-Directory/ZIP path
-    │
-    ▼
-┌─────────────┐    Parallel (rayon)    ┌──────────────┐
-│  discovery   │ ──────────────────►   │  per-file     │
-│  .json.gz    │                       │  decompress   │
-│  .json       │                       │  + parse      │
-│  .zip        │                       │  Records[]    │
-└─────────────┘                        └──────┬───────┘
-                                              │
-                                              ▼
-                                       ┌──────────────┐
-                                       │  Store.ingest │
-                                       │  index fields │
-                                       │  emit progress│
-                                       └──────────────┘
-```
+---
 
-**Crate dependencies for ingestion:**
-| Crate | Purpose |
-|-------|---------|
-| `serde` + `serde_json` | JSON deserialization |
-| `flate2` (with `zlib-ng` backend) | GZip decompression (~30-60% faster than default pure-Rust backend) |
-| `zip` | ZIP archive extraction |
-| `rayon` | Parallel file processing |
-| `walkdir` | Recursive directory traversal |
-| `chrono` | Timestamp parsing |
+## Phase 6: Sessions UI Tab
 
-**Design notes:**
-- Files processed in parallel batches (rayon thread pool, default = num_cpus)
-- Each file: open → detect gzip/json → decompress to `Vec<u8>` → `serde_json::from_slice` (2-5x faster than `from_reader`) → yield individual records
-- Progress reported via Tauri Channel: `Channel<ProgressEvent>` where `ProgressEvent { files_total, files_done, records_total }`
-- **Performance note:** Always use `read_to_end` + `serde_json::from_slice` instead of `serde_json::from_reader`. The reader approach does many small reads and is significantly slower.
-- Memory estimate: ~1KB per record overhead (struct + index entries). 1M records ≈ 1GB RAM. For datasets exceeding available RAM, future phase adds memory-mapped backing store.
+New "Sessions" tab between Identity and Detections:
+- `SessionView.tsx` — session card list (identity, IP, duration, event/error/alert counts, top events)
+- `SessionDetail.tsx` — paginated event timeline, reuses IdentityTimeline patterns
 
-### 3.3 In-Memory Store & Indexes (`crates/core/src/store/`)
+---
+
+## Phase 7: IP Enrichment Engine (Offline GeoIP)
+
+`maxminddb` crate for offline MMDB lookup. User provides GeoLite2 files or bundled ip2location-lite CSV.
 
 ```rust
-pub struct Store {
-    records: Vec<IndexedRecord>,
-    file_paths: Vec<String>,   // deduped file path table
-
-    // Inverted indexes: field_value → Vec<record_id>
-    idx_event_name: HashMap<String, Vec<u64>>,
-    idx_event_source: HashMap<String, Vec<u64>>,
-    idx_region: HashMap<String, Vec<u64>>,
-    idx_source_ip: HashMap<String, Vec<u64>>,
-    idx_user_arn: HashMap<String, Vec<u64>>,
-    idx_user_name: HashMap<String, Vec<u64>>,
-    idx_account_id: HashMap<String, Vec<u64>>,
-    idx_error_code: HashMap<String, Vec<u64>>,
-    idx_identity_type: HashMap<String, Vec<u64>>,
-
-    // Sorted by timestamp for range queries
-    time_sorted_ids: Vec<u64>,
+pub struct IpInfo {
+    pub country_code: Option<String>,
+    pub country_name: Option<String>,
+    pub city: Option<String>,
+    pub asn: Option<u32>,
+    pub asn_org: Option<String>,
 }
 ```
 
-**Query execution strategy:**
-1. Parse query → set of `FieldFilter` predicates + time range
-2. For each predicate, look up matching record IDs from the appropriate index
-3. Intersect all ID sets (start with smallest set for efficiency)
-4. Apply time range filter on the intersection
-5. Sort results by timestamp (default) or requested field
-6. Return paginated slice (page_size=100 default, cursor-based)
-
-### 3.4 Query Language (`crates/core/src/query/parser.rs`)
-
-Minimal SPL-inspired syntax:
-
-```
-# Equality
-eventName=CreateUser
-
-# Inequality
-sourceIPAddress!=10.0.0.1
-
-# Wildcard (prefix/suffix)
-eventName=Create*
-userAgent=*boto3*
-
-# AND (implicit or explicit)
-eventName=CreateUser sourceIPAddress=1.2.3.4
-eventName=CreateUser AND sourceIPAddress=1.2.3.4
-
-# OR
-eventName=CreateUser OR eventName=CreateAccessKey
-
-# NOT
-NOT eventName=GetBucketAcl
-
-# Parentheses for grouping
-(eventName=CreateUser OR eventName=CreateAccessKey) AND sourceIPAddress=1.2.3.4
-
-# Time shorthand (applied as additional filter)
-eventName=ConsoleLogin earliest=-24h
-
-# Field existence
-errorCode=*        # has errorCode
-errorCode!=*       # no errorCode
-```
-
-Parser built with a hand-written recursive descent parser (no external grammar dependency — keeps the binary small and avoids proc-macro compile times).
-
-### 3.5 Detection Engine (`crates/core/src/detection/`)
-
-```rust
-pub struct DetectionRule {
-    pub id: &'static str,           // e.g., "TA0001.console_login_no_mfa"
-    pub name: &'static str,
-    pub description: &'static str,
-    pub severity: Severity,          // Info, Low, Medium, High, Critical
-    pub mitre_tactic: &'static str,
-    pub mitre_technique: &'static str,
-    pub evaluate: fn(&Store) -> Vec<Alert>,
-}
-
-pub struct Alert {
-    pub rule_id: String,
-    pub severity: Severity,
-    pub title: String,
-    pub description: String,
-    pub matching_record_ids: Vec<u64>,  // links to evidence
-    pub metadata: HashMap<String, String>,
-}
-```
-
-Rules are plain Rust functions registered in a static array — no DSL, no config files. This keeps them fast, type-safe, and easy to audit. Each rule function receives a `&Store` reference and returns alerts.
-
-Two rule types:
-- **Single-event rules** — scan records matching a filter condition (e.g., `ConsoleLogin` where `mfaAuthenticated != true`)
-- **Correlation rules** — query multiple event types and correlate by identity/IP/time window (e.g., `CreateAccessKey` → `different sourceIP uses that key within 1h`)
+New IPC commands: `get_ip_info`, `list_ips`.
 
 ---
 
-## 4. React Frontend Design
+## Phase 8: IP Enrichment UI + Geo Anomaly Rules
 
-### 4.1 Tech Stack
-
-| Library | Purpose |
-|---------|---------|
-| React 18 | UI framework |
-| TypeScript | Type safety |
-| Vite | Build tooling (Tauri default) |
-| @tauri-apps/api v2 | IPC with Rust backend |
-| @tanstack/react-table | Virtualized event table |
-| @tanstack/react-virtual | Virtual scrolling for large lists |
-| recharts or visx | Timeline histogram + charts |
-| tailwindcss | Styling (dark theme) |
-| cmdk or similar | Command palette for power users |
-| codemirror 6 | Query bar with syntax highlighting |
-
-### 4.2 Key Views
-
-#### View 1: Ingest / Home
-- Drag-and-drop zone for folder or ZIP file
-- Shows ingestion progress (files parsed, records loaded, time elapsed)
-- Recent sessions list (if session persistence enabled)
-
-#### View 2: Search & Explore (main view, Splunk-inspired)
-```
-┌─────────────────────────────────────────────────────┐
-│  [Query Bar: eventName=ConsoleLogin AND ...]   [Go] │
-├────────────┬────────────────────────────────────────┤
-│ Filters    │  Timeline Histogram                    │
-│            │  ████▅▂▁▃▇████▅▂                       │
-│ Time Range │────────────────────────────────────────│
-│ [last 24h] │  Events (1,247 of 523,891)            │
-│            │  ┌──────────────────────────────────┐  │
-│ Event Name │  │ Time  │ EventName │ User │ IP    │  │
-│ ☑ Console  │  │ 21:18 │ GetTrail  │ iam… │ 185…  │  │
-│ ☑ Create…  │  │ 21:19 │ GetTrail  │ iam… │ 185…  │  │
-│ ☐ Get…     │  │ ▶ expanded: raw JSON             │  │
-│            │  │ 21:20 │ CreateUs… │ att… │ 203…  │  │
-│ Region     │  └──────────────────────────────────┘  │
-│ ☑ us-east  │                                        │
-│ ☐ eu-west  │  [◀ 1 2 3 ... 124 ▶]                  │
-│            │                                        │
-│ Source IP  │                                        │
-│ [search…]  │                                        │
-│ 185.202…(3)│                                        │
-│ 203.0.1…(1)│                                        │
-└────────────┴────────────────────────────────────────┘
-```
-
-#### View 3: Field Statistics
-- Top-N values for selected field (bar chart)
-- Click a value → auto-populates query bar filter
-- Fields: eventName, eventSource, sourceIPAddress, userName, awsRegion, errorCode
-
-#### View 4: Identity Investigation
-- Select a principal (by ARN, userName, or accessKeyId)
-- See all their actions across all regions, chronologically
-- Highlight anomalies (new IP, new region, new action type)
-
-#### View 5: Detection Dashboard
-- Summary cards: X Critical, Y High, Z Medium alerts
-- Alert list sorted by severity
-- Click alert → shows explanation + linked evidence records
-- Each alert links to pre-filtered search view showing matching events
-
-### 4.3 UI/UX Notes
-- **Dark theme by default** — dark background, monospace for data fields, Splunk-esque color palette
-- **Virtualized table** — must handle 500K+ rows without lag (render only visible rows)
-- **Pagination** — backend returns pages of 100-500 records; frontend paginates. No sending 500K records over IPC.
-- **Keyboard shortcuts** — Ctrl+K for query bar focus, Ctrl+Enter to run query, arrow keys to navigate results
-- **Responsive column widths** — auto-size based on content, user-resizable
+- Country column in EventTable, geo panel in EventDetail/SessionDetail
+- IdentityTimeline highlights multi-country activity
+- New `IpView.tsx` — all IPs with geo info and click-to-investigate
+- GEO-01: Same identity from multiple countries (Medium)
+- GEO-02: Console login from new country (High)
 
 ---
 
-## 5. Data Flow & IPC
+## Phase 9: Session-Alert Correlation + Cross-Session Linking
 
-### 5.1 Tauri v2 IPC Pattern
-
-All communication uses **Tauri commands** (invoke) for request/response and **Tauri v2 Channels** (`tauri::ipc::Channel<T>`) for streaming progress. Channels guarantee message ordering and are tied to the command invocation lifetime.
-
-```
-Frontend                              Backend (Rust)
-   │                                      │
-   │── invoke("load_directory",           │
-   │         {path, onProgress}) ────────►│
-   │                                      │── process files (rayon)
-   │◄── channel.send(Progress{...}) ─────│   (ordered, per-file updates)
-   │◄── channel.send(Progress{...}) ─────│
-   │◄── channel.send(Complete{...}) ─────│
-   │◄── Ok(summary) ─────────────────────│   (command returns final result)
-   │                                      │
-   │── invoke("search", {query, page}) ──►│
-   │◄── {records: [...], total, page} ────│   (paginated response)
-   │                                      │
-   │── invoke("get_timeline", {query}) ──►│
-   │◄── {buckets: [{time, count},...]} ───│   (histogram data)
-   │                                      │
-   │── invoke("run_detections") ─────────►│
-   │◄── {alerts: [...]} ─────────────────│
-   │                                      │
-   │── invoke("get_field_values",         │
-   │         {field, query, top_n}) ─────►│
-   │◄── {values: [{val, count},...]} ─────│
-   │                                      │
-   │── invoke("export_csv",               │
-   │         {query, path}) ─────────────►│
-   │◄── {rows_written: 12345} ───────────│
-```
-
-### 5.2 State Management
-
-```rust
-// Backend: Tauri managed state
-struct AppState {
-    store: RwLock<Option<Store>>,  // RwLock for concurrent reads during queries
-}
-
-// Registered in main.rs:
-fn main() {
-    tauri::Builder::default()
-        .manage(AppState { store: RwLock::new(None) })
-        .invoke_handler(tauri::generate_handler![
-            commands::ingest::load_directory,
-            commands::ingest::load_zip,
-            commands::query::search,
-            commands::query::get_field_values,
-            commands::stats::get_timeline,
-            commands::stats::get_identity_summary,
-            commands::detection::run_detections,
-            commands::export::export_csv,
-            commands::export::export_json,
-        ])
-        .run(tauri::generate_context!())
-        .expect("error running TrailInspector");
-}
-```
-
-Frontend state: React context + useReducer for search state, or Zustand if state grows complex. No Redux — overkill for this.
+- Annotate sessions with `alert_ids` by intersecting event IDs
+- AssumeRole chain detection → `session_links` between parent/child sessions
+- AlertDetail shows owning sessions; SessionDetail shows related alerts
 
 ---
 
-## 6. Built-in Detection Rules
+## Phase 10: Polish, Tests, Documentation
 
-### Initial Access
-| ID | Rule | eventName(s) | Logic | MITRE |
-|----|------|-------------|-------|-------|
-| IA-01 | Console Login Without MFA | `ConsoleLogin` | `responseElements.ConsoleLogin=Success` AND `additionalEventData.MFAUsed!=Yes` | T1078.004 |
-| IA-02 | Console Login From Unusual IP | `ConsoleLogin` | Success login from IP not seen in prior logins for this user (baseline) | T1078.004 |
-| IA-03 | Root Account Usage | Any | `userIdentity.type=Root` | T1078.004 |
-| IA-04 | Failed Login Brute Force | `ConsoleLogin` | ≥5 `responseElements.ConsoleLogin=Failure` within 10min from same `sourceIPAddress` | T1110.001 |
-
-### Persistence
-| ID | Rule | eventName(s) | Logic | MITRE |
-|----|------|-------------|-------|-------|
-| PE-01 | IAM User Created | `CreateUser` | Any CreateUser event | T1136.003 |
-| PE-02 | Access Key Created for Another User | `CreateAccessKey` | `requestParameters.userName != userIdentity.userName` (creator ≠ target) | T1098.001 |
-| PE-03 | Login Profile Created | `CreateLoginProfile` | Console access added to IAM user | T1098 |
-| PE-04 | Backdoor Policy Attached | `AttachUserPolicy`, `AttachRolePolicy`, `PutUserPolicy`, `PutRolePolicy` | Admin policy (`*:*` or `AdministratorAccess`) attached | T1098.003 |
-| PE-05 | Lambda Function Created | `CreateFunction20150331` | New Lambda — potential persistence | T1525 |
-| PE-06 | EC2 Key Pair Created | `CreateKeyPair`, `ImportKeyPair` | SSH key created/imported | T1098.004 |
-
-### Privilege Escalation
-| ID | Rule | eventName(s) | Logic | MITRE |
-|----|------|-------------|-------|-------|
-| PV-01 | IAM Policy Escalation | `CreatePolicyVersion`, `SetDefaultPolicyVersion` | Policy modified to grant broader permissions | T1484 |
-| PV-02 | AssumeRole Cross-Account | `AssumeRole` | Role assumed from different accountId | T1550.001 |
-| PV-03 | STS Token via New Method | `GetSessionToken`, `GetFederationToken` | Temporary creds obtained | T1550.001 |
-
-### Defense Evasion
-| ID | Rule | eventName(s) | Logic | MITRE |
-|----|------|-------------|-------|-------|
-| DE-01 | CloudTrail Stopped/Deleted | `StopLogging`, `DeleteTrail`, `UpdateTrail` | Logging tampered with | T1562.008 |
-| DE-02 | GuardDuty Disabled | `DeleteDetector`, `StopMonitoringMembers` | GuardDuty turned off | T1562.001 |
-| DE-03 | S3 Logging Disabled | `PutBucketLogging` (empty config) | Access logging removed | T1562.008 |
-| DE-04 | Config Recorder Stopped | `StopConfigurationRecorder`, `DeleteConfigurationRecorder` | AWS Config disabled | T1562.001 |
-| DE-05 | VPC Flow Logs Deleted | `DeleteFlowLogs` | Network logging removed | T1562.008 |
-| DE-06 | Event Selectors Modified | `PutEventSelectors` | CloudTrail scope narrowed | T1562.008 |
-
-### Credential Access
-| ID | Rule | eventName(s) | Logic | MITRE |
-|----|------|-------------|-------|-------|
-| CA-01 | Access Key Used From New IP | `CreateAccessKey` → any API call | Key created then used from different IP | T1528 |
-| CA-02 | Secrets Manager Accessed | `GetSecretValue` | Bulk secret retrieval (>5 in 10min window) | T1555 |
-| CA-03 | SSM Parameter Store Accessed | `GetParameter`, `GetParameters` | Bulk parameter retrieval | T1555 |
-| CA-04 | Password Policy Weakened | `UpdateAccountPasswordPolicy` | Password requirements reduced | T1556 |
-
-### Discovery / Reconnaissance
-| ID | Rule | eventName(s) | Logic | MITRE |
-|----|------|-------------|-------|-------|
-| DI-01 | Enumeration Burst | Multiple `List*`, `Describe*`, `Get*` | >20 unique read-only API calls in 5min from same identity | T1580 |
-| DI-02 | IAM Enumeration | `ListUsers`, `ListRoles`, `ListPolicies`, `GetAccountAuthorizationDetails` | IAM recon pattern | T1087.004 |
-| DI-03 | AccessDenied Spike | Any | ≥10 `errorCode=AccessDenied` within 10min by same identity (permission probing) | T1580 |
-
-### Exfiltration
-| ID | Rule | eventName(s) | Logic | MITRE |
-|----|------|-------------|-------|-------|
-| EX-01 | S3 Bucket Made Public | `PutBucketPolicy`, `PutBucketAcl` | Policy/ACL grants public access | T1537 |
-| EX-02 | S3 Bucket Policy Changed | `PutBucketPolicy` | Cross-account access granted | T1537 |
-| EX-03 | EC2 Snapshot Shared | `ModifySnapshotAttribute` | Snapshot shared with external account | T1537 |
-| EX-04 | RDS Snapshot Shared | `ModifyDBSnapshotAttribute` | DB snapshot shared externally | T1537 |
-
-### Impact
-| ID | Rule | eventName(s) | Logic | MITRE |
-|----|------|-------------|-------|-------|
-| IM-01 | EC2 Instances Launched in Bulk | `RunInstances` | >5 instances launched in 10min (crypto mining indicator) | T1496 |
-| IM-02 | Resource Deletion Spree | `Terminate*`, `Delete*` | >10 destructive actions in 5min from same identity | T1485 |
-| IM-03 | S3 Objects Mass Deleted | `DeleteObject`, `DeleteBucket` | Bulk deletion pattern | T1485 |
-
----
-
-## 7. Phased Build Order
-
-### Phase 1: Foundation (MVP — "It loads and searches") ✅ COMPLETE
-**Goal:** Load CloudTrail logs, display events in a table, basic filtering.
-
-| Task | Status | Details |
-|------|--------|---------|
-| 1.1 | ✅ | Scaffold Tauri v2 project with Cargo workspace (`crates/core`, `crates/app`, `ui/`) |
-| 1.2 | ✅ | Implement `model.rs` — CloudTrail record struct with serde |
-| 1.3 | ✅ | Implement `ingest/discovery.rs` — recursive directory walker (walkdir) |
-| 1.4 | ✅ | Implement `ingest/decompress.rs` — gzip + plain JSON detection (flate2) |
-| 1.5 | ✅ | Implement `ingest/parser.rs` — parse `{"Records": [...]}` into `Vec<IndexedRecord>` |
-| 1.6 | ✅ | Implement `store.rs` — basic `Vec<IndexedRecord>` with field indexes |
-| 1.7 | ✅ | Wire ingestion as Tauri command with progress events |
-| 1.8 | ✅ | React: DropZone component for folder selection (Tauri dialog API) |
-| 1.9 | ✅ | React: EventTable with virtual scrolling + pagination |
-| 1.10 | ✅ | React: Basic column display (time, eventName, user, IP, region, error) |
-| 1.11 | ✅ | React: EventDetail panel — click row to expand raw JSON |
-
-**Verification:** Load BlizzardBreakdown dataset, see all records in table, click to expand.
-
-### Phase 2: Search & Filter ("Now you can investigate") ✅ COMPLETE
-**Goal:** Query bar + filter panel, time range selection.
-
-| Task | Status | Details |
-|------|--------|---------|
-| 2.1 | ✅ | Implement `query/parser.rs` — recursive descent parser for query language |
-| 2.2 | ✅ | Implement `query/engine.rs` — execute parsed query against Store indexes |
-| 2.3 | ✅ | Implement `query/filter.rs` — structured filter predicates |
-| 2.4 | ✅ | Wire search as Tauri command (paginated results) |
-| 2.5 | ✅ | React: QueryBar component with CodeMirror (syntax highlighting) |
-| 2.6 | ✅ | React: FilterPanel with checkboxes populated from index data |
-| 2.7 | ✅ | React: TimeRangePicker (absolute datetime or relative shorthand) |
-| 2.8 | ✅ | React: FilterPanel ↔ QueryBar sync (clicking filter updates query, and vice versa) |
-| 2.9 | ✅ | Implement `get_field_values` command — returns top-N values for a field |
-
-**Extras delivered:** `userAgent` field added to indexes, filter panel, and query bar hints. Cross-view navigation: clicking a userName in FilterPanel navigates to Identity tab.
-
-**Verification:** Run `eventName=ConsoleLogin AND awsRegion=us-east-1` — see filtered results. Use filter panel — see query bar update.
-
-### Phase 3: Visualization ("See the story") ✅ COMPLETE
-**Goal:** Timeline histogram, field statistics, identity investigation.
-
-| Task | Status | Details |
-|------|--------|---------|
-| 3.1 | ✅ | Implement `stats.rs` — time bucketing (auto-bucket by data range), field value aggregation |
-| 3.2 | ✅ | Wire `get_timeline` Tauri command |
-| 3.3 | ✅ | React: TimelineChart histogram (recharts) — click a time bucket to narrow time range |
-| 3.4 | ✅ | React: FieldStats view — top-N bar charts per field, click to filter |
-| 3.5 | ✅ | Implement identity correlation in Store — group all events by userIdentity ARN |
-| 3.6 | ✅ | React: IdentityTimeline view — per-principal chronological activity |
-| 3.7 | ✅ | React: AppShell layout with sidebar navigation between views |
-
-**Extras delivered:** IdentityTimeline auto-triggers lookup when navigated from FilterPanel. Identity summary supports both ARN and username lookups.
-
-**Verification:** Load dataset, see histogram. Click bar — zoom into that time window. Open identity view — see attacker's timeline.
-
-### Phase 4: Detection Engine ("Find the bad") ✅ COMPLETE
-**Goal:** Built-in heuristic rules, alert dashboard.
-
-| Task | Status | Details |
-|------|--------|---------|
-| 4.1 | ✅ | Implement `detection/engine.rs` — rule registry, evaluation loop |
-| 4.2 | ✅ | Implement single-event rules (IA-01 through DE-06) — 18 MITRE ATT&CK-mapped rules total |
-| 4.3 | ✅ | Implement correlation rules (CA-01, DI-01, IM-01, IM-02) |
-| 4.4 | ✅ | Wire `run_detections` Tauri command |
-| 4.5 | ✅ | React: AlertPanel — severity cards + alert list |
-| 4.6 | ✅ | React: AlertDetail — explanation + "View Evidence" button (links to pre-filtered search) |
-| 4.7 | ✅ | Auto-run detections on dataset load (background, non-blocking) |
-
-**Extras delivered:** Each alert carries a pre-built query string so "View Evidence in Search" auto-filters results. OR operator support in query engine for multi-event-type rules.
-
-**Verification:** Load BlizzardBreakdown — should fire multiple detection rules. Click alert — see matching events.
-
-### Phase 5: Polish & Export ("Ship it") ✅ COMPLETE
-**Goal:** Export, session persistence, dark theme polish, cross-platform builds.
-
-| Task | Status | Details |
-|------|--------|---------|
-| 5.1 | ✅ | Implement `export.rs` — CSV and JSON export of filtered results |
-| 5.2 | ✅ | Wire export Tauri commands + "Export ▾" dropdown in search header with Tauri save dialog |
-| 5.3 | ✅ | Session persistence — last query and active tab saved/restored via localStorage |
-| 5.4 | ✅ | ZIP archive support — extract `.json`/`.json.gz` entries inline, no temp dir needed |
-| 5.5 | ✅ | Keyboard shortcuts — Ctrl+K focuses query bar, Escape clears query / closes detail panel |
-| 5.6 | ✅ | Dark theme polish — consistent Splunk-inspired color palette |
-| 5.7 | ✅ | StatusBar — shows "X of Y events" when filtering, query execution time |
-| 5.8 | ✅ | Cross-platform CI — GitHub Actions for Windows (.msi), Linux (.deb/.AppImage), macOS (.dmg) |
-| 5.9 | ✅ | Error handling polish — graceful handling of malformed files, permission errors |
-| 5.10 | ✅ | App icon and branding — custom icon generated for all platforms |
-
-**Verification:** Full workflow test on all 3 sample datasets. Export results as CSV. Build on all 3 platforms.
-
----
-
-## 8. Known Technical Risks
-
-### Risk 1: Memory Usage at Scale
-**Problem:** 1GB compressed CloudTrail ≈ 5-10GB uncompressed ≈ 5-10M records ≈ 5-10GB RAM with indexes.
-**Mitigation (Phase 1):** Start with in-memory. Add a "dataset too large" warning at >2GB uncompressed.
-**Mitigation (Future):** Swap to memory-mapped storage (redb or SQLite) for records, keep only indexes in memory. This is a Phase 6 concern — don't over-engineer the MVP.
-
-### Risk 2: IPC Serialization Overhead
-**Problem:** Sending large result sets over Tauri IPC (JSON serialization) can be slow.
-**Mitigation:** Always paginate — never send more than 500 records per IPC call. Timeline/stats are pre-aggregated server-side (small payloads). Use Tauri channels for streaming if needed.
-
-### Risk 3: Query Language Ambiguity
-**Problem:** Users may expect full SPL but we only support a subset.
-**Mitigation:** Clear query bar placeholder text showing supported syntax. Autocomplete for field names. Error messages suggesting corrections.
-
-### Risk 4: Cross-Platform Build Complexity
-**Problem:** Tauri builds require platform-specific toolchains (MSVC on Windows, GTK on Linux, Xcode on macOS).
-**Mitigation:** GitHub Actions matrix build. Document local dev setup per platform.
-
-### Risk 5: Detection Rule False Positives
-**Problem:** Rules like "enumeration burst" may fire on legitimate admin activity.
-**Mitigation:** Every alert shows full evidence. Rules have tunable thresholds. Severity levels help triage. Consider adding a "suppress" feature in future phase.
-
----
-
-## Appendix: Key Crate Versions (as of 2026-03)
-
-```toml
-# crates/core/Cargo.toml
-[dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-flate2 = { version = "1", features = ["zlib-ng"], default-features = false }
-zip = "2"
-walkdir = "2"
-rayon = "1"
-chrono = { version = "0.4", features = ["serde"] }
-
-# crates/app/Cargo.toml
-[dependencies]
-trail-inspector-core = { path = "../core" }
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"    # file/folder picker
-tauri-plugin-fs = "2"        # filesystem access
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-```
-
-```json
-// ui/package.json (key deps)
-{
-  "@tauri-apps/api": "^2",
-  "@tauri-apps/plugin-dialog": "^2",
-  "@tanstack/react-table": "^8",
-  "@tanstack/react-virtual": "^3",
-  "recharts": "^2",
-  "@codemirror/view": "^6",
-  "tailwindcss": "^4"
-}
-```
+- Unit tests for all 40+ new detection rules
+- Session engine and GeoIP tests
+- Performance benchmark: 58+ rules on 500K records < 2s
+- Update CLAUDE.md, README.md; create RULES.md, CHANGELOG.md
