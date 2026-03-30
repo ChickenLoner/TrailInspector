@@ -33,7 +33,7 @@ Break monolithic `detection/mod.rs` (~1100 lines) into per-tactic files.
 
 ---
 
-## Phase 2: Detection Rules Batch 1 — Network/VPC + Defense Evasion + RDS + IAM (20 rules)
+## Phase 2: Detection Rules Batch 1 — Network/VPC + Defense Evasion + RDS + IAM (20 rules) ✅
 
 | ID | Rule | Severity | Service |
 |----|------|----------|---------|
@@ -60,7 +60,7 @@ Break monolithic `detection/mod.rs` (~1100 lines) into per-tactic files.
 
 ---
 
-## Phase 3: Detection Rules Batch 2 — EBS, Lambda, S3, Encryption, Resource Sharing (20 rules)
+## Phase 3: Detection Rules Batch 2 — EBS, Lambda, S3, Encryption, Resource Sharing (20 rules) ✅
 
 | ID | Rule | Severity | Service |
 |----|------|----------|---------|
@@ -87,7 +87,7 @@ Break monolithic `detection/mod.rs` (~1100 lines) into per-tactic files.
 
 ---
 
-## Phase 4: Enhanced Detections UI — Service Grouping + Filtering
+## Phase 4: Enhanced Detections UI — Service Grouping + Filtering ✅
 
 - Group-by toggle: Severity | Service | MITRE Tactic with collapsible sections
 - Severity filter chips (Critical/High/Medium/Low/Info toggle)
@@ -96,7 +96,7 @@ Break monolithic `detection/mod.rs` (~1100 lines) into per-tactic files.
 
 ---
 
-## Phase 5: Session Grouping Engine (Core)
+## Phase 5: Session Grouping Engine (Core) ✅
 
 Compute sessions from `(identity, source_ip, time_gap)` — O(n) over time-sorted records.
 
@@ -120,7 +120,7 @@ New IPC commands: `list_sessions`, `get_session_detail`.
 
 ---
 
-## Phase 6: Sessions UI Tab
+## Phase 6: Sessions UI Tab ✅
 
 New "Sessions" tab between Identity and Detections:
 - `SessionView.tsx` — session card list (identity, IP, duration, event/error/alert counts, top events)

@@ -115,6 +115,59 @@ export interface IdentitySummary {
 }
 
 // ---------------------------------------------------------------------------
+// Session types
+// ---------------------------------------------------------------------------
+
+export interface SessionSummary {
+  id: number;
+  identityKey: string;
+  sourceIp: string;
+  firstEventMs: number;
+  lastEventMs: number;
+  durationMs: number;
+  eventCount: number;
+  errorCount: number;
+  uniqueEventNames: string[];
+  uniqueRegions: string[];
+}
+
+export interface SessionPage {
+  sessions: SessionSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface SessionEvent {
+  id: number;
+  timestampMs: number;
+  eventTime: string;
+  eventName: string;
+  eventSource: string;
+  awsRegion: string;
+  sourceIp?: string;
+  errorCode?: string;
+  userAgent?: string;
+}
+
+export interface SessionDetail {
+  id: number;
+  identityKey: string;
+  sourceIp: string;
+  firstEventMs: number;
+  lastEventMs: number;
+  durationMs: number;
+  eventCount: number;
+  errorCount: number;
+  uniqueEventNames: string[];
+  uniqueRegions: string[];
+  events: SessionEvent[];
+  eventsPage: number;
+  eventsPageSize: number;
+  eventsTotal: number;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4 — Detection types
 // ---------------------------------------------------------------------------
 

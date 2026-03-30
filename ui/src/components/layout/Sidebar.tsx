@@ -1,4 +1,4 @@
-export type Tab = "search" | "stats" | "identity" | "detections";
+export type Tab = "search" | "stats" | "identity" | "sessions" | "detections";
 
 interface Props {
   activeTab: Tab;
@@ -9,6 +9,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "search", label: "Search", icon: "S" },
   { id: "stats", label: "Stats", icon: "=" },
   { id: "identity", label: "Identity", icon: "I" },
+  { id: "sessions", label: "Sessions", icon: "~" },
   { id: "detections", label: "Detections", icon: "!" },
 ];
 

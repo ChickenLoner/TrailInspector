@@ -16,6 +16,8 @@ pub fn run() {
             commands::detection::run_detections,
             commands::export::export_csv,
             commands::export::export_json,
+            commands::session::list_sessions,
+            commands::session::get_session_detail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TrailInspector");

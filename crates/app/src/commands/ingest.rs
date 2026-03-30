@@ -41,6 +41,9 @@ pub async fn load_directory(
     {
         let mut guard = state.store.write().map_err(|e| format!("Lock error: {e}"))?;
         *guard = Some(new_store);
+        // Invalidate cached session index so it is rebuilt on next access
+        let mut sidx = state.session_index.write().map_err(|e| format!("Lock error: {e}"))?;
+        *sidx = None;
     }
 
     let _ = on_progress.send(IngestProgress::Complete {

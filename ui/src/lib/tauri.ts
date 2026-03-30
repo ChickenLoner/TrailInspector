@@ -8,6 +8,8 @@ import type {
   FieldValueCount,
   IdentitySummary,
   Alert,
+  SessionPage,
+  SessionDetail,
 } from "../types/cloudtrail";
 
 export async function loadDirectory(
@@ -70,6 +72,30 @@ export async function getIdentitySummary(
 
 export async function runDetections(): Promise<Alert[]> {
   return invoke<Alert[]>("run_detections");
+}
+
+export async function listSessions(
+  page: number = 0,
+  pageSize: number = 50,
+  sortBy: string = "first",
+  filterIdentity?: string,
+  filterIp?: string,
+): Promise<SessionPage> {
+  return invoke<SessionPage>("list_sessions", {
+    page,
+    pageSize,
+    sortBy,
+    filterIdentity: filterIdentity ?? null,
+    filterIp: filterIp ?? null,
+  });
+}
+
+export async function getSessionDetail(
+  sessionId: number,
+  eventsPage: number = 0,
+  eventsPageSize: number = 50,
+): Promise<SessionDetail> {
+  return invoke<SessionDetail>("get_session_detail", { sessionId, eventsPage, eventsPageSize });
 }
 
 export async function exportCsv(query: string, path: string): Promise<void> {

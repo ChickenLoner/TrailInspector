@@ -2,6 +2,7 @@ import { Sidebar, type Tab } from "./Sidebar";
 import { FieldStats } from "../viz/FieldStats";
 import { IdentityTimeline } from "../viz/IdentityTimeline";
 import { DetectionView } from "../detection/DetectionView";
+import { SessionView } from "../session/SessionView";
 
 interface Props {
   /** Content for the Search tab (query bar + event table etc.) */
@@ -37,6 +38,12 @@ export function AppShell({ searchView, onFilterSelect, query, activeTab, onTabCh
         {activeTab === "identity" && (
           <div style={{ flex: 1, overflow: "hidden" }}>
             <IdentityTimeline initialValue={selectedIdentity} />
+          </div>
+        )}
+
+        {activeTab === "sessions" && (
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            <SessionView />
           </div>
         )}
 
