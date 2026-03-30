@@ -24,7 +24,8 @@ AWS CloudTrail log analyzer — Tauri v2 + Rust + React desktop app.
 
 ## v0.2.0 Progress (EG-CERT Enhancements)
 - ✅ v0.2 P1 — Detection module restructured into per-tactic files; 38 rules (18→38, +20 new: VPC/NW, RDS, IAM PE-05/06/07, CA-05/06, DE-05..13, EX-02..05, IM-03); `service` field added to Alert
-- 🔲 v0.2 P2 — Phase 3 rules batch (EBS, Lambda, resource sharing)
+- ✅ v0.2 P2 — 10 more rules (48 total): EBS-01..05 (encryption/snapshots), LM-01..02 (Lambda), RS-01..03 (AMI/SSM/RDS snapshot public sharing)
+- 🔲 v0.2 P3 — Detections UI grouping/filtering by service
 - 🔲 v0.2 P3 — Detections UI grouping/filtering by service
 - 🔲 v0.2 P4 — Session grouping engine (core)
 - 🔲 v0.2 P5 — Sessions UI tab

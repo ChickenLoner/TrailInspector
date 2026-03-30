@@ -8,3 +8,6 @@ pub mod exfiltration;
 pub mod impact;
 pub mod network;
 pub mod rds;
+pub mod ebs;
+pub mod lambda;
+pub mod resource_sharing;
