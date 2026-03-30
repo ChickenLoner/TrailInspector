@@ -127,6 +127,7 @@ export function AlertDetail({ alert, onViewEvidence, onClose }: Props) {
         <Section title="MITRE ATT&CK">
           <KV label="Tactic" value={alert.mitreTactic} />
           <KV label="Technique" value={alert.mitreTechnique} mono />
+          <KV label="Service" value={alert.service} />
         </Section>
 
         {/* Evidence count */}

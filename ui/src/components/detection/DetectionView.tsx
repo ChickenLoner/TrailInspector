@@ -134,7 +134,7 @@ export function DetectionView({ onViewEvidence }: Props) {
           }}
         >
           <span style={{ fontFamily: "monospace", fontSize: 18, opacity: 0.6 }}>…</span>
-          Running {17} detection rules…
+          Running detection rules…
         </div>
       )}
 
