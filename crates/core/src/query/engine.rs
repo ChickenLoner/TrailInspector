@@ -119,6 +119,7 @@ fn match_field_filter(store: &Store, filter: &FieldFilter) -> Vec<u64> {
         FieldName::ErrorCode => &store.idx_error_code,
         FieldName::IdentityType => &store.idx_identity_type,
         FieldName::UserAgent => &store.idx_user_agent,
+        FieldName::BucketName => &store.idx_bucket_name,
     };
 
     match &filter.mode {

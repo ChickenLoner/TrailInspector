@@ -29,6 +29,7 @@ pub struct Store {
     pub idx_error_code: HashMap<String, Vec<u64>>,
     pub idx_identity_type: HashMap<String, Vec<u64>>,
     pub idx_user_agent: HashMap<String, Vec<u64>>,
+    pub idx_bucket_name: HashMap<String, Vec<u64>>,
 
     // Sorted by timestamp for range queries
     pub time_sorted_ids: Vec<u64>,
@@ -49,6 +50,7 @@ impl Store {
             idx_error_code: HashMap::new(),
             idx_identity_type: HashMap::new(),
             idx_user_agent: HashMap::new(),
+            idx_bucket_name: HashMap::new(),
             time_sorted_ids: Vec::new(),
         }
     }
@@ -172,6 +174,11 @@ impl Store {
                 }
                 if let Some(ua) = &rec.record.user_agent {
                     Self::index_push(&mut self.idx_user_agent, ua, id);
+                }
+                if let Some(params) = &rec.record.request_parameters {
+                    if let Some(bucket) = params.get("bucketName").and_then(|v| v.as_str()) {
+                        Self::index_push(&mut self.idx_bucket_name, bucket, id);
+                    }
                 }
             }
 

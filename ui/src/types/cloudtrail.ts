@@ -110,6 +110,8 @@ export interface IdentitySummary {
   lastSeenMs: number;
   byEvent: IdentityEventSummary[];
   events: TimelineEvent[];
+  page: number;
+  pageSize: number;
 }
 
 // ---------------------------------------------------------------------------

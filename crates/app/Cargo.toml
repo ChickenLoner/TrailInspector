@@ -1,6 +1,6 @@
 [package]
 name = "trail-inspector-app"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Warawut Manosong <chicken0248@github>"]
 description = "AWS CloudTrail log analyzer — Tauri desktop app"

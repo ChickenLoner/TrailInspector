@@ -56,8 +56,16 @@ export async function getTopFields(
   });
 }
 
-export async function getIdentitySummary(arn: string): Promise<IdentitySummary> {
-  return invoke<IdentitySummary>("get_identity_summary_cmd", { arn });
+export async function getIdentitySummary(
+  arn: string,
+  page?: number,
+  pageSize?: number,
+): Promise<IdentitySummary> {
+  return invoke<IdentitySummary>("get_identity_summary_cmd", {
+    arn,
+    page: page ?? null,
+    pageSize: pageSize ?? null,
+  });
 }
 
 export async function runDetections(): Promise<Alert[]> {

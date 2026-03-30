@@ -449,7 +449,7 @@ export default function App() {
 
       {/* Main area: filter panel + table + detail */}
       <div className="flex flex-1 overflow-hidden">
-        <FilterPanel onFilterChange={handleFilterChange} onUserSelect={handleUserSelect} />
+        <FilterPanel onFilterChange={handleFilterChange} onUserSelect={handleUserSelect} query={activeQuery} />
 
         <div className="flex flex-col flex-1 overflow-hidden">
           {results && (

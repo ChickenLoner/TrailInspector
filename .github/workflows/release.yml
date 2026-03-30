@@ -92,17 +92,23 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
-      - name: Build Tauri app
+      - name: Build Tauri app (Windows — NSIS standalone EXE)
+        if: matrix.platform == 'windows'
+        working-directory: crates/app
+        run: cargo tauri build --bundles nsis
+
+      - name: Build Tauri app (Linux / macOS)
+        if: matrix.platform != 'windows'
         working-directory: crates/app
         run: cargo tauri build
 
       # ── Upload artifacts for release job ──────────────────
-      - name: Upload Windows installer (.msi)
+      - name: Upload Windows standalone EXE
         if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: TrailInspector-windows
-          path: target/release/bundle/msi/*.msi
+          path: target/release/bundle/nsis/*.exe
           if-no-files-found: error
 
       - name: Upload Linux .deb package
@@ -153,7 +159,7 @@ jobs:
           body_path: RELEASE.md
           fail_on_unmatched_files: true
           files: |
-            artifacts/TrailInspector-windows/*.msi
+            artifacts/TrailInspector-windows/*.exe
             artifacts/TrailInspector-linux-deb/*.deb
             artifacts/TrailInspector-linux-appimage/*.AppImage
             artifacts/TrailInspector-macos/*.dmg

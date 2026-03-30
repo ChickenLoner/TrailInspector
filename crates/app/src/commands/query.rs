@@ -109,6 +109,7 @@ pub async fn get_field_values(
         "errorCode" => &store.idx_error_code,
         "identityType" => &store.idx_identity_type,
         "userAgent" => &store.idx_user_agent,
+        "bucketName" => &store.idx_bucket_name,
         _ => return Err(format!("Unknown field: {field}")),
     };
 

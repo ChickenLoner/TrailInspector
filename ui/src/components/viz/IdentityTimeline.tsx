@@ -170,16 +170,18 @@ export function IdentityTimeline({ initialValue }: Props) {
   const [summary, setSummary] = useState<IdentitySummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
 
-  const lookup = useCallback(async (target: string) => {
+  const lookup = useCallback(async (target: string, page: number = 0) => {
     const t = target.trim();
     if (!t) return;
     setLoading(true);
     setError(null);
-    setSummary(null);
+    if (page === 0) setSummary(null);
     try {
-      const result = await getIdentitySummary(t);
+      const result = await getIdentitySummary(t, page);
       setSummary(result);
+      setCurrentPage(page);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -361,7 +363,7 @@ export function IdentityTimeline({ initialValue }: Props) {
             {summary.events.map((ev) => (
               <EventRow key={ev.id} ev={ev} />
             ))}
-            {summary.totalEvents > 500 && (
+            {summary.totalEvents > summary.pageSize && (
               <div
                 style={{
                   padding: "8px 12px",
@@ -369,9 +371,49 @@ export function IdentityTimeline({ initialValue }: Props) {
                   color: "var(--text-secondary)",
                   textAlign: "center",
                   borderTop: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 12,
                 }}
               >
-                Showing first 500 of {summary.totalEvents.toLocaleString()} events
+                <button
+                  onClick={() => lookup(summary.arn, currentPage - 1)}
+                  disabled={currentPage === 0 || loading}
+                  style={{
+                    background: "var(--bg-tertiary)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    color: currentPage === 0 ? "var(--text-secondary)" : "var(--accent-blue)",
+                    padding: "2px 10px",
+                    fontSize: 11,
+                    cursor: currentPage === 0 ? "default" : "pointer",
+                    opacity: currentPage === 0 ? 0.5 : 1,
+                  }}
+                >
+                  Prev
+                </button>
+                <span>
+                  {(currentPage * summary.pageSize + 1).toLocaleString()}–
+                  {Math.min((currentPage + 1) * summary.pageSize, summary.totalEvents).toLocaleString()}
+                  {" "}of {summary.totalEvents.toLocaleString()} events
+                </span>
+                <button
+                  onClick={() => lookup(summary.arn, currentPage + 1)}
+                  disabled={(currentPage + 1) * summary.pageSize >= summary.totalEvents || loading}
+                  style={{
+                    background: "var(--bg-tertiary)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    color: (currentPage + 1) * summary.pageSize >= summary.totalEvents ? "var(--text-secondary)" : "var(--accent-blue)",
+                    padding: "2px 10px",
+                    fontSize: 11,
+                    cursor: (currentPage + 1) * summary.pageSize >= summary.totalEvents ? "default" : "pointer",
+                    opacity: (currentPage + 1) * summary.pageSize >= summary.totalEvents ? 0.5 : 1,
+                  }}
+                >
+                  Next
+                </button>
               </div>
             )}
           </div>

@@ -11,6 +11,7 @@ pub enum FieldName {
     ErrorCode,
     IdentityType,
     UserAgent,
+    BucketName,
 }
 
 impl FieldName {
@@ -26,6 +27,7 @@ impl FieldName {
             "errorCode" => Some(Self::ErrorCode),
             "identityType" | "userIdentity.type" => Some(Self::IdentityType),
             "userAgent" => Some(Self::UserAgent),
+            "bucketName" => Some(Self::BucketName),
             _ => None,
         }
     }

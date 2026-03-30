@@ -112,6 +112,10 @@ pub fn top_field_values(
                 "errorCode" => r.record.error_code.as_deref(),
                 "identityType" => r.record.user_identity.identity_type.as_deref(),
                 "userAgent" => r.record.user_agent.as_deref(),
+                "bucketName" => r.record.request_parameters
+                    .as_ref()
+                    .and_then(|p| p.get("bucketName"))
+                    .and_then(|v| v.as_str()),
                 _ => None,
             };
             if let Some(v) = val {
@@ -168,11 +172,13 @@ pub struct IdentitySummary {
     pub last_seen_ms: i64,
     /// Per-eventName breakdown (sorted by count desc)
     pub by_event: Vec<IdentityEventSummary>,
-    /// Chronological event feed (up to 500 for IPC safety)
+    /// Chronological event feed (paginated, up to page_size per page)
     pub events: Vec<TimelineEvent>,
+    pub page: usize,
+    pub page_size: usize,
 }
 
-pub fn get_identity_summary(store: &Store, arn: &str) -> Option<IdentitySummary> {
+pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: usize) -> Option<IdentitySummary> {
     let ids = store.idx_user_arn.get(arn)
         .or_else(|| store.idx_user_name.get(arn))?;
 
@@ -228,10 +234,11 @@ pub fn get_identity_summary(store: &Store, arn: &str) -> Option<IdentitySummary>
         .collect();
     by_event_vec.sort_unstable_by(|a, b| b.count.cmp(&a.count));
 
-    // Build chronological event feed (up to 500 — IPC safety)
+    // Build chronological event feed (paginated)
     let events: Vec<TimelineEvent> = timed_ids
         .iter()
-        .take(500)
+        .skip(page * page_size)
+        .take(page_size)
         .filter_map(|&(ts, id)| {
             store.get_record(id).map(|r| TimelineEvent {
                 id,
@@ -253,6 +260,8 @@ pub fn get_identity_summary(store: &Store, arn: &str) -> Option<IdentitySummary>
         first_seen_ms,
         last_seen_ms,
         by_event: by_event_vec,
+        page,
+        page_size,
         events,
     })
 }

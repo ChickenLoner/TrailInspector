@@ -65,10 +65,14 @@ pub async fn get_top_fields(
 #[tauri::command]
 pub async fn get_identity_summary_cmd(
     arn: String,
+    page: Option<usize>,
+    page_size: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<IdentitySummary, String> {
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
     let store = guard.as_ref().ok_or("No dataset loaded")?;
 
-    get_identity_summary(store, &arn).ok_or_else(|| format!("No events for ARN: {arn}"))
+    let page = page.unwrap_or(0);
+    let page_size = page_size.unwrap_or(500).min(500);
+    get_identity_summary(store, &arn, page, page_size).ok_or_else(|| format!("No events for ARN: {arn}"))
 }

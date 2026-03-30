@@ -14,10 +14,16 @@ import type { FieldValueCount } from "../../types/cloudtrail";
 
 const FIELDS = [
   { key: "eventName", label: "Event Name" },
+  { key: "eventSource", label: "Service" },
   { key: "awsRegion", label: "AWS Region" },
   { key: "errorCode", label: "Error Code" },
   { key: "sourceIPAddress", label: "Source IP" },
   { key: "userArn", label: "User ARN" },
+  { key: "userName", label: "User Name" },
+  { key: "userAgent", label: "User Agent" },
+  { key: "identityType", label: "Identity Type" },
+  { key: "accountId", label: "Account ID" },
+  { key: "bucketName", label: "S3 Bucket" },
 ];
 
 interface FieldBarProps {

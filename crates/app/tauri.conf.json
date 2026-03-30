@@ -1,11 +1,11 @@
 {
   "productName": "TrailInspector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "io.github.chicken0248.trailinspector",
   "build": {
     "frontendDist": "../../ui/dist",
     "devUrl": "http://127.0.0.1:5500",
-    "beforeDevCommand": "npm --prefix ../../ui run dev"
+    "beforeDevCommand": ""
   },
   "app": {
     "windows": [
