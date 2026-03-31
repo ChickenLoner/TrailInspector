@@ -19,7 +19,9 @@
 
 ## Overview
 
-TrailInspector loads raw CloudTrail exports — `.json`, `.json.gz`, or ZIP archives — entirely in memory and lets you search, visualize, and triage threats without sending data to any external service. The investigation workflow is modeled after Splunk: a query bar with SPL-like syntax, a timeline histogram for scoping time windows, field statistics for pivoting on values, and a detections panel that fires 18 MITRE ATT&CK-mapped rules automatically.
+TrailInspector loads raw CloudTrail exports — `.json`, `.json.gz`, or ZIP archives — entirely in memory and lets you search, visualize, triage threats, and investigate sessions without sending data to any external service.
+
+The investigation workflow is modeled after Splunk: a query bar with SPL-like syntax, a timeline histogram for scoping time windows, field statistics for pivoting on values, a detections panel that fires **60 MITRE ATT&CK-mapped rules** automatically, session grouping to cluster activity by identity and IP, and offline IP enrichment via GeoLite2.
 
 ## Screenshots
 
@@ -34,7 +36,7 @@ One click reveals value distributions for every field in the current result set 
 ![Field Statistics](assets/stats_ui.png)
 
 ### Detections — MITRE ATT&CK Mapped Rules
-18 built-in detection rules fire automatically. Each alert shows severity, tactic/technique, a plain-English description, and the exact search query used — click **View Evidence** to jump straight to matching events.
+60 built-in detection rules fire automatically. Each alert shows severity, tactic/technique, a plain-English description, and the exact search query used — click **View Evidence** to jump straight to matching events.
 
 ![Detections UI](assets/rule_ui.png)
 
@@ -49,11 +51,14 @@ Pivot to any IAM identity and see every action it took in chronological order �
 
 | Capability | Details |
 |---|---|
-| **Ingest** | `.json`, `.json.gz`, `.zip`, and nested directory trees |
+| **Ingest** | `.json`, `.json.gz`, `.zip`, and nested directory trees; parallel decompression via Rayon |
 | **Search** | SPL-like query bar — `AND` / `OR` / `NOT`, field matching, wildcards, time presets |
 | **Visualize** | Timeline histogram, field statistics, identity activity timeline |
-| **Detect** | 18 MITRE ATT&CK-mapped rules (PE, DE, EX, DI series) with severity levels |
+| **Detect** | 60 MITRE ATT&CK-mapped rules across IAM, EC2, S3, VPC, RDS, EBS, Lambda, KMS, and more |
+| **Sessions** | Automatic activity session grouping by `(identity, IP)` with 30-min inactivity gap |
+| **IP Enrichment** | Offline GeoIP lookup (MaxMind GeoLite2) — country, city, ASN; geo anomaly rules |
 | **Investigate** | One-click "View Evidence" jumps from alert → filtered event table |
+| **Correlate** | Session ↔ alert cross-linking; AssumeRole chain detection across accounts |
 | **Export** | Save filtered results as JSON or ZIP archive |
 | **Offline** | No telemetry, no cloud dependency — all processing happens locally |
 
@@ -108,32 +113,52 @@ Installers are written to `crates/app/target/release/bundle/`.
 
 ---
 
+## GeoIP Setup (Optional)
+
+To enable IP enrichment and geo anomaly rules, obtain the free **GeoLite2** databases from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) (account required) and place them in the app data directory:
+
+- `GeoLite2-City.mmdb` — country, city, and coordinates
+- `GeoLite2-ASN.mmdb` — ASN and organisation
+
+The app prompts for file paths on first launch. Without the databases the tool still works fully — IP enrichment and geo anomaly rules (`GEO-01`, `GEO-02`) are simply disabled.
+
+---
+
 ## Architecture
 
 ```
 TrailInspector/
 ├── crates/
-│   ├── core/          # Pure Rust library — parse, index, query, detect (no Tauri)
+│   ├── core/          # Pure Rust library — parse, index, query, detect, session, geoip (no Tauri)
 │   └── app/           # Tauri v2 IPC glue — thin command wrappers only
 └── ui/                # React + TypeScript + Vite + TailwindCSS frontend
 ```
 
-`crates/core` has zero Tauri dependency and is fully testable as a standalone library. All business logic — ingestion, indexing, the query engine, and detection rules — lives there.
+`crates/core` has zero Tauri dependency and is fully testable as a standalone library. All business logic — ingestion, indexing, the query engine, detection rules, session grouping, and IP enrichment — lives there.
 
 ---
 
 ## Detection Rules
 
-Rules are evaluated in-memory against the loaded event set and mapped to MITRE ATT&CK tactics and techniques:
+TrailInspector ships **60 detection rules** across 13 service categories. See [RULES.md](RULES.md) for the complete rule catalogue with trigger events and MITRE technique mappings.
 
-| ID | Rule | Severity | Tactic |
-|---|---|---|---|
-| PE-04 | Administrative Policy Attached | Critical | Persistence |
-| DE-01 | CloudTrail Logging Tampered | Critical | Defense Evasion |
-| EX-01 | S3 Bucket Policy/ACL Modified | High | Exfiltration |
-| PE-01 | IAM User Created | Medium | Persistence |
-| DI-02 | IAM Enumeration Detected | Medium | Discovery |
-| … | 13 additional rules | Various | Various |
+**Quick summary by category:**
+
+| Category | Rules | Max Severity |
+|---|---|---|
+| Initial Access | 3 | Critical |
+| Persistence | 7 | Critical |
+| Defense Evasion | 13 | Critical |
+| Credential Access | 4 | Critical |
+| Discovery | 2 | Medium |
+| Exfiltration | 5 | High |
+| Impact | 3 | Critical |
+| Network / VPC | 8 | High |
+| RDS | 3 | High |
+| EBS | 5 | Critical |
+| Lambda | 2 | High |
+| Resource Sharing | 3 | High |
+| Geo Anomaly | 2 | High |
 
 ---
 

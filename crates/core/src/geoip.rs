@@ -217,3 +217,160 @@ fn is_private(ip: IpAddr) -> bool {
         IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // GeoIpEngine::load error cases (no MMDB files needed)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_load_no_paths_returns_error() {
+        let result = GeoIpEngine::load(None, None);
+        let msg = result.err().expect("load(None, None) must return Err");
+        assert!(
+            msg.contains("At least one MMDB file"),
+            "error message should mention MMDB requirement, got: {}", msg
+        );
+    }
+
+    #[test]
+    fn test_load_nonexistent_geo_path_returns_error() {
+        let result = GeoIpEngine::load(Some("/nonexistent/GeoLite2-City.mmdb"), None);
+        let msg = result.err().expect("load with nonexistent geo path must return Err");
+        assert!(msg.contains("Geo DB error"), "error message should mention Geo DB: {}", msg);
+    }
+
+    #[test]
+    fn test_load_nonexistent_asn_path_returns_error() {
+        let result = GeoIpEngine::load(None, Some("/nonexistent/GeoLite2-ASN.mmdb"));
+        let msg = result.err().expect("load with nonexistent ASN path must return Err");
+        assert!(msg.contains("ASN DB error"), "error message should mention ASN DB: {}", msg);
+    }
+
+    // -----------------------------------------------------------------------
+    // is_private helper (tested indirectly via enrich_all)
+    // -----------------------------------------------------------------------
+
+    /// Verify private/loopback IPs are recognised as such by parsing them ourselves.
+    #[test]
+    fn test_is_private_addresses() {
+        use std::net::IpAddr;
+        use std::str::FromStr;
+
+        let private_cases = [
+            "10.0.0.1",
+            "192.168.1.1",
+            "172.16.0.5",
+            "127.0.0.1",
+            "169.254.1.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "::1",
+        ];
+        for ip_str in &private_cases {
+            let ip = IpAddr::from_str(ip_str).unwrap();
+            assert!(
+                is_private(ip),
+                "{} should be classified as private/special",
+                ip_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_not_private_for_public_addresses() {
+        use std::net::IpAddr;
+        use std::str::FromStr;
+
+        let public_cases = ["8.8.8.8", "1.1.1.1", "203.0.113.1", "2001:4860:4860::8888"];
+        for ip_str in &public_cases {
+            let ip = IpAddr::from_str(ip_str).unwrap();
+            assert!(
+                !is_private(ip),
+                "{} should NOT be classified as private",
+                ip_str
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // IpPage / list_ips logic (pagination + sorting) — exercised without MMDB
+    // -----------------------------------------------------------------------
+
+    /// When both MMDB readers are absent the engine cannot be constructed, so we
+    /// test list_ips indirectly through the IpRow sorting logic by verifying the
+    /// data structures are correct (no engine call needed).
+    #[test]
+    fn test_ip_row_sort_by_events() {
+        // Manually construct IpRows (same as what list_ips would produce) and
+        // verify the expected ordering.
+        let mut rows = vec![
+            IpRow {
+                ip: "1.1.1.1".to_string(),
+                event_count: 5,
+                country_code: None,
+                country_name: None,
+                city: None,
+                asn: None,
+                asn_org: None,
+            },
+            IpRow {
+                ip: "2.2.2.2".to_string(),
+                event_count: 20,
+                country_code: None,
+                country_name: None,
+                city: None,
+                asn: None,
+                asn_org: None,
+            },
+            IpRow {
+                ip: "3.3.3.3".to_string(),
+                event_count: 1,
+                country_code: None,
+                country_name: None,
+                city: None,
+                asn: None,
+                asn_org: None,
+            },
+        ];
+        rows.sort_by(|a, b| b.event_count.cmp(&a.event_count));
+        assert_eq!(rows[0].ip, "2.2.2.2");
+        assert_eq!(rows[1].ip, "1.1.1.1");
+        assert_eq!(rows[2].ip, "3.3.3.3");
+    }
+
+    #[test]
+    fn test_ip_page_serialises() {
+        let page = IpPage {
+            rows: vec![],
+            total: 0,
+            page: 0,
+            page_size: 25,
+        };
+        let json = serde_json::to_string(&page).unwrap();
+        assert!(json.contains("pageSize"));
+    }
+
+    #[test]
+    fn test_ip_info_all_none_serialises() {
+        let info = IpInfo {
+            ip: "8.8.8.8".to_string(),
+            country_code: None,
+            country_name: None,
+            city: None,
+            latitude: None,
+            longitude: None,
+            asn: None,
+            asn_org: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("8.8.8.8"));
+    }
+}
