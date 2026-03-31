@@ -16,7 +16,7 @@ This release evolves TrailInspector from a log viewer into a full cloud investig
 
 | Platform | File |
 |----------|------|
-| Windows 10+ | `.msi` installer |
+| Windows 10+ | `.exe` (NSIS installer) |
 | macOS 11+ | `.dmg` disk image |
 | Linux | `.deb` package or `.AppImage` |
 
@@ -52,7 +52,7 @@ First public release of TrailInspector, an offline desktop tool for investigatin
 
 | Platform | File |
 |----------|------|
-| Windows 10+ | `.msi` installer |
+| Windows 10+ | `.exe` (NSIS installer) |
 | macOS 11+ | `.dmg` disk image |
 | Linux | `.deb` package or `.AppImage` |
 

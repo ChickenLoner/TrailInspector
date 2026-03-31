@@ -70,7 +70,7 @@ Download the latest installer for your platform from the [Releases](https://gith
 
 | Platform | Format |
 |---|---|
-| Windows | `.msi` installer |
+| Windows | `.exe` (NSIS installer) |
 | Linux | `.AppImage` / `.deb` |
 | macOS | `.dmg` |
 
