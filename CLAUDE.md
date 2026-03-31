@@ -22,14 +22,14 @@ AWS CloudTrail log analyzer — Tauri v2 + Rust + React desktop app.
 - ✅ Phase 4 — 18 MITRE-mapped detection rules + alert UI + "View Evidence" auto-filter
 - ✅ Phase 5 — Export, ZIP ingest, keyboard shortcuts, session persistence, StatusBar, CI (GitHub Actions), dark theme polish, error handling
 
-## v0.2.0 Progress (EG-CERT Enhancements) ✅ COMPLETE
-- ✅ v0.2 P1 — Detection module restructured into per-tactic files; 60 rules (+42 new: VPC/NW, RDS, EBS, Lambda, resource sharing, IAM, Defense Evasion); `service` field added to Alert
-- ✅ v0.2 P2 — Detection UI: severity filter chips, group-by (Severity/Service/Tactic), search box
-- ✅ v0.2 P3 — Session grouping engine (core) + Sessions UI tab; 30-min gap clustering by (identity, IP)
-- ✅ v0.2 P4 — GeoIP engine (maxminddb, offline MMDB) + IpView tab (IP table, geo detail panel, loader)
-- ✅ v0.2 P5 — Geo anomaly rules GEO-01/02 (multi-country identity, unusual login country) + EventDetail geo enrichment
-- ✅ v0.2 P6 — Session-alert correlation: SessionDetail shows alert badges; AlertDetail shows owning sessions
-- ✅ v0.2 P7 — Phase 10 polish: 107 unit tests (63 detection rule tests, 30 session tests, 10 GeoIP tests); RULES.md, CHANGELOG.md created; README.md updated for v0.2.0
+## v1.0.0 Progress (EG-CERT Enhancements) ✅ COMPLETE
+- ✅ v1.0 P1 — Detection module restructured into per-tactic files; 60 rules (+42 new: VPC/NW, RDS, EBS, Lambda, resource sharing, IAM, Defense Evasion); `service` field added to Alert
+- ✅ v1.0 P2 — Detection UI: severity filter chips, group-by (Severity/Service/Tactic), search box
+- ✅ v1.0 P3 — Session grouping engine (core) + Sessions UI tab; 30-min gap clustering by (identity, IP)
+- ✅ v1.0 P4 — GeoIP engine (maxminddb, offline MMDB) + IpView tab (IP table, geo detail panel, loader)
+- ✅ v1.0 P5 — Geo anomaly rules GEO-01/02 (multi-country identity, unusual login country) + EventDetail geo enrichment
+- ✅ v1.0 P6 — Session-alert correlation: SessionDetail shows alert badges; AlertDetail shows owning sessions
+- ✅ v1.0 P7 — Phase 10 polish: 107 unit tests (63 detection rule tests, 30 session tests, 10 GeoIP tests); RULES.md, CHANGELOG.md created; README.md updated for v1.0.0
 
 ## Commands
 ```bash

@@ -5,11 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [0.2.0] — 2026-03-31
+## [1.0.0] — 2026-03-31
 
 ### Highlights
 
-TrailInspector v0.2.0 expands from a log viewer into a full cloud investigation platform, delivering EG-CERT's recommended detection expansion, session activity grouping, and offline IP enrichment.
+TrailInspector v1.0.0 marks the evolution from a log viewer into a full cloud investigation platform, delivering EG-CERT's recommended detection expansion, session activity grouping, and offline IP enrichment.
 
 ### Added
 
@@ -130,7 +130,7 @@ TrailInspector v0.2.0 expands from a log viewer into a full cloud investigation 
 
 ---
 
-## [0.1.0] — 2025-01-01
+## [0.1.0] — 2025-01-01 *(initial release — log viewer)*
 
 ### Added
 

@@ -1,4 +1,4 @@
-## TrailInspector v0.2.0 — Investigation Platform
+## TrailInspector v1.0.0 — Investigation Platform
 
 This release evolves TrailInspector from a log viewer into a full cloud investigation platform, delivering EG-CERT's recommended enhancements: expanded detection coverage, session activity grouping, and offline IP enrichment.
 
