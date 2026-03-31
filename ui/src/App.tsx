@@ -152,6 +152,8 @@ export default function App() {
   );
   const [filterFragment, setFilterFragment] = useState("");
   const [timePreset, setTimePreset] = useState("");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
 
   // Tab + identity navigation — restore from localStorage
   const [activeTab, setActiveTab] = useState<Tab>(
@@ -248,10 +250,24 @@ export default function App() {
   const handleTimePreset = useCallback(
     (preset: string) => {
       setTimePreset(preset);
+      setCustomFrom("");
+      setCustomTo("");
       runQuery(queryText, filterFragment, preset);
     },
     [queryText, filterFragment, runQuery]
   );
+
+  const handleApplyCustomRange = useCallback(() => {
+    const eMs = customFrom ? new Date(customFrom).getTime() : undefined;
+    const lMs = customTo ? new Date(customTo).getTime() : undefined;
+    if (!eMs && !lMs) return;
+    const fragment = [
+      eMs !== undefined ? `earliest=${eMs}` : "",
+      lMs !== undefined ? `latest=${lMs}` : "",
+    ].filter(Boolean).join(" ");
+    setTimePreset(fragment);
+    runQuery(queryText, filterFragment, fragment);
+  }, [customFrom, customTo, queryText, filterFragment, runQuery]);
 
   const handleLoaded = useCallback(
     (count: number, warnings: IngestWarning[], elapsedMs?: number) => {
@@ -271,6 +287,8 @@ export default function App() {
     (startMs: number, endMs: number) => {
       const fragment = `earliest=${startMs} latest=${endMs}`;
       setTimePreset(fragment);
+      setCustomFrom("");
+      setCustomTo("");
       runQuery(queryText, filterFragment, fragment);
     },
     [queryText, filterFragment, runQuery]
@@ -299,6 +317,8 @@ export default function App() {
       setQueryText(query);
       setFilterFragment("");
       setTimePreset("");
+      setCustomFrom("");
+      setCustomTo("");
       runQuery(query, "", "");
       setActiveTab("search");
     },
@@ -381,9 +401,11 @@ export default function App() {
       <div
         className="flex items-center gap-1 px-3 flex-shrink-0"
         style={{
-          height: 30,
+          minHeight: 32,
+          padding: "4px 12px",
           background: "var(--bg-secondary)",
           borderBottom: "1px solid var(--border)",
+          flexWrap: "wrap",
         }}
       >
         <span className="text-xs mr-1" style={{ color: "var(--text-secondary)" }}>
@@ -409,6 +431,55 @@ export default function App() {
             {label}
           </button>
         ))}
+        <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-secondary)" }}>From:</span>
+        <input
+          type="datetime-local"
+          value={customFrom}
+          onChange={(e) => setCustomFrom(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleApplyCustomRange()}
+          style={{
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            borderRadius: 3,
+            color: "var(--text-primary)",
+            padding: "1px 4px",
+            fontSize: 11,
+            colorScheme: "dark",
+          }}
+        />
+        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>To:</span>
+        <input
+          type="datetime-local"
+          value={customTo}
+          onChange={(e) => setCustomTo(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleApplyCustomRange()}
+          style={{
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            borderRadius: 3,
+            color: "var(--text-primary)",
+            padding: "1px 4px",
+            fontSize: 11,
+            colorScheme: "dark",
+          }}
+        />
+        <button
+          onClick={handleApplyCustomRange}
+          disabled={!customFrom && !customTo}
+          style={{
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            borderRadius: 3,
+            color: (!customFrom && !customTo) ? "var(--text-secondary)" : "var(--accent-blue)",
+            padding: "1px 8px",
+            fontSize: 11,
+            cursor: (!customFrom && !customTo) ? "default" : "pointer",
+            opacity: (!customFrom && !customTo) ? 0.5 : 1,
+            fontWeight: 600,
+          }}
+        >
+          Apply
+        </button>
         <span className="text-xs ml-4" style={{ color: "var(--text-secondary)" }}>
           {loading
             ? "Searching…"

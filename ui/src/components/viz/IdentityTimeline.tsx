@@ -24,6 +24,16 @@ function durLabel(ms: number): string {
   return `${Math.round(h / 24)}d`;
 }
 
+/** Format a ms timestamp to a datetime-local input value string (local time). */
+function msToDatetimeLocal(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
 /** Extract meaningful resource label(s) from requestParameters.
  *  For events with two key parameters (e.g. AttachUserPolicy), shows both joined by →.
  */
@@ -161,6 +171,21 @@ function EventRow({ ev }: { ev: TimelineEvent }) {
   );
 }
 
+const TIME_PRESETS = [
+  { label: "All", value: "" },
+  { label: "1h", value: "1h" },
+  { label: "6h", value: "6h" },
+  { label: "24h", value: "24h" },
+  { label: "7d", value: "7d" },
+];
+
+const PRESET_DURATIONS_MS: Record<string, number> = {
+  "1h": 60 * 60 * 1000,
+  "6h": 6 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+};
+
 interface Props {
   initialValue?: string;
 }
@@ -172,14 +197,26 @@ export function IdentityTimeline({ initialValue }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
 
-  const lookup = useCallback(async (target: string, page: number = 0) => {
+  // Time filter state
+  const [timePreset, setTimePreset] = useState("");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [earliestMs, setEarliestMs] = useState<number | undefined>();
+  const [latestMs, setLatestMs] = useState<number | undefined>();
+
+  const lookup = useCallback(async (
+    target: string,
+    page: number = 0,
+    eMs?: number,
+    lMs?: number,
+  ) => {
     const t = target.trim();
     if (!t) return;
     setLoading(true);
     setError(null);
     if (page === 0) setSummary(null);
     try {
-      const result = await getIdentitySummary(t, page);
+      const result = await getIdentitySummary(t, page, undefined, eMs, lMs);
       setSummary(result);
       setCurrentPage(page);
     } catch (e) {
@@ -196,8 +233,60 @@ export function IdentityTimeline({ initialValue }: Props) {
     }
   }, [initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleTimePreset = useCallback((preset: string) => {
+    setTimePreset(preset);
+    setCustomFrom("");
+    setCustomTo("");
+    let eMs: number | undefined;
+    let lMs: number | undefined;
+    if (preset) {
+      // Use identity's lastSeenMs as base if available, otherwise Date.now()
+      const base = summary?.lastSeenMs ?? Date.now();
+      const dur = PRESET_DURATIONS_MS[preset] ?? 0;
+      eMs = base - dur;
+      lMs = base;
+    }
+    setEarliestMs(eMs);
+    setLatestMs(lMs);
+    const target = summary?.arn ?? input.trim();
+    if (target) lookup(target, 0, eMs, lMs);
+  }, [summary, input, lookup]);
+
+  const handleApplyCustom = useCallback(() => {
+    const eMs = customFrom ? new Date(customFrom).getTime() : undefined;
+    const lMs = customTo ? new Date(customTo).getTime() : undefined;
+    if (!eMs && !lMs) return;
+    setTimePreset("");
+    setEarliestMs(eMs);
+    setLatestMs(lMs);
+    const target = summary?.arn ?? input.trim();
+    if (target) lookup(target, 0, eMs, lMs);
+  }, [customFrom, customTo, summary, input, lookup]);
+
+  const handleClearTime = useCallback(() => {
+    setTimePreset("");
+    setCustomFrom("");
+    setCustomTo("");
+    setEarliestMs(undefined);
+    setLatestMs(undefined);
+    const target = summary?.arn ?? input.trim();
+    if (target) lookup(target, 0, undefined, undefined);
+  }, [summary, input, lookup]);
+
+  // When summary loads after a time-filtered query, populate custom inputs
+  // with the filtered range so the user can see what's active
+  useEffect(() => {
+    if (earliestMs && !customFrom) {
+      setCustomFrom(msToDatetimeLocal(earliestMs));
+    }
+    if (latestMs && !customTo) {
+      setCustomTo(msToDatetimeLocal(latestMs));
+    }
+  }, [earliestMs, latestMs]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const spanMs = summary ? summary.lastSeenMs - summary.firstSeenMs : 0;
   const uniqueActions = summary?.byEvent.length ?? 0;
+  const hasTimeFilter = earliestMs !== undefined || latestMs !== undefined;
 
   return (
     <div
@@ -226,7 +315,7 @@ export function IdentityTimeline({ initialValue }: Props) {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && lookup(input)}
+          onKeyDown={(e) => e.key === "Enter" && lookup(input, 0, earliestMs, latestMs)}
           placeholder="Enter ARN or principal ID…"
           style={{
             flex: 1,
@@ -241,7 +330,7 @@ export function IdentityTimeline({ initialValue }: Props) {
           }}
         />
         <button
-          onClick={() => lookup(input)}
+          onClick={() => lookup(input, 0, earliestMs, latestMs)}
           disabled={loading}
           style={{
             background: "var(--accent-blue)",
@@ -258,6 +347,115 @@ export function IdentityTimeline({ initialValue }: Props) {
         >
           {loading ? "…" : "Lookup"}
         </button>
+      </div>
+
+      {/* Time filter bar */}
+      <div
+        style={{
+          padding: "4px 12px",
+          borderBottom: "1px solid var(--border)",
+          background: "var(--bg-secondary)",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flexWrap: "wrap",
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ fontSize: 11, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+          Time:
+        </span>
+        {TIME_PRESETS.map(({ label, value }) => (
+          <button
+            key={label}
+            onClick={() => value === "" ? handleClearTime() : handleTimePreset(value)}
+            style={{
+              background: (value === "" ? !hasTimeFilter : timePreset === value)
+                ? "var(--accent-green)"
+                : "var(--bg-tertiary)",
+              border: "1px solid var(--border)",
+              color: (value === "" ? !hasTimeFilter : timePreset === value)
+                ? "#ffffff"
+                : "var(--text-secondary)",
+              padding: "1px 8px",
+              borderRadius: 3,
+              fontSize: 11,
+              cursor: "pointer",
+              fontWeight: (value === "" ? !hasTimeFilter : timePreset === value) ? 600 : 400,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+        <span style={{ marginLeft: 4, fontSize: 11, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+          From:
+        </span>
+        <input
+          type="datetime-local"
+          value={customFrom}
+          onChange={(e) => setCustomFrom(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleApplyCustom()}
+          style={{
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            borderRadius: 3,
+            color: "var(--text-primary)",
+            padding: "1px 4px",
+            fontSize: 11,
+            colorScheme: "dark",
+          }}
+        />
+        <span style={{ fontSize: 11, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+          To:
+        </span>
+        <input
+          type="datetime-local"
+          value={customTo}
+          onChange={(e) => setCustomTo(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleApplyCustom()}
+          style={{
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            borderRadius: 3,
+            color: "var(--text-primary)",
+            padding: "1px 4px",
+            fontSize: 11,
+            colorScheme: "dark",
+          }}
+        />
+        <button
+          onClick={handleApplyCustom}
+          disabled={!customFrom && !customTo}
+          style={{
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)",
+            borderRadius: 3,
+            color: (!customFrom && !customTo) ? "var(--text-secondary)" : "var(--accent-blue)",
+            padding: "1px 8px",
+            fontSize: 11,
+            cursor: (!customFrom && !customTo) ? "default" : "pointer",
+            opacity: (!customFrom && !customTo) ? 0.5 : 1,
+            fontWeight: 600,
+          }}
+        >
+          Apply
+        </button>
+        {hasTimeFilter && (
+          <button
+            onClick={handleClearTime}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--accent-red, #f85149)",
+              padding: "1px 4px",
+              fontSize: 11,
+              cursor: "pointer",
+            }}
+            title="Clear time filter"
+          >
+            ✕ Clear
+          </button>
+        )}
       </div>
 
       {error && (
@@ -378,7 +576,7 @@ export function IdentityTimeline({ initialValue }: Props) {
                 }}
               >
                 <button
-                  onClick={() => lookup(summary.arn, currentPage - 1)}
+                  onClick={() => lookup(summary.arn, currentPage - 1, earliestMs, latestMs)}
                   disabled={currentPage === 0 || loading}
                   style={{
                     background: "var(--bg-tertiary)",
@@ -399,7 +597,7 @@ export function IdentityTimeline({ initialValue }: Props) {
                   {" "}of {summary.totalEvents.toLocaleString()} events
                 </span>
                 <button
-                  onClick={() => lookup(summary.arn, currentPage + 1)}
+                  onClick={() => lookup(summary.arn, currentPage + 1, earliestMs, latestMs)}
                   disabled={(currentPage + 1) * summary.pageSize >= summary.totalEvents || loading}
                   style={{
                     background: "var(--bg-tertiary)",

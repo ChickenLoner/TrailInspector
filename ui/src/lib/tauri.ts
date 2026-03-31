@@ -66,11 +66,15 @@ export async function getIdentitySummary(
   arn: string,
   page?: number,
   pageSize?: number,
+  earliestMs?: number,
+  latestMs?: number,
 ): Promise<IdentitySummary> {
   return invoke<IdentitySummary>("get_identity_summary_cmd", {
     arn,
     page: page ?? null,
     pageSize: pageSize ?? null,
+    earliestMs: earliestMs ?? null,
+    latestMs: latestMs ?? null,
   });
 }
 

@@ -67,6 +67,8 @@ pub async fn get_identity_summary_cmd(
     arn: String,
     page: Option<usize>,
     page_size: Option<usize>,
+    earliest_ms: Option<i64>,
+    latest_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<IdentitySummary, String> {
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
@@ -74,5 +76,6 @@ pub async fn get_identity_summary_cmd(
 
     let page = page.unwrap_or(0);
     let page_size = page_size.unwrap_or(500).min(500);
-    get_identity_summary(store, &arn, page, page_size).ok_or_else(|| format!("No events for ARN: {arn}"))
+    get_identity_summary(store, &arn, page, page_size, earliest_ms, latest_ms)
+        .ok_or_else(|| format!("No events for ARN: {arn}"))
 }

@@ -178,7 +178,14 @@ pub struct IdentitySummary {
     pub page_size: usize,
 }
 
-pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: usize) -> Option<IdentitySummary> {
+pub fn get_identity_summary(
+    store: &Store,
+    arn: &str,
+    page: usize,
+    page_size: usize,
+    earliest_ms: Option<i64>,
+    latest_ms: Option<i64>,
+) -> Option<IdentitySummary> {
     let ids = store.idx_user_arn.get(arn)
         .or_else(|| store.idx_user_name.get(arn))?;
 
@@ -192,6 +199,16 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
         .filter_map(|&id| store.get_record(id).map(|r| (r.timestamp, id)))
         .collect();
     timed_ids.sort_unstable_by_key(|(ts, _)| *ts);
+
+    // Apply time filter if requested
+    if earliest_ms.is_some() || latest_ms.is_some() {
+        timed_ids.retain(|(ts, _)| {
+            earliest_ms.map_or(true, |e| *ts >= e) && latest_ms.map_or(true, |l| *ts <= l)
+        });
+    }
+    if timed_ids.is_empty() {
+        return None;
+    }
 
     let first_seen_ms = timed_ids.first().map(|(ts, _)| *ts).unwrap_or(0);
     let last_seen_ms = timed_ids.last().map(|(ts, _)| *ts).unwrap_or(0);
