@@ -4,3 +4,4 @@ pub mod stats;
 pub mod detection;
 pub mod export;
 pub mod session;
+pub mod geoip;

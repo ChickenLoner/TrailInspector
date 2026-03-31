@@ -10,6 +10,8 @@ import type {
   Alert,
   SessionPage,
   SessionDetail,
+  IpInfo,
+  IpPage,
 } from "../types/cloudtrail";
 
 export async function loadDirectory(
@@ -96,6 +98,34 @@ export async function getSessionDetail(
   eventsPageSize: number = 50,
 ): Promise<SessionDetail> {
   return invoke<SessionDetail>("get_session_detail", { sessionId, eventsPage, eventsPageSize });
+}
+
+export async function loadGeoipDb(
+  geoPath?: string,
+  asnPath?: string,
+): Promise<string> {
+  return invoke<string>("load_geoip_db", {
+    geoPath: geoPath ?? null,
+    asnPath: asnPath ?? null,
+  });
+}
+
+export async function lookupIp(ip: string): Promise<IpInfo | null> {
+  return invoke<IpInfo | null>("lookup_ip", { ip });
+}
+
+export async function listIps(
+  page: number = 0,
+  pageSize: number = 100,
+  sortBy: string = "events",
+  filterCountry?: string,
+): Promise<IpPage> {
+  return invoke<IpPage>("list_ips", {
+    page,
+    pageSize,
+    sortBy,
+    filterCountry: filterCountry ?? null,
+  });
 }
 
 export async function exportCsv(query: string, path: string): Promise<void> {

@@ -18,6 +18,9 @@ pub fn run() {
             commands::export::export_json,
             commands::session::list_sessions,
             commands::session::get_session_detail,
+            commands::geoip::load_geoip_db,
+            commands::geoip::lookup_ip,
+            commands::geoip::list_ips,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TrailInspector");

@@ -26,8 +26,8 @@ AWS CloudTrail log analyzer — Tauri v2 + Rust + React desktop app.
 - ✅ v0.2 P1 — Detection module restructured into per-tactic files; 48 rules (+30 new: VPC/NW, RDS, EBS, Lambda, resource sharing, IAM, Defense Evasion); `service` field added to Alert
 - ✅ v0.2 P2 — Detection UI: severity filter chips, group-by (Severity/Service/Tactic), search box
 - ✅ v0.2 P3 — Session grouping engine (core) + Sessions UI tab; 30-min gap clustering by (identity, IP)
-- 🔲 v0.2 P4 — GeoIP enrichment engine
-- 🔲 v0.2 P5 — IP enrichment UI + geo anomaly rules
+- ✅ v0.2 P4 — GeoIP engine (maxminddb, offline MMDB) + IpView tab (IP table, geo detail panel, loader)
+- 🔲 v0.2 P5 — Geo anomaly rules (GEO-01/02) + country column in EventTable
 - 🔲 v0.2 P6 — Session-alert correlation
 
 ## Commands

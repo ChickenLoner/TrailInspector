@@ -128,7 +128,7 @@ New "Sessions" tab between Identity and Detections:
 
 ---
 
-## Phase 7: IP Enrichment Engine (Offline GeoIP)
+## Phase 7: IP Enrichment Engine (Offline GeoIP) ✅
 
 `maxminddb` crate for offline MMDB lookup. User provides GeoLite2 files or bundled ip2location-lite CSV.
 
@@ -146,7 +146,7 @@ New IPC commands: `get_ip_info`, `list_ips`.
 
 ---
 
-## Phase 8: IP Enrichment UI + Geo Anomaly Rules
+## Phase 8: IP Enrichment UI + Geo Anomaly Rules ✅
 
 - Country column in EventTable, geo panel in EventDetail/SessionDetail
 - IdentityTimeline highlights multi-country activity

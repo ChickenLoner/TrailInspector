@@ -7,3 +7,4 @@ pub mod export;
 pub mod detection;
 pub mod error;
 pub mod session;
+pub mod geoip;

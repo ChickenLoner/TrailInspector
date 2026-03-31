@@ -115,6 +115,38 @@ export interface IdentitySummary {
 }
 
 // ---------------------------------------------------------------------------
+// GeoIP types
+// ---------------------------------------------------------------------------
+
+export interface IpInfo {
+  ip: string;
+  countryCode?: string;
+  countryName?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+  asn?: number;
+  asnOrg?: string;
+}
+
+export interface IpRow {
+  ip: string;
+  eventCount: number;
+  countryCode?: string;
+  countryName?: string;
+  city?: string;
+  asn?: number;
+  asnOrg?: string;
+}
+
+export interface IpPage {
+  rows: IpRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+// ---------------------------------------------------------------------------
 // Session types
 // ---------------------------------------------------------------------------
 
