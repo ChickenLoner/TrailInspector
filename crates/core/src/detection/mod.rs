@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
+use crate::geoip::GeoIpEngine;
 
 pub mod rules;
 
@@ -586,7 +587,21 @@ pub fn run_all_rules(store: &Store) -> Vec<Alert> {
         .flat_map(|rule| (rule.evaluate)(store))
         .collect();
 
-    // Sort: Critical > High > Medium > Low > Info (reverse of enum ord)
+    alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
+    alerts
+}
+
+/// Run geo anomaly rules (requires a loaded GeoIpEngine).
+/// Results are appended to the alert list from run_all_rules.
+pub fn run_geo_rules(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
+    let mut alerts = vec![
+        rules::geo_anomaly::geo_01_multi_country(store, geoip),
+        rules::geo_anomaly::geo_02_console_unusual_country(store, geoip),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+
     alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
     alerts
 }

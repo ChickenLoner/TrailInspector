@@ -1,4 +1,13 @@
-import type { RecordRow } from "../../types/cloudtrail";
+import { useState, useEffect } from "react";
+import type { RecordRow, IpInfo } from "../../types/cloudtrail";
+import { lookupIp } from "../../lib/tauri";
+
+function countryFlag(code?: string): string {
+  if (!code || code.length !== 2) return "";
+  const base = 0x1F1E6 - 65;
+  return String.fromCodePoint(base + code.toUpperCase().charCodeAt(0))
+    + String.fromCodePoint(base + code.toUpperCase().charCodeAt(1));
+}
 
 interface Props {
   record: RecordRow | null;
@@ -6,7 +15,26 @@ interface Props {
 }
 
 export function EventDetail({ record, onClose }: Props) {
+  const [geoInfo, setGeoInfo] = useState<IpInfo | null>(null);
+
+  useEffect(() => {
+    setGeoInfo(null);
+    if (record?.sourceIPAddress) {
+      lookupIp(record.sourceIPAddress).then(setGeoInfo).catch(() => {});
+    }
+  }, [record?.sourceIPAddress]);
+
   if (!record) return null;
+
+  const flag = countryFlag(geoInfo?.countryCode);
+  const geoLabel = geoInfo
+    ? [
+        flag ? `${flag} ` : "",
+        geoInfo.countryName ?? geoInfo.countryCode ?? "",
+        geoInfo.city ? `, ${geoInfo.city}` : "",
+        geoInfo.asnOrg ? ` · ${geoInfo.asnOrg}` : "",
+      ].join("")
+    : null;
 
   return (
     <div
@@ -42,6 +70,7 @@ export function EventDetail({ record, onClose }: Props) {
         <Field label="Region" value={record.awsRegion} />
         <Field label="User" value={record.userName ?? record.userArn ?? "—"} />
         <Field label="IP" value={record.sourceIPAddress ?? "—"} />
+        {geoLabel && <Field label="Geo" value={geoLabel} />}
         {record.errorCode && <Field label="Error" value={record.errorCode} error />}
       </div>
 

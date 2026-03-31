@@ -11,3 +11,4 @@ pub mod rds;
 pub mod ebs;
 pub mod lambda;
 pub mod resource_sharing;
+pub mod geo_anomaly;
