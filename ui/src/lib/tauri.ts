@@ -10,6 +10,8 @@ import type {
   Alert,
   SessionPage,
   SessionDetail,
+  SessionSummary,
+  AlertStub,
   IpInfo,
   IpPage,
 } from "../types/cloudtrail";
@@ -90,6 +92,14 @@ export async function listSessions(
     filterIdentity: filterIdentity ?? null,
     filterIp: filterIp ?? null,
   });
+}
+
+export async function getSessionAlerts(sessionId: number): Promise<AlertStub[]> {
+  return invoke<AlertStub[]>("get_session_alerts", { sessionId });
+}
+
+export async function getAlertSessions(ruleId: string): Promise<SessionSummary[]> {
+  return invoke<SessionSummary[]>("get_alert_sessions", { ruleId });
 }
 
 export async function getSessionDetail(

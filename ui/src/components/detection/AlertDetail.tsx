@@ -1,4 +1,10 @@
-import type { Alert, Severity } from "../../types/cloudtrail";
+import { useState, useEffect } from "react";
+import type { Alert, Severity, SessionSummary } from "../../types/cloudtrail";
+import { getAlertSessions } from "../../lib/tauri";
+
+function fmtTime(ms: number): string {
+  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 16);
+}
 
 const SEVERITY_COLOR: Record<Severity, string> = {
   critical: "#f85149",
@@ -23,6 +29,15 @@ interface Props {
 }
 
 export function AlertDetail({ alert, onViewEvidence, onClose }: Props) {
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+
+  useEffect(() => {
+    setSessions([]);
+    if (alert) {
+      getAlertSessions(alert.ruleId).then(setSessions).catch(() => {});
+    }
+  }, [alert?.ruleId]);
+
   if (!alert) {
     return (
       <div
@@ -138,6 +153,40 @@ export function AlertDetail({ alert, onViewEvidence, onClose }: Props) {
           />
           <KV label="Search Query" value={alert.query} mono />
         </Section>
+
+        {/* Sessions */}
+        {sessions.length > 0 && (
+          <Section title={`Sessions (${sessions.length})`}>
+            {sessions.map((s) => (
+              <div
+                key={s.id}
+                style={{
+                  padding: "5px 8px",
+                  borderBottom: "1px solid var(--border)",
+                  fontSize: 11,
+                }}
+              >
+                <div
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    color: "var(--text-primary)",
+                    marginBottom: 2,
+                  }}
+                  title={s.identityKey}
+                >
+                  {s.identityKey}
+                </div>
+                <div style={{ display: "flex", gap: 8, fontSize: 10, color: "var(--text-secondary)" }}>
+                  <span style={{ fontFamily: "monospace", color: "#58a6ff" }}>{s.sourceIp}</span>
+                  <span>{fmtTime(s.firstEventMs)}</span>
+                  <span>{s.eventCount} events</span>
+                </div>
+              </div>
+            ))}
+          </Section>
+        )}
 
         {/* Metadata */}
         {Object.keys(alert.metadata).length > 0 && (

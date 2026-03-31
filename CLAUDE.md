@@ -28,7 +28,7 @@ AWS CloudTrail log analyzer — Tauri v2 + Rust + React desktop app.
 - ✅ v0.2 P3 — Session grouping engine (core) + Sessions UI tab; 30-min gap clustering by (identity, IP)
 - ✅ v0.2 P4 — GeoIP engine (maxminddb, offline MMDB) + IpView tab (IP table, geo detail panel, loader)
 - ✅ v0.2 P5 — Geo anomaly rules GEO-01/02 (multi-country identity, unusual login country) + EventDetail geo enrichment
-- 🔲 v0.2 P6 — Session-alert correlation
+- ✅ v0.2 P6 — Session-alert correlation: SessionDetail shows alert badges; AlertDetail shows owning sessions
 
 ## Commands
 ```bash

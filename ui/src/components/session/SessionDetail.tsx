@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
-import { getSessionDetail } from "../../lib/tauri";
-import type { SessionDetail as SessionDetailType, SessionEvent } from "../../types/cloudtrail";
+import { getSessionDetail, getSessionAlerts } from "../../lib/tauri";
+import type { SessionDetail as SessionDetailType, SessionEvent, AlertStub, Severity } from "../../types/cloudtrail";
+
+const SEV_COLOR: Record<Severity, string> = {
+  critical: "#d41f1f", high: "#c96d16", medium: "#f8be34", low: "#3c95d1", info: "#65a637",
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -97,6 +101,7 @@ export function SessionDetail({ sessionId, onClose }: Props) {
   const [eventsPage, setEventsPage] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [alerts, setAlerts] = useState<AlertStub[]>([]);
 
   async function load(epage: number) {
     setLoading(true);
@@ -114,8 +119,10 @@ export function SessionDetail({ sessionId, onClose }: Props) {
 
   useEffect(() => {
     setDetail(null);
+    setAlerts([]);
     setEventsPage(0);
     load(0);
+    getSessionAlerts(sessionId).then(setAlerts).catch(() => {});
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalEventPages = detail ? Math.ceil(detail.eventsTotal / EVENTS_PAGE_SIZE) : 0;
@@ -229,6 +236,41 @@ export function SessionDetail({ sessionId, onClose }: Props) {
               {name}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* Correlated alerts */}
+      {alerts.length > 0 && (
+        <div
+          style={{
+            padding: "6px 14px",
+            borderBottom: "1px solid var(--border)",
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Alerts ({alerts.length})
+          </div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {alerts.map((a) => (
+              <span
+                key={a.ruleId}
+                title={`${a.title} — ${a.matchingCount} event(s)`}
+                style={{
+                  fontSize: 10,
+                  fontFamily: "monospace",
+                  background: `${SEV_COLOR[a.severity]}18`,
+                  border: `1px solid ${SEV_COLOR[a.severity]}50`,
+                  color: SEV_COLOR[a.severity],
+                  borderRadius: 3,
+                  padding: "1px 6px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {a.ruleId} · {a.matchingCount}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 

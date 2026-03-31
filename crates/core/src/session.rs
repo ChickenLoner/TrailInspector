@@ -4,8 +4,9 @@
 //! `(identity, source_ip)`. A new session starts when the gap between consecutive
 //! events for the same key exceeds `GAP_MS` (default 30 minutes).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::store::Store;
+use crate::detection::Alert;
 
 const GAP_MS: i64 = 30 * 60 * 1_000; // 30 minutes
 
@@ -292,6 +293,73 @@ impl SessionIndex {
             events_total,
         })
     }
+
+    // -----------------------------------------------------------------------
+    // Correlation: sessions ↔ alerts
+    // -----------------------------------------------------------------------
+
+    /// Return lightweight alert stubs for alerts that overlap a given session's events.
+    pub fn get_session_alerts(
+        &self,
+        session_id: u32,
+        alerts: &[Alert],
+    ) -> Vec<AlertStub> {
+        let sess = match self.sessions.get(session_id as usize) {
+            Some(s) => s,
+            None => return vec![],
+        };
+
+        let session_ids: HashSet<u64> = sess.event_ids.iter().copied().collect();
+
+        alerts
+            .iter()
+            .filter(|a| a.matching_record_ids.iter().any(|id| session_ids.contains(id)))
+            .map(|a| AlertStub {
+                rule_id: a.rule_id.clone(),
+                severity: a.severity.clone(),
+                title: a.title.clone(),
+                service: a.service.clone(),
+                mitre_tactic: a.mitre_tactic.clone(),
+                mitre_technique: a.mitre_technique.clone(),
+                matching_count: a.matching_record_ids
+                    .iter()
+                    .filter(|id| session_ids.contains(id))
+                    .count(),
+            })
+            .collect()
+    }
+
+    /// Return sessions that contain at least one event from the given alert.
+    pub fn get_alert_sessions(
+        &self,
+        alert: &Alert,
+    ) -> Vec<SessionSummary> {
+        let alert_ids: HashSet<u64> = alert.matching_record_ids.iter().copied().collect();
+
+        self.sessions
+            .iter()
+            .filter(|s| s.event_ids.iter().any(|id| alert_ids.contains(id)))
+            .map(session_to_summary)
+            .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Correlation types
+// ---------------------------------------------------------------------------
+
+/// Lightweight alert reference used in SessionDetail
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlertStub {
+    pub rule_id: String,
+    pub severity: crate::detection::Severity,
+    pub title: String,
+    pub service: String,
+    pub mitre_tactic: String,
+    pub mitre_technique: String,
+    /// Number of this session's events that matched the alert
+    pub matching_count: usize,
 }
 
 // ---------------------------------------------------------------------------

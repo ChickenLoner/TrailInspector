@@ -182,6 +182,16 @@ export interface SessionEvent {
   userAgent?: string;
 }
 
+export interface AlertStub {
+  ruleId: string;
+  severity: Severity;
+  title: string;
+  service: string;
+  mitreTactic: string;
+  mitreTechnique: string;
+  matchingCount: number;
+}
+
 export interface SessionDetail {
   id: number;
   identityKey: string;

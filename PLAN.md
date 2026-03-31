@@ -156,7 +156,7 @@ New IPC commands: `get_ip_info`, `list_ips`.
 
 ---
 
-## Phase 9: Session-Alert Correlation + Cross-Session Linking
+## Phase 9: Session-Alert Correlation + Cross-Session Linking ✅
 
 - Annotate sessions with `alert_ids` by intersecting event IDs
 - AssumeRole chain detection → `session_links` between parent/child sessions
