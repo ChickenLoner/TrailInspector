@@ -22,9 +22,9 @@ This release evolves TrailInspector from a log viewer into a full cloud investig
 
 ### GeoIP Setup (Optional)
 
-Download the free **GeoLite2** databases from MaxMind and load them via Settings → GeoIP to enable IP enrichment and geo anomaly rules:
-- `GeoLite2-City.mmdb`
-- `GeoLite2-ASN.mmdb`
+Download the free **DB-IP Lite** databases (no registration required, CC BY 4.0) from [db-ip.com/db/lite](https://db-ip.com/db/lite) and load them via the IP tab to enable IP enrichment and geo anomaly rules:
+- `dbip-city-lite.mmdb`
+- `dbip-asn-lite.mmdb`
 
 ### Built with
 

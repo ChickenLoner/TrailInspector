@@ -30,7 +30,7 @@ function GeoIpLoader({ onLoaded }: LoaderProps) {
 
   const pickFile = async (setter: (p: string) => void) => {
     const path = await open({
-      filters: [{ name: "MaxMind DB", extensions: ["mmdb"] }],
+      filters: [{ name: "GeoIP DB", extensions: ["mmdb"] }],
       multiple: false,
     });
     if (typeof path === "string") setter(path);
@@ -82,17 +82,17 @@ function GeoIpLoader({ onLoaded }: LoaderProps) {
           lineHeight: 1.5,
         }}
       >
-        Provide MaxMind GeoLite2 MMDB files for offline IP enrichment.
-        Download free databases from{" "}
+        Provide DB-IP Lite MMDB files for offline IP enrichment.
+        Download free databases (no registration) from{" "}
         <span style={{ fontFamily: "monospace", color: "#58a6ff" }}>
-          maxmind.com/en/geolite2/signup
+          db-ip.com/db/lite
         </span>
         . Both files are optional — load either or both.
       </div>
 
       {/* Geo DB */}
       <FileRow
-        label="GeoLite2-City.mmdb or GeoLite2-Country.mmdb"
+        label="dbip-city-lite.mmdb or dbip-country-lite.mmdb"
         sublabel="Country, city, coordinates"
         path={geoPath}
         onPick={() => pickFile(setGeoPath)}
@@ -101,7 +101,7 @@ function GeoIpLoader({ onLoaded }: LoaderProps) {
 
       {/* ASN DB */}
       <FileRow
-        label="GeoLite2-ASN.mmdb"
+        label="dbip-asn-lite.mmdb"
         sublabel="Autonomous system number & org"
         path={asnPath}
         onPick={() => pickFile(setAsnPath)}
@@ -289,7 +289,12 @@ const SORT_OPTIONS = [
   { value: "asn", label: "ASN" },
 ];
 
-export function IpView() {
+interface IpViewProps {
+  startMs?: number;
+  endMs?: number;
+}
+
+export function IpView({ startMs, endMs }: IpViewProps) {
   const [geoLoaded, setGeoLoaded] = useState(false);
   const [page, setPage] = useState<IpPage | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
@@ -303,7 +308,7 @@ export function IpView() {
     setLoading(true);
     setError(null);
     try {
-      const result = await listIps(pg, PAGE_SIZE, sort, country || undefined);
+      const result = await listIps(pg, PAGE_SIZE, sort, country || undefined, startMs, endMs);
       setPage(result);
       setCurrentPage(pg);
     } catch (e) {
@@ -311,17 +316,17 @@ export function IpView() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGeoLoaded = useCallback(() => {
     setGeoLoaded(true);
     load(0, sortBy, filterCountry);
   }, [load, sortBy, filterCountry]);
 
-  // Load IP list without geo on first mount (shows IPs + event counts)
+  // Load IP list on first mount + re-load when time range changes
   useEffect(() => {
     load(0, sortBy, filterCountry);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSort = (sort: string) => {
     setSortBy(sort);

@@ -66,16 +66,23 @@ export async function getIdentitySummary(
   arn: string,
   page?: number,
   pageSize?: number,
+  startMs?: number,
+  endMs?: number,
 ): Promise<IdentitySummary> {
   return invoke<IdentitySummary>("get_identity_summary_cmd", {
     arn,
     page: page ?? null,
     pageSize: pageSize ?? null,
+    startMs: startMs ?? null,
+    endMs: endMs ?? null,
   });
 }
 
-export async function runDetections(): Promise<Alert[]> {
-  return invoke<Alert[]>("run_detections");
+export async function runDetections(startMs?: number, endMs?: number): Promise<Alert[]> {
+  return invoke<Alert[]>("run_detections", {
+    startMs: startMs ?? null,
+    endMs: endMs ?? null,
+  });
 }
 
 export async function listSessions(
@@ -84,6 +91,8 @@ export async function listSessions(
   sortBy: string = "first",
   filterIdentity?: string,
   filterIp?: string,
+  startMs?: number,
+  endMs?: number,
 ): Promise<SessionPage> {
   return invoke<SessionPage>("list_sessions", {
     page,
@@ -91,6 +100,8 @@ export async function listSessions(
     sortBy,
     filterIdentity: filterIdentity ?? null,
     filterIp: filterIp ?? null,
+    startMs: startMs ?? null,
+    endMs: endMs ?? null,
   });
 }
 
@@ -129,12 +140,16 @@ export async function listIps(
   pageSize: number = 100,
   sortBy: string = "events",
   filterCountry?: string,
+  startMs?: number,
+  endMs?: number,
 ): Promise<IpPage> {
   return invoke<IpPage>("list_ips", {
     page,
     pageSize,
     sortBy,
     filterCountry: filterCountry ?? null,
+    startMs: startMs ?? null,
+    endMs: endMs ?? null,
   });
 }
 

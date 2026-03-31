@@ -594,6 +594,20 @@ pub fn run_all_rules(store: &Store) -> Vec<Alert> {
     alerts
 }
 
+/// Filter alerts to only include matching records within [start_ms, end_ms].
+/// Alerts with no remaining matching records are dropped.
+pub fn filter_alerts_by_time(store: &Store, mut alerts: Vec<Alert>, start_ms: i64, end_ms: i64) -> Vec<Alert> {
+    for alert in &mut alerts {
+        alert.matching_record_ids.retain(|&id| {
+            store.get_record(id)
+                .map(|r| r.timestamp >= start_ms && r.timestamp <= end_ms)
+                .unwrap_or(false)
+        });
+    }
+    alerts.retain(|a| !a.matching_record_ids.is_empty());
+    alerts
+}
+
 /// Run geo anomaly rules (requires a loaded GeoIpEngine).
 /// Results are appended to the alert list from run_all_rules.
 pub fn run_geo_rules(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {

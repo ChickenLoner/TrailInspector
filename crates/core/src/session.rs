@@ -206,6 +206,7 @@ impl SessionIndex {
         sort_by: &str,
         filter_identity: Option<&str>,
         filter_ip: Option<&str>,
+        time_range: Option<(i64, i64)>,
     ) -> SessionPage {
         let mut sessions: Vec<&Session> = self.sessions.iter()
             .filter(|s| {
@@ -216,6 +217,12 @@ impl SessionIndex {
                 }
                 if let Some(ip) = filter_ip {
                     if !s.source_ip.contains(ip) {
+                        return false;
+                    }
+                }
+                // Overlap check: session must overlap [start_ms, end_ms]
+                if let Some((start_ms, end_ms)) = time_range {
+                    if s.last_event_ms < start_ms || s.first_event_ms > end_ms {
                         return false;
                     }
                 }
@@ -604,7 +611,7 @@ mod tests {
             make_event(1, "arn:aws:iam::123:user/bob", "2.2.2.2", 1_000),
         ]);
         let idx = SessionIndex::build(&store);
-        let page = idx.list_sessions(0, 10, "first", None, None);
+        let page = idx.list_sessions(0, 10, "first", None, None, None);
         assert_eq!(page.total, 2);
         assert_eq!(page.sessions.len(), 2);
     }
@@ -617,8 +624,8 @@ mod tests {
                 .collect(),
         );
         let idx = SessionIndex::build(&store);
-        let page0 = idx.list_sessions(0, 2, "first", None, None);
-        let page1 = idx.list_sessions(1, 2, "first", None, None);
+        let page0 = idx.list_sessions(0, 2, "first", None, None, None);
+        let page1 = idx.list_sessions(1, 2, "first", None, None, None);
         assert_eq!(page0.total, 5);
         assert_eq!(page0.sessions.len(), 2);
         assert_eq!(page1.sessions.len(), 2);
@@ -631,7 +638,7 @@ mod tests {
             make_event(1, "arn:aws:iam::123:user/bob", "2.2.2.2", 1_000),
         ]);
         let idx = SessionIndex::build(&store);
-        let page = idx.list_sessions(0, 10, "first", Some("alice"), None);
+        let page = idx.list_sessions(0, 10, "first", Some("alice"), None, None);
         assert_eq!(page.total, 1);
         assert!(page.sessions[0].identity_key.contains("alice"));
     }
@@ -643,7 +650,7 @@ mod tests {
             make_event(1, "arn:aws:iam::123:user/bob", "192.168.1.1", 1_000),
         ]);
         let idx = SessionIndex::build(&store);
-        let page = idx.list_sessions(0, 10, "first", None, Some("10.0.0.1"));
+        let page = idx.list_sessions(0, 10, "first", None, Some("10.0.0.1"), None);
         assert_eq!(page.total, 1);
         assert_eq!(page.sessions[0].source_ip, "10.0.0.1");
     }

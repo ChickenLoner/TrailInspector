@@ -125,7 +125,12 @@ const SORT_OPTIONS = [
   { value: "errors", label: "Most Errors" },
 ];
 
-export function SessionView() {
+interface SessionViewProps {
+  startMs?: number;
+  endMs?: number;
+}
+
+export function SessionView({ startMs, endMs }: SessionViewProps) {
   const [page, setPage] = useState<SessionPage | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [sortBy, setSortBy] = useState("first");
@@ -145,6 +150,8 @@ export function SessionView() {
         sort,
         identity || undefined,
         ip || undefined,
+        startMs,
+        endMs,
       );
       setPage(result);
       setCurrentPage(pg);
@@ -153,12 +160,12 @@ export function SessionView() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initial load
+  // Initial load + re-load when time range changes
   useEffect(() => {
     load(0, sortBy, filterIdentity, filterIp);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSortChange = (sort: string) => {
     setSortBy(sort);

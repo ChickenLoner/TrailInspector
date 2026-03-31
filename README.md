@@ -21,7 +21,7 @@
 
 TrailInspector loads raw CloudTrail exports — `.json`, `.json.gz`, or ZIP archives — entirely in memory and lets you search, visualize, triage threats, and investigate sessions without sending data to any external service.
 
-The investigation workflow is modeled after Splunk: a query bar with SPL-like syntax, a timeline histogram for scoping time windows, field statistics for pivoting on values, a detections panel that fires **60 MITRE ATT&CK-mapped rules** automatically, session grouping to cluster activity by identity and IP, and offline IP enrichment via GeoLite2.
+The investigation workflow is modeled after Splunk: a query bar with SPL-like syntax, a timeline histogram for scoping time windows, field statistics for pivoting on values, a detections panel that fires **60 MITRE ATT&CK-mapped rules** automatically, session grouping to cluster activity by identity and IP, and offline IP enrichment via DB-IP Lite.
 
 ## Screenshots
 
@@ -56,7 +56,7 @@ Pivot to any IAM identity and see every action it took in chronological order �
 | **Visualize** | Timeline histogram, field statistics, identity activity timeline |
 | **Detect** | 60 MITRE ATT&CK-mapped rules across IAM, EC2, S3, VPC, RDS, EBS, Lambda, KMS, and more |
 | **Sessions** | Automatic activity session grouping by `(identity, IP)` with 30-min inactivity gap |
-| **IP Enrichment** | Offline GeoIP lookup (MaxMind GeoLite2) — country, city, ASN; geo anomaly rules |
+| **IP Enrichment** | Offline GeoIP lookup (DB-IP Lite, free, no registration) — country, city, ASN; geo anomaly rules |
 | **Investigate** | One-click "View Evidence" jumps from alert → filtered event table |
 | **Correlate** | Session ↔ alert cross-linking; AssumeRole chain detection across accounts |
 | **Export** | Save filtered results as JSON or ZIP archive |
@@ -115,12 +115,12 @@ Installers are written to `crates/app/target/release/bundle/`.
 
 ## GeoIP Setup (Optional)
 
-To enable IP enrichment and geo anomaly rules, obtain the free **GeoLite2** databases from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) (account required) and place them in the app data directory:
+To enable IP enrichment and geo anomaly rules, download the free **DB-IP Lite** databases from [db-ip.com/db/lite](https://db-ip.com/db/lite) (no registration required, CC BY 4.0) and load them via the IP tab:
 
-- `GeoLite2-City.mmdb` — country, city, and coordinates
-- `GeoLite2-ASN.mmdb` — ASN and organisation
+- `dbip-city-lite.mmdb` — country, city, and coordinates
+- `dbip-asn-lite.mmdb` — ASN and organisation
 
-The app prompts for file paths on first launch. Without the databases the tool still works fully — IP enrichment and geo anomaly rules (`GEO-01`, `GEO-02`) are simply disabled.
+Without the databases the tool still works fully — IP enrichment and geo anomaly rules (`GEO-01`, `GEO-02`) are simply disabled.
 
 ---
 

@@ -163,9 +163,11 @@ function EventRow({ ev }: { ev: TimelineEvent }) {
 
 interface Props {
   initialValue?: string;
+  startMs?: number;
+  endMs?: number;
 }
 
-export function IdentityTimeline({ initialValue }: Props) {
+export function IdentityTimeline({ initialValue, startMs, endMs }: Props) {
   const [input, setInput] = useState(initialValue ?? "");
   const [summary, setSummary] = useState<IdentitySummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -179,7 +181,7 @@ export function IdentityTimeline({ initialValue }: Props) {
     setError(null);
     if (page === 0) setSummary(null);
     try {
-      const result = await getIdentitySummary(t, page);
+      const result = await getIdentitySummary(t, page, undefined, startMs, endMs);
       setSummary(result);
       setCurrentPage(page);
     } catch (e) {
@@ -187,14 +189,14 @@ export function IdentityTimeline({ initialValue }: Props) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (initialValue) {
       setInput(initialValue);
       lookup(initialValue);
     }
-  }, [initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialValue, startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const spanMs = summary ? summary.lastSeenMs - summary.firstSeenMs : 0;
   const uniqueActions = summary?.byEvent.length ?? 0;

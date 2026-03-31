@@ -62,11 +62,14 @@ pub async fn get_top_fields(
 }
 
 /// Return identity timeline for a given ARN.
+/// If start_ms/end_ms are provided, only events within that range are included.
 #[tauri::command]
 pub async fn get_identity_summary_cmd(
     arn: String,
     page: Option<usize>,
     page_size: Option<usize>,
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<IdentitySummary, String> {
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
@@ -74,5 +77,9 @@ pub async fn get_identity_summary_cmd(
 
     let page = page.unwrap_or(0);
     let page_size = page_size.unwrap_or(500).min(500);
-    get_identity_summary(store, &arn, page, page_size).ok_or_else(|| format!("No events for ARN: {arn}"))
+    let time_range = match (start_ms, end_ms) {
+        (Some(s), Some(e)) => Some((s, e)),
+        _ => None,
+    };
+    get_identity_summary(store, &arn, page, page_size, time_range).ok_or_else(|| format!("No events for ARN: {arn}"))
 }

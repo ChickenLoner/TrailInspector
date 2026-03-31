@@ -1,12 +1,13 @@
 //! Offline GeoIP enrichment engine.
 //!
-//! Wraps MaxMind's `maxminddb` crate to look up geo and ASN information for
+//! Wraps the `maxminddb` crate to look up geo and ASN information for
 //! source IPs found in CloudTrail logs. Both databases are optional — if not
 //! loaded, lookups return `None`.
 //!
-//! **Required files (user-supplied):**
-//! - `GeoLite2-City.mmdb` or `GeoLite2-Country.mmdb` — country / city geo
-//! - `GeoLite2-ASN.mmdb` — autonomous system number / org
+//! **Recommended files (user-supplied, free, no registration):**
+//! - `dbip-city-lite.mmdb` or `dbip-country-lite.mmdb` — country / city geo
+//! - `dbip-asn-lite.mmdb` — autonomous system number / org
+//! Download from: https://db-ip.com/db/lite (CC BY 4.0)
 
 use std::collections::HashMap;
 use std::net::IpAddr;

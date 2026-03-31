@@ -19,9 +19,12 @@ interface Props {
   selectedIdentity?: string;
   /** Called when "View Evidence" is clicked in AlertDetail — receives pre-built query string */
   onViewEvidence?: (query: string) => void;
+  /** Global time range filter (epoch ms) */
+  startMs?: number;
+  endMs?: number;
 }
 
-export function AppShell({ searchView, onFilterSelect, query, activeTab, onTabChange, selectedIdentity, onViewEvidence }: Props) {
+export function AppShell({ searchView, onFilterSelect, query, activeTab, onTabChange, selectedIdentity, onViewEvidence, startMs, endMs }: Props) {
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
       <Sidebar activeTab={activeTab} onTabChange={onTabChange} />
@@ -38,25 +41,25 @@ export function AppShell({ searchView, onFilterSelect, query, activeTab, onTabCh
 
         {activeTab === "identity" && (
           <div style={{ flex: 1, overflow: "hidden" }}>
-            <IdentityTimeline initialValue={selectedIdentity} />
+            <IdentityTimeline initialValue={selectedIdentity} startMs={startMs} endMs={endMs} />
           </div>
         )}
 
         {activeTab === "sessions" && (
           <div style={{ flex: 1, overflow: "hidden" }}>
-            <SessionView />
+            <SessionView startMs={startMs} endMs={endMs} />
           </div>
         )}
 
         {activeTab === "ip" && (
           <div style={{ flex: 1, overflow: "hidden" }}>
-            <IpView />
+            <IpView startMs={startMs} endMs={endMs} />
           </div>
         )}
 
         {activeTab === "detections" && (
           <div style={{ flex: 1, overflow: "hidden" }}>
-            <DetectionView onViewEvidence={onViewEvidence ?? (() => {})} />
+            <DetectionView onViewEvidence={onViewEvidence ?? (() => {})} startMs={startMs} endMs={endMs} />
           </div>
         )}
       </div>

@@ -8,18 +8,11 @@ import { QueryBar } from "./components/search/QueryBar";
 import { FilterPanel } from "./components/search/FilterPanel";
 import { TimelineChart } from "./components/viz/TimelineChart";
 import { AppShell } from "./components/layout/AppShell";
+import { GlobalTimeBar } from "./components/layout/GlobalTimeBar";
 import { search, getTimeline, exportCsv, exportJson } from "./lib/tauri";
-import type { RecordRow, SearchResult, TimeBucket, IngestWarning } from "./types/cloudtrail";
+import type { RecordRow, SearchResult, TimeBucket, IngestWarning, GlobalTimeRange } from "./types/cloudtrail";
 import type { Tab } from "./components/layout/Sidebar";
 import "./styles/globals.css";
-
-const TIME_PRESETS = [
-  { label: "All", value: "" },
-  { label: "1h", value: "earliest=-1h" },
-  { label: "6h", value: "earliest=-6h" },
-  { label: "24h", value: "earliest=-24h" },
-  { label: "7d", value: "earliest=-7d" },
-];
 
 const LS_QUERY_KEY = "trailinspector_last_query";
 const LS_TAB_KEY = "trailinspector_last_tab";
@@ -151,7 +144,13 @@ export default function App() {
     () => localStorage.getItem(LS_QUERY_KEY) ?? ""
   );
   const [filterFragment, setFilterFragment] = useState("");
-  const [timePreset, setTimePreset] = useState("");
+  const [globalTimeRange, setGlobalTimeRange] = useState<GlobalTimeRange>(() => {
+    try {
+      const saved = localStorage.getItem("trailinspector_time_range");
+      if (saved) return JSON.parse(saved) as GlobalTimeRange;
+    } catch { /* ignore */ }
+    return { startMs: null, endMs: null, label: "All" };
+  });
 
   // Tab + identity navigation — restore from localStorage
   const [activeTab, setActiveTab] = useState<Tab>(
@@ -185,8 +184,13 @@ export default function App() {
   }, [activeTab]);
 
   const buildQuery = useCallback(
-    (q: string, f: string, t: string) =>
-      [q.trim(), f.trim(), t.trim()].filter(Boolean).join(" AND "),
+    (q: string, f: string, range: GlobalTimeRange) => {
+      const parts = [q.trim(), f.trim()].filter(Boolean);
+      if (range.startMs !== null && range.endMs !== null) {
+        parts.push(`earliest=${range.startMs} latest=${range.endMs}`);
+      }
+      return parts.join(" AND ");
+    },
     []
   );
 
@@ -221,8 +225,8 @@ export default function App() {
   );
 
   const runQuery = useCallback(
-    (q: string, f: string, t: string, p = 0) => {
-      const fullQuery = buildQuery(q, f, t);
+    (q: string, f: string, range: GlobalTimeRange, p = 0) => {
+      const fullQuery = buildQuery(q, f, range);
       fetchPage(p, fullQuery);
       fetchTimeline(fullQuery);
     },
@@ -232,23 +236,24 @@ export default function App() {
   const handleQuerySubmit = useCallback(
     (q: string) => {
       setQueryText(q);
-      runQuery(q, filterFragment, timePreset);
+      runQuery(q, filterFragment, globalTimeRange);
     },
-    [filterFragment, timePreset, runQuery]
+    [filterFragment, globalTimeRange, runQuery]
   );
 
   const handleFilterChange = useCallback(
     (fragment: string) => {
       setFilterFragment(fragment);
-      runQuery(queryText, fragment, timePreset);
+      runQuery(queryText, fragment, globalTimeRange);
     },
-    [queryText, timePreset, runQuery]
+    [queryText, globalTimeRange, runQuery]
   );
 
-  const handleTimePreset = useCallback(
-    (preset: string) => {
-      setTimePreset(preset);
-      runQuery(queryText, filterFragment, preset);
+  const handleTimeRangeChange = useCallback(
+    (range: GlobalTimeRange) => {
+      setGlobalTimeRange(range);
+      localStorage.setItem("trailinspector_time_range", JSON.stringify(range));
+      runQuery(queryText, filterFragment, range);
     },
     [queryText, filterFragment, runQuery]
   );
@@ -269,9 +274,10 @@ export default function App() {
 
   const handleTimeRangeSelect = useCallback(
     (startMs: number, endMs: number) => {
-      const fragment = `earliest=${startMs} latest=${endMs}`;
-      setTimePreset(fragment);
-      runQuery(queryText, filterFragment, fragment);
+      const range: GlobalTimeRange = { startMs, endMs, label: "Custom" };
+      setGlobalTimeRange(range);
+      localStorage.setItem("trailinspector_time_range", JSON.stringify(range));
+      runQuery(queryText, filterFragment, range);
     },
     [queryText, filterFragment, runQuery]
   );
@@ -286,23 +292,22 @@ export default function App() {
       const fragment = `${field}="${value}"`;
       setQueryText((prev) => {
         const next = prev.trim() ? `${prev.trim()} AND ${fragment}` : fragment;
-        runQuery(next, filterFragment, timePreset);
+        runQuery(next, filterFragment, globalTimeRange);
         return next;
       });
       setActiveTab("search");
     },
-    [filterFragment, timePreset, runQuery]
+    [filterFragment, globalTimeRange, runQuery]
   );
 
   const handleViewEvidence = useCallback(
     (query: string) => {
       setQueryText(query);
       setFilterFragment("");
-      setTimePreset("");
-      runQuery(query, "", "");
+      runQuery(query, "", globalTimeRange);
       setActiveTab("search");
     },
-    [runQuery]
+    [globalTimeRange, runQuery]
   );
 
   // ── Global keyboard shortcuts ─────────────────────────────────────────────
@@ -325,7 +330,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const activeQuery = buildQuery(queryText, filterFragment, timePreset);
+  const activeQuery = buildQuery(queryText, filterFragment, globalTimeRange);
   const queryActive = activeQuery.trim().length > 0;
 
   if (!loaded) {
@@ -377,39 +382,16 @@ export default function App() {
         </div>
       </div>
 
-      {/* Time range bar */}
+      {/* Search results count + active query indicator */}
       <div
         className="flex items-center gap-1 px-3 flex-shrink-0"
         style={{
-          height: 30,
+          height: 24,
           background: "var(--bg-secondary)",
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <span className="text-xs mr-1" style={{ color: "var(--text-secondary)" }}>
-          Time:
-        </span>
-        {TIME_PRESETS.map(({ label, value }) => (
-          <button
-            key={label}
-            onClick={() => handleTimePreset(value)}
-            style={{
-              background:
-                timePreset === value ? "var(--accent-green)" : "var(--bg-tertiary)",
-              border: "1px solid var(--border)",
-              color:
-                timePreset === value ? "#ffffff" : "var(--text-secondary)",
-              padding: "1px 8px",
-              borderRadius: 3,
-              fontSize: 11,
-              cursor: "pointer",
-              fontWeight: timePreset === value ? 600 : 400,
-            }}
-          >
-            {label}
-          </button>
-        ))}
-        <span className="text-xs ml-4" style={{ color: "var(--text-secondary)" }}>
+        <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
           {loading
             ? "Searching…"
             : results
@@ -472,6 +454,10 @@ export default function App() {
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+      <GlobalTimeBar
+        timeRange={globalTimeRange}
+        onTimeRangeChange={handleTimeRangeChange}
+      />
       <div style={{ flex: 1, overflow: "hidden" }}>
         <AppShell
           searchView={searchView}
@@ -481,6 +467,8 @@ export default function App() {
           onTabChange={setActiveTab}
           selectedIdentity={selectedIdentity}
           onViewEvidence={handleViewEvidence}
+          startMs={globalTimeRange.startMs ?? undefined}
+          endMs={globalTimeRange.endMs ?? undefined}
         />
       </div>
       {ingestWarnings.length > 0 && !warningsDismissed && (

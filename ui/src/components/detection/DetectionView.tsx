@@ -7,35 +7,33 @@ import { AlertDetail } from "./AlertDetail";
 interface Props {
   /** Called when user clicks "View Evidence" — switches to search tab with pre-built query */
   onViewEvidence: (query: string) => void;
+  startMs?: number;
+  endMs?: number;
 }
 
-export function DetectionView({ onViewEvidence }: Props) {
+export function DetectionView({ onViewEvidence, startMs, endMs }: Props) {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasRun, setHasRun] = useState(false);
 
   const runAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await runDetections();
+      const result = await runDetections(startMs, endMs);
       setAlerts(result);
-      setHasRun(true);
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [startMs, endMs]);
 
-  // Auto-run on first mount
+  // Auto-run on first mount + re-run when time range changes
   useEffect(() => {
-    if (!hasRun) {
-      runAll();
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    runAll();
+  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCloseDetail = useCallback(() => {
     setSelectedAlert(null);

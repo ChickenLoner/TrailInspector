@@ -178,7 +178,7 @@ pub struct IdentitySummary {
     pub page_size: usize,
 }
 
-pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: usize) -> Option<IdentitySummary> {
+pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: usize, time_range: Option<(i64, i64)>) -> Option<IdentitySummary> {
     let ids = store.idx_user_arn.get(arn)
         .or_else(|| store.idx_user_name.get(arn))?;
 
@@ -186,10 +186,17 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
         return None;
     }
 
-    // Sort IDs by timestamp
+    // Sort IDs by timestamp, filtering by time range if provided
     let mut timed_ids: Vec<(i64, u64)> = ids
         .iter()
         .filter_map(|&id| store.get_record(id).map(|r| (r.timestamp, id)))
+        .filter(|(ts, _)| {
+            if let Some((start_ms, end_ms)) = time_range {
+                *ts >= start_ms && *ts <= end_ms
+            } else {
+                true
+            }
+        })
         .collect();
     timed_ids.sort_unstable_by_key(|(ts, _)| *ts);
 

@@ -211,6 +211,19 @@ impl Store {
         self.records.get(id as usize)
     }
 
+    /// Return all record IDs whose timestamp falls within [start_ms, end_ms] (inclusive).
+    /// Uses binary search on the pre-sorted `time_sorted_ids` index — O(log n).
+    pub fn get_ids_in_range(&self, start_ms: i64, end_ms: i64) -> Vec<u64> {
+        // Find the slice of IDs whose timestamps are in [start_ms, end_ms]
+        let start_idx = self.time_sorted_ids.partition_point(|&id| {
+            self.get_record(id).map(|r| r.timestamp).unwrap_or(i64::MAX) < start_ms
+        });
+        let end_idx = self.time_sorted_ids.partition_point(|&id| {
+            self.get_record(id).map(|r| r.timestamp).unwrap_or(i64::MAX) <= end_ms
+        });
+        self.time_sorted_ids[start_idx..end_idx].to_vec()
+    }
+
     /// Total record count
     pub fn len(&self) -> usize {
         self.records.len()

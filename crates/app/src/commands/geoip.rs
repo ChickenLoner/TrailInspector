@@ -42,22 +42,39 @@ pub async fn lookup_ip(
 
 /// List all unique source IPs from the loaded dataset with geo enrichment.
 /// Paginated, sortable by events/country/asn.
+/// If start_ms/end_ms are provided, only counts events within that time range.
 #[tauri::command]
 pub async fn list_ips(
     page: usize,
     page_size: usize,
     sort_by: String,
     filter_country: Option<String>,
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<IpPage, String> {
-    // Build ip→count map from store
+    // Build ip→count map from store (time-filtered if range provided)
     let ip_counts = {
         let store_guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
         let store = store_guard.as_ref().ok_or("No dataset loaded")?;
-        store.idx_source_ip
-            .iter()
-            .map(|(ip, ids)| (ip.clone(), ids.len()))
-            .collect::<std::collections::HashMap<String, usize>>()
+        if let (Some(s), Some(e)) = (start_ms, end_ms) {
+            // Build counts only from records in range
+            let ids_in_range = store.get_ids_in_range(s, e);
+            let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            for id in ids_in_range {
+                if let Some(rec) = store.get_record(id) {
+                    if let Some(ip) = &rec.record.source_ip_address {
+                        *counts.entry(ip.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+            counts
+        } else {
+            store.idx_source_ip
+                .iter()
+                .map(|(ip, ids)| (ip.clone(), ids.len()))
+                .collect::<std::collections::HashMap<String, usize>>()
+        }
     };
 
     let geoip_guard = state.geoip.read().map_err(|e| format!("Lock error: {e}"))?;
