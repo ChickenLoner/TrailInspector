@@ -88,6 +88,66 @@ pub async fn check_abuseipdb(
     })
 }
 
+// ---------------------------------------------------------------------------
+// ip-api.com online geo lookup (no API key required, free for non-commercial)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineGeoResult {
+    pub query: String,
+    pub status: String,
+    pub country: Option<String>,
+    pub country_code: Option<String>,
+    pub city: Option<String>,
+    pub isp: Option<String>,
+    pub org: Option<String>,
+    /// Raw AS string from ip-api.com, e.g. "AS14907 Wikimedia Foundation, Inc."
+    #[serde(rename = "as")]
+    pub asn_str: Option<String>,
+    pub asname: Option<String>,
+}
+
+/// Batch geo-lookup via ip-api.com (up to 100 IPs per call, HTTP free tier).
+/// Private/reserved IPs are returned with status "fail" and are harmless.
+#[tauri::command]
+pub async fn geo_lookup_online(ips: Vec<String>) -> Result<Vec<OnlineGeoResult>, String> {
+    if ips.is_empty() {
+        return Ok(vec![]);
+    }
+    let client = reqwest::Client::new();
+    let mut all_results: Vec<OnlineGeoResult> = Vec::new();
+
+    for chunk in ips.chunks(100) {
+        let body: Vec<serde_json::Value> = chunk
+            .iter()
+            .map(|ip| serde_json::json!({
+                "query": ip,
+                "fields": "status,country,countryCode,city,isp,org,as,asname,query"
+            }))
+            .collect();
+
+        let resp = client
+            .post("http://ip-api.com/batch")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("ip-api.com request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("ip-api.com returned HTTP {}", resp.status()));
+        }
+
+        let mut results: Vec<OnlineGeoResult> = resp
+            .json()
+            .await
+            .map_err(|e| format!("ip-api.com parse error: {e}"))?;
+        all_results.append(&mut results);
+    }
+
+    Ok(all_results)
+}
+
 /// Look up geo info for a single IP address.
 #[tauri::command]
 pub async fn lookup_ip(

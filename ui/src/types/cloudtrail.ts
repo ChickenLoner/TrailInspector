@@ -146,6 +146,19 @@ export interface IpPage {
   pageSize: number;
 }
 
+export interface OnlineGeoResult {
+  query: string;
+  status: string; // "success" | "fail"
+  country?: string;
+  countryCode?: string;
+  city?: string;
+  isp?: string;
+  org?: string;
+  /** Raw AS string, e.g. "AS14907 Wikimedia Foundation, Inc." */
+  as?: string;
+  asname?: string;
+}
+
 export interface AbuseCheckResult {
   ip: string;
   isPublic: boolean;

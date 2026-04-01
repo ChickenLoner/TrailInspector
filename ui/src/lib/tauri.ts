@@ -15,6 +15,7 @@ import type {
   IpInfo,
   IpPage,
   AbuseCheckResult,
+  OnlineGeoResult,
 } from "../types/cloudtrail";
 
 export async function loadDirectory(
@@ -152,6 +153,10 @@ export async function listIps(
     startMs: startMs ?? null,
     endMs: endMs ?? null,
   });
+}
+
+export async function geoLookupOnline(ips: string[]): Promise<OnlineGeoResult[]> {
+  return invoke<OnlineGeoResult[]>("geo_lookup_online", { ips });
 }
 
 export async function checkAbuseIpdb(apiKey: string, ip: string): Promise<AbuseCheckResult> {
