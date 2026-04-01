@@ -29,6 +29,30 @@ pub struct RecordRow {
     pub raw: CloudTrailRecord,
 }
 
+/// Fetch a single record by its internal ID.
+/// Used by the Sessions tab to load full event details on demand.
+#[tauri::command]
+pub async fn get_record_by_id(
+    id: u64,
+    state: State<'_, AppState>,
+) -> Result<Option<RecordRow>, String> {
+    let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
+    let store = guard.as_ref().ok_or("No dataset loaded")?;
+    Ok(store.get_record(id).map(|r| RecordRow {
+        id: r.id,
+        timestamp: r.timestamp,
+        event_time: r.record.event_time.clone(),
+        event_name: r.record.event_name.clone(),
+        event_source: r.record.event_source.clone(),
+        aws_region: r.record.aws_region.clone(),
+        source_ip_address: r.record.source_ip_address.clone(),
+        user_name: r.record.user_identity.user_name.clone(),
+        user_arn: r.record.user_identity.arn.clone(),
+        error_code: r.record.error_code.clone(),
+        raw: r.record.clone(),
+    }))
+}
+
 /// Search the loaded dataset.
 ///
 /// `query` supports the TrailInspector syntax:

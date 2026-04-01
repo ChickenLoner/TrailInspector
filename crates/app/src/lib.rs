@@ -8,6 +8,7 @@ pub fn run() {
         .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::ingest::load_directory,
+            commands::query::get_record_by_id,
             commands::query::search,
             commands::query::get_field_values,
             commands::stats::get_timeline,

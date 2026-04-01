@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Channel } from "@tauri-apps/api/core";
 import type {
   SearchResult,
+  RecordRow,
   FieldValue,
   IngestProgressEvent,
   TimelineResult,
@@ -25,6 +26,10 @@ export async function loadDirectory(
   const channel = new Channel<IngestProgressEvent>();
   channel.onmessage = onProgress;
   return invoke<number>("load_directory", { path, onProgress: channel });
+}
+
+export async function getRecordById(id: number): Promise<RecordRow | null> {
+  return invoke<RecordRow | null>("get_record_by_id", { id });
 }
 
 export async function search(
