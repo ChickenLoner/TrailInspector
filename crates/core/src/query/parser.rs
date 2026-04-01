@@ -187,6 +187,11 @@ fn parse_time_value(value: &str) -> Result<i64, CoreError> {
         return Ok(Utc::now().timestamp_millis() - millis);
     }
 
+    // Epoch milliseconds (plain integer — sent by the frontend)
+    if let Ok(ms) = value.parse::<i64>() {
+        return Ok(ms);
+    }
+
     // Absolute ISO 8601
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.timestamp_millis())

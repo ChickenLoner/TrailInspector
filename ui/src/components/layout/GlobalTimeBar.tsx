@@ -14,14 +14,14 @@ const PRESETS: { label: string; offsetMs: number | null }[] = [
 ];
 
 function msToDatetimeLocal(ms: number): string {
-  // Returns "YYYY-MM-DDTHH:MM" for datetime-local input
   const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
 function datetimeLocalToMs(value: string): number {
-  return new Date(value).getTime();
+  // Treat datetime-local input as UTC (append "Z")
+  return new Date(value + "Z").getTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -133,9 +133,9 @@ export function GlobalTimeBar({ timeRange, onTimeRangeChange }: Props) {
       {/* Active range label */}
       {timeRange.startMs !== null && timeRange.endMs !== null && (
         <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4, fontFamily: "monospace" }}>
-          {new Date(timeRange.startMs).toISOString().slice(0, 16).replace("T", " ")}
+          {new Date(timeRange.startMs).toISOString().slice(0, 16).replace("T", " ")} UTC
           {" — "}
-          {new Date(timeRange.endMs).toISOString().slice(0, 16).replace("T", " ")}
+          {new Date(timeRange.endMs).toISOString().slice(0, 16).replace("T", " ")} UTC
         </span>
       )}
 
@@ -158,7 +158,10 @@ export function GlobalTimeBar({ timeRange, onTimeRangeChange }: Props) {
             minWidth: 340,
           }}
         >
-          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }}>Custom Time Range</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" }}>Custom Time Range</div>
+            <div style={{ fontSize: 10, color: "var(--text-secondary)", background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3, padding: "1px 6px" }}>UTC</div>
+          </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <label style={{ fontSize: 11, color: "var(--text-secondary)", width: 36 }}>From</label>
             <input
