@@ -14,6 +14,7 @@ import type {
   AlertStub,
   IpInfo,
   IpPage,
+  AbuseCheckResult,
 } from "../types/cloudtrail";
 
 export async function loadDirectory(
@@ -151,6 +152,10 @@ export async function listIps(
     startMs: startMs ?? null,
     endMs: endMs ?? null,
   });
+}
+
+export async function checkAbuseIpdb(apiKey: string, ip: string): Promise<AbuseCheckResult> {
+  return invoke<AbuseCheckResult>("check_abuseipdb", { apiKey, ip });
 }
 
 export async function exportCsv(query: string, path: string): Promise<void> {

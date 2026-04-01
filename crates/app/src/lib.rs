@@ -23,6 +23,7 @@ pub fn run() {
             commands::geoip::load_geoip_db,
             commands::geoip::lookup_ip,
             commands::geoip::list_ips,
+            commands::geoip::check_abuseipdb,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TrailInspector");

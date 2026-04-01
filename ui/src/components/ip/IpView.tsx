@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { loadGeoipDb, listIps } from "../../lib/tauri";
-import type { IpPage, IpRow } from "../../types/cloudtrail";
+import { loadGeoipDb, listIps, checkAbuseIpdb } from "../../lib/tauri";
+import type { IpPage, IpRow, AbuseCheckResult } from "../../types/cloudtrail";
 
 // ---------------------------------------------------------------------------
 // Flag emoji from country code
 // ---------------------------------------------------------------------------
 
-function countryFlag(code?: string): string {
+function countryFlag(code?: string | null): string {
   if (!code || code.length !== 2) return "";
   const base = 0x1F1E6 - 65;
   return String.fromCodePoint(base + code.toUpperCase().charCodeAt(0))
@@ -15,14 +15,15 @@ function countryFlag(code?: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// GeoIP loader panel
+// GeoIP loader panel (used inside the right panel when triggered)
 // ---------------------------------------------------------------------------
 
 interface LoaderProps {
   onLoaded: () => void;
+  onCancel: () => void;
 }
 
-function GeoIpLoader({ onLoaded }: LoaderProps) {
+function GeoIpLoader({ onLoaded, onCancel }: LoaderProps) {
   const [geoPath, setGeoPath] = useState<string | null>(null);
   const [asnPath, setAsnPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -54,72 +55,49 @@ function GeoIpLoader({ onLoaded }: LoaderProps) {
   };
 
   return (
-    <div
-      style={{
-        maxWidth: 520,
-        margin: "60px auto",
-        padding: 28,
-        background: "var(--bg-secondary)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 700,
-          color: "var(--text-primary)",
-          marginBottom: 6,
-        }}
-      >
-        Load GeoIP Databases
+    <div style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)" }}>
+          Load GeoIP Databases
+        </div>
+        <button
+          onClick={onCancel}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--text-secondary)",
+            cursor: "pointer",
+            fontSize: 16,
+            lineHeight: 1,
+            padding: 2,
+          }}
+          title="Cancel"
+        >
+          ×
+        </button>
       </div>
-      <div
-        style={{
-          fontSize: 11,
-          color: "var(--text-secondary)",
-          marginBottom: 20,
-          lineHeight: 1.5,
-        }}
-      >
-        Provide DB-IP Lite MMDB files for offline IP enrichment.
-        Download free databases (no registration) from{" "}
-        <span style={{ fontFamily: "monospace", color: "#58a6ff" }}>
-          db-ip.com/db/lite
-        </span>
-        . Both files are optional — load either or both.
+      <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 16, lineHeight: 1.5 }}>
+        DB-IP Lite MMDB files — free, no registration.{" "}
+        <span style={{ fontFamily: "monospace", color: "#58a6ff" }}>db-ip.com/db/lite</span>
       </div>
 
-      {/* Geo DB */}
       <FileRow
-        label="dbip-city-lite.mmdb or dbip-country-lite.mmdb"
+        label="dbip-city-lite.mmdb"
         sublabel="Country, city, coordinates"
         path={geoPath}
         onPick={() => pickFile(setGeoPath)}
         onClear={() => setGeoPath(null)}
       />
-
-      {/* ASN DB */}
       <FileRow
         label="dbip-asn-lite.mmdb"
-        sublabel="Autonomous system number & org"
+        sublabel="ASN & organisation"
         path={asnPath}
         onPick={() => pickFile(setAsnPath)}
         onClear={() => setAsnPath(null)}
       />
 
       {error && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: "6px 10px",
-            background: "rgba(248,81,73,0.1)",
-            border: "1px solid rgba(248,81,73,0.3)",
-            borderRadius: 4,
-            fontSize: 11,
-            color: "#f85149",
-          }}
-        >
+        <div style={{ marginTop: 8, padding: "5px 8px", background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", borderRadius: 4, fontSize: 11, color: "#f85149" }}>
           {error}
         </div>
       )}
@@ -128,18 +106,14 @@ function GeoIpLoader({ onLoaded }: LoaderProps) {
         onClick={handleLoad}
         disabled={loading || (!geoPath && !asnPath)}
         style={{
-          marginTop: 20,
+          marginTop: 14,
           width: "100%",
-          background:
-            loading || (!geoPath && !asnPath)
-              ? "var(--bg-tertiary)"
-              : "var(--accent-blue)",
+          background: loading || (!geoPath && !asnPath) ? "var(--bg-tertiary)" : "var(--accent-blue)",
           border: "none",
-          borderRadius: 5,
-          color:
-            loading || (!geoPath && !asnPath) ? "var(--text-secondary)" : "#0d1117",
-          padding: "8px 0",
-          fontSize: 13,
+          borderRadius: 4,
+          color: loading || (!geoPath && !asnPath) ? "var(--text-secondary)" : "#0d1117",
+          padding: "7px 0",
+          fontSize: 12,
           fontWeight: 700,
           cursor: loading || (!geoPath && !asnPath) ? "default" : "pointer",
         }}
@@ -151,77 +125,156 @@ function GeoIpLoader({ onLoaded }: LoaderProps) {
 }
 
 function FileRow({
-  label,
-  sublabel,
-  path,
-  onPick,
-  onClear,
+  label, sublabel, path, onPick, onClear,
 }: {
-  label: string;
-  sublabel: string;
-  path: string | null;
-  onPick: () => void;
-  onClear: () => void;
+  label: string; sublabel: string; path: string | null;
+  onPick: () => void; onClear: () => void;
 }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 2 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 5 }}>{sublabel}</div>
-      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <div
-          style={{
-            flex: 1,
-            fontSize: 11,
-            fontFamily: "monospace",
-            color: path ? "var(--text-primary)" : "var(--text-secondary)",
-            background: "var(--bg-tertiary)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            padding: "4px 8px",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={path ?? ""}
-        >
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 1 }}>{label}</div>
+      <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 4 }}>{sublabel}</div>
+      <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+        <div style={{ flex: 1, fontSize: 11, fontFamily: "monospace", color: path ? "var(--text-primary)" : "var(--text-secondary)", background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3, padding: "3px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={path ?? ""}>
           {path ? path.split(/[\\/]/).pop() : "No file selected"}
         </div>
-        <button
-          onClick={onPick}
-          style={{
-            background: "var(--bg-tertiary)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            color: "var(--text-primary)",
-            fontSize: 11,
-            padding: "4px 10px",
-            cursor: "pointer",
-            flexShrink: 0,
-          }}
-        >
+        <button onClick={onPick} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3, color: "var(--text-primary)", fontSize: 11, padding: "3px 8px", cursor: "pointer", flexShrink: 0 }}>
           Browse…
         </button>
         {path && (
-          <button
-            onClick={onClear}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-              fontSize: 14,
-              lineHeight: 1,
-              padding: 2,
-              flexShrink: 0,
-            }}
-            title="Clear"
-          >
-            ×
-          </button>
+          <button onClick={onClear} style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 2, flexShrink: 0 }} title="Clear">×</button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AbuseIPDB panel (inside IP detail)
+// ---------------------------------------------------------------------------
+
+function abuseColor(score: number): string {
+  if (score === 0) return "#3fb950";
+  if (score < 25) return "#d29922";
+  if (score < 75) return "#f0883e";
+  return "#f85149";
+}
+
+interface AbusePanelProps {
+  ip: string;
+  apiKey: string;
+  onSaveKey: (key: string) => void;
+  result: AbuseCheckResult | null;
+  loading: boolean;
+  error: string | null;
+  onCheck: () => void;
+}
+
+function AbusePanel({ ip, apiKey, onSaveKey, result, loading, error, onCheck }: AbusePanelProps) {
+  const [keyInput, setKeyInput] = useState(apiKey);
+
+  return (
+    <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>
+        AbuseIPDB
+      </div>
+
+      {!apiKey ? (
+        // No key — show input to set one
+        <div>
+          <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 6 }}>
+            Enter your API key to check IP reputation (free at abuseipdb.com)
+          </div>
+          <div style={{ display: "flex", gap: 5 }}>
+            <input
+              type="password"
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && keyInput.trim()) onSaveKey(keyInput.trim()); }}
+              placeholder="API key…"
+              style={{
+                flex: 1, background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3,
+                color: "var(--text-primary)", fontSize: 11, padding: "3px 6px", outline: "none", fontFamily: "monospace",
+              }}
+            />
+            <button
+              onClick={() => keyInput.trim() && onSaveKey(keyInput.trim())}
+              disabled={!keyInput.trim()}
+              style={{
+                background: keyInput.trim() ? "var(--accent-blue)" : "var(--bg-tertiary)",
+                border: "none", borderRadius: 3, color: keyInput.trim() ? "#0d1117" : "var(--text-secondary)",
+                fontSize: 11, fontWeight: 600, padding: "3px 8px", cursor: keyInput.trim() ? "pointer" : "default",
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      ) : (
+        // Key set — show check button and results
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <button
+              onClick={onCheck}
+              disabled={loading}
+              style={{
+                background: loading ? "var(--bg-tertiary)" : "var(--accent-blue)",
+                border: "none", borderRadius: 3, color: loading ? "var(--text-secondary)" : "#0d1117",
+                fontSize: 11, fontWeight: 600, padding: "4px 12px", cursor: loading ? "default" : "pointer",
+                opacity: loading ? 0.7 : 1,
+              }}
+            >
+              {loading ? "Checking…" : `Check ${ip}`}
+            </button>
+            <button
+              onClick={() => { onSaveKey(""); setKeyInput(""); }}
+              style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 10, cursor: "pointer", textDecoration: "underline" }}
+              title="Remove API key"
+            >
+              clear key
+            </button>
+          </div>
+
+          {error && (
+            <div style={{ fontSize: 11, color: "#f85149", background: "rgba(248,81,73,0.08)", border: "1px solid rgba(248,81,73,0.3)", borderRadius: 3, padding: "4px 8px", marginBottom: 6 }}>
+              {error}
+            </div>
+          )}
+
+          {result && (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "6px 8px", background: "var(--bg-tertiary)", borderRadius: 4, border: `1px solid ${abuseColor(result.abuseConfidenceScore)}40` }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: abuseColor(result.abuseConfidenceScore), fontFamily: "monospace", lineHeight: 1 }}>
+                  {result.abuseConfidenceScore}%
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: abuseColor(result.abuseConfidenceScore) }}>
+                    Abuse Confidence
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--text-secondary)" }}>
+                    {result.totalReports} report{result.totalReports !== 1 ? "s" : ""}
+                  </div>
+                </div>
+              </div>
+              {result.isp && <AbuseRow label="ISP" value={result.isp} />}
+              {result.domain && <AbuseRow label="Domain" value={result.domain} />}
+              {result.usageType && <AbuseRow label="Type" value={result.usageType} />}
+              {result.lastReportedAt && (
+                <AbuseRow label="Last reported" value={new Date(result.lastReportedAt).toLocaleDateString()} />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AbuseRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "3px 0", borderBottom: "1px solid var(--border)", gap: 8 }}>
+      <span style={{ fontSize: 10, color: "var(--text-secondary)", flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 10, color: "var(--text-primary)", textAlign: "right", wordBreak: "break-all" }}>{value}</span>
     </div>
   );
 }
@@ -248,27 +301,13 @@ function IpTableRow({ row, isSelected, onClick }: { row: IpRow; isSelected: bool
         transition: "background 0.1s",
       }}
     >
-      <span style={{ fontSize: 12, fontFamily: "monospace", color: "#58a6ff" }}>
-        {row.ip}
-      </span>
-      <span style={{ fontSize: 11, color: "var(--text-secondary)", textAlign: "right" }}>
-        {row.eventCount.toLocaleString()}
-      </span>
+      <span style={{ fontSize: 12, fontFamily: "monospace", color: "#58a6ff" }}>{row.ip}</span>
+      <span style={{ fontSize: 11, color: "var(--text-secondary)", textAlign: "right" }}>{row.eventCount.toLocaleString()}</span>
       <span style={{ fontSize: 11, color: "var(--text-primary)", paddingLeft: 14 }}>
         {flag && <span style={{ marginRight: 5 }}>{flag}</span>}
         {row.countryCode ?? "—"}
       </span>
-      <span
-        style={{
-          fontSize: 11,
-          color: "var(--text-secondary)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          paddingLeft: 8,
-        }}
-        title={row.asnOrg}
-      >
+      <span style={{ fontSize: 11, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingLeft: 8 }} title={row.asnOrg}>
         {row.asnOrg ?? row.city ?? "—"}
       </span>
       <span style={{ fontSize: 10, fontFamily: "monospace", color: "var(--text-secondary)", textAlign: "right" }}>
@@ -296,6 +335,7 @@ interface IpViewProps {
 
 export function IpView({ startMs, endMs }: IpViewProps) {
   const [geoLoaded, setGeoLoaded] = useState(false);
+  const [showGeoLoader, setShowGeoLoader] = useState(false);
   const [page, setPage] = useState<IpPage | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [sortBy, setSortBy] = useState("events");
@@ -303,6 +343,12 @@ export function IpView({ startMs, endMs }: IpViewProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIp, setSelectedIp] = useState<string | null>(null);
+
+  // AbuseIPDB state
+  const [abuseApiKey, setAbuseApiKey] = useState(() => localStorage.getItem("trailinspector_abuseipdb_key") ?? "");
+  const [abuseResult, setAbuseResult] = useState<AbuseCheckResult | null>(null);
+  const [abuseLoading, setAbuseLoading] = useState(false);
+  const [abuseError, setAbuseError] = useState<string | null>(null);
 
   const load = useCallback(async (pg: number, sort: string, country: string) => {
     setLoading(true);
@@ -320,21 +366,48 @@ export function IpView({ startMs, endMs }: IpViewProps) {
 
   const handleGeoLoaded = useCallback(() => {
     setGeoLoaded(true);
+    setShowGeoLoader(false);
     load(0, sortBy, filterCountry);
   }, [load, sortBy, filterCountry]);
 
-  // Load IP list on first mount + re-load when time range changes
+  // Load IP list on mount and when time range changes (no GeoIP required)
   useEffect(() => {
     load(0, sortBy, filterCountry);
   }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset abuse state when selected IP changes
+  useEffect(() => {
+    setAbuseResult(null);
+    setAbuseError(null);
+  }, [selectedIp]);
 
   const handleSort = (sort: string) => {
     setSortBy(sort);
     load(0, sort, filterCountry);
   };
 
-  const handleFilter = () => {
-    load(0, sortBy, filterCountry);
+  const handleFilter = () => load(0, sortBy, filterCountry);
+
+  const saveAbuseKey = (key: string) => {
+    setAbuseApiKey(key);
+    localStorage.setItem("trailinspector_abuseipdb_key", key);
+    setAbuseResult(null);
+    setAbuseError(null);
+  };
+
+  const checkAbuse = async () => {
+    if (!selectedIp || !abuseApiKey.trim()) return;
+    setAbuseLoading(true);
+    setAbuseError(null);
+    setAbuseResult(null);
+    try {
+      const result = await checkAbuseIpdb(abuseApiKey.trim(), selectedIp);
+      setAbuseResult(result);
+    } catch (e) {
+      setAbuseError(String(e));
+    } finally {
+      setAbuseLoading(false);
+    }
   };
 
   const totalPages = page ? Math.ceil(page.total / PAGE_SIZE) : 0;
@@ -354,15 +427,7 @@ export function IpView({ startMs, endMs }: IpViewProps) {
           flexShrink: 0,
         }}
       >
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            textTransform: "uppercase",
-            letterSpacing: "0.06em",
-            color: "var(--text-secondary)",
-          }}
-        >
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-secondary)" }}>
           IP ADDRESSES
         </span>
         {page && (
@@ -371,17 +436,8 @@ export function IpView({ startMs, endMs }: IpViewProps) {
           </span>
         )}
         {!geoLoaded && (
-          <span
-            style={{
-              fontSize: 10,
-              color: "#f8be34",
-              background: "rgba(248,190,52,0.1)",
-              border: "1px solid rgba(248,190,52,0.3)",
-              borderRadius: 3,
-              padding: "1px 8px",
-            }}
-          >
-            GeoIP not loaded — country/ASN data unavailable
+          <span style={{ fontSize: 10, color: "#f8be34", background: "rgba(248,190,52,0.1)", border: "1px solid rgba(248,190,52,0.3)", borderRadius: 3, padding: "1px 8px" }}>
+            GeoIP not loaded
           </span>
         )}
         <div style={{ flex: 1 }} />
@@ -395,16 +451,9 @@ export function IpView({ startMs, endMs }: IpViewProps) {
           maxLength={2}
           title="Filter by 2-letter country code (e.g. US, TH)"
           style={{
-            width: 48,
-            background: "var(--bg-tertiary)",
-            border: "1px solid var(--border)",
-            borderRadius: 3,
-            color: "var(--text-primary)",
-            fontSize: 11,
-            padding: "3px 6px",
-            outline: "none",
-            fontFamily: "monospace",
-            textTransform: "uppercase",
+            width: 48, background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3,
+            color: "var(--text-primary)", fontSize: 11, padding: "3px 6px", outline: "none",
+            fontFamily: "monospace", textTransform: "uppercase",
           }}
         />
 
@@ -412,32 +461,22 @@ export function IpView({ startMs, endMs }: IpViewProps) {
         <select
           value={sortBy}
           onChange={(e) => handleSort(e.target.value)}
-          style={{
-            background: "var(--bg-tertiary)",
-            border: "1px solid var(--border)",
-            borderRadius: 3,
-            color: "var(--text-secondary)",
-            fontSize: 11,
-            padding: "2px 4px",
-            cursor: "pointer",
-          }}
+          style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3, color: "var(--text-secondary)", fontSize: 11, padding: "2px 4px", cursor: "pointer" }}
         >
           {SORT_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
 
-        {/* Load geo button */}
+        {/* GeoIP button */}
         <button
-          onClick={() => setGeoLoaded(false)}
+          onClick={() => setShowGeoLoader((v) => !v)}
           style={{
-            background: geoLoaded ? "rgba(101,166,55,0.15)" : "var(--bg-tertiary)",
-            border: `1px solid ${geoLoaded ? "rgba(101,166,55,0.4)" : "var(--border)"}`,
+            background: geoLoaded ? "rgba(101,166,55,0.15)" : showGeoLoader ? "rgba(60,149,209,0.15)" : "var(--bg-tertiary)",
+            border: `1px solid ${geoLoaded ? "rgba(101,166,55,0.4)" : showGeoLoader ? "var(--accent-blue)" : "var(--border)"}`,
             borderRadius: 3,
-            color: geoLoaded ? "#65a637" : "var(--text-secondary)",
-            fontSize: 11,
-            padding: "3px 10px",
-            cursor: "pointer",
+            color: geoLoaded ? "#65a637" : showGeoLoader ? "var(--accent-blue)" : "var(--text-secondary)",
+            fontSize: 11, padding: "3px 10px", cursor: "pointer",
           }}
         >
           {geoLoaded ? "GeoIP Loaded" : "Load GeoIP…"}
@@ -453,48 +492,24 @@ export function IpView({ startMs, endMs }: IpViewProps) {
             style={{
               display: "grid",
               gridTemplateColumns: "180px 52px 120px 180px 70px",
-              gap: 0,
-              padding: "4px 14px",
+              gap: 0, padding: "4px 14px",
               borderBottom: "1px solid var(--border)",
-              background: "var(--bg-secondary)",
-              flexShrink: 0,
+              background: "var(--bg-secondary)", flexShrink: 0,
             }}
           >
             {["IP ADDRESS", "EVENTS", "COUNTRY", "ORG / CITY", "ASN"].map((h) => (
-              <span
-                key={h}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: "var(--text-secondary)",
-                  letterSpacing: "0.05em",
-                }}
-              >
-                {h}
-              </span>
+              <span key={h} style={{ fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.05em" }}>{h}</span>
             ))}
           </div>
 
           {error && (
-            <div
-              style={{
-                margin: "8px 14px",
-                padding: "6px 10px",
-                background: "rgba(248,81,73,0.1)",
-                border: "1px solid rgba(248,81,73,0.3)",
-                borderRadius: 4,
-                fontSize: 11,
-                color: "#f85149",
-              }}
-            >
+            <div style={{ margin: "8px 14px", padding: "6px 10px", background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", borderRadius: 4, fontSize: 11, color: "#f85149" }}>
               {error}
             </div>
           )}
 
           {loading ? (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-secondary)", fontSize: 12 }}>
-              Loading…
-            </div>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-secondary)", fontSize: 12 }}>Loading…</div>
           ) : (
             <div style={{ flex: 1, overflowY: "auto" }}>
               {page?.rows.map((row) => (
@@ -505,61 +520,63 @@ export function IpView({ startMs, endMs }: IpViewProps) {
                   onClick={() => setSelectedIp((prev) => prev === row.ip ? null : row.ip)}
                 />
               ))}
+              {(!page || page.total === 0) && !loading && (
+                <div style={{ padding: 40, textAlign: "center", fontSize: 12, color: "var(--text-secondary)" }}>
+                  {page ? "No IPs found" : "Load a dataset to see IP addresses"}
+                </div>
+              )}
             </div>
           )}
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                padding: "6px 14px",
-                borderTop: "1px solid var(--border)",
-                background: "var(--bg-secondary)",
-                flexShrink: 0,
-              }}
-            >
-              <button
-                onClick={() => load(currentPage - 1, sortBy, filterCountry)}
-                disabled={currentPage === 0}
-                style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3, color: currentPage === 0 ? "var(--text-dimmed)" : "var(--text-primary)", fontSize: 11, padding: "2px 8px", cursor: currentPage === 0 ? "default" : "pointer" }}
-              >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "6px 14px", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", flexShrink: 0 }}>
+              <button onClick={() => load(currentPage - 1, sortBy, filterCountry)} disabled={currentPage === 0} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3, color: currentPage === 0 ? "var(--text-dimmed)" : "var(--text-primary)", fontSize: 11, padding: "2px 8px", cursor: currentPage === 0 ? "default" : "pointer" }}>
                 ‹ Prev
               </button>
-              <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
-                {currentPage + 1} / {totalPages}
-              </span>
-              <button
-                onClick={() => load(currentPage + 1, sortBy, filterCountry)}
-                disabled={currentPage >= totalPages - 1}
-                style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3, color: currentPage >= totalPages - 1 ? "var(--text-dimmed)" : "var(--text-primary)", fontSize: 11, padding: "2px 8px", cursor: currentPage >= totalPages - 1 ? "default" : "pointer" }}
-              >
+              <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>{currentPage + 1} / {totalPages}</span>
+              <button onClick={() => load(currentPage + 1, sortBy, filterCountry)} disabled={currentPage >= totalPages - 1} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: 3, color: currentPage >= totalPages - 1 ? "var(--text-dimmed)" : "var(--text-primary)", fontSize: 11, padding: "2px 8px", cursor: currentPage >= totalPages - 1 ? "default" : "pointer" }}>
                 Next ›
               </button>
             </div>
           )}
         </div>
 
-        {/* Right panel: geo detail or loader */}
+        {/* Right panel: geo loader OR IP detail */}
         <div
           style={{
-            width: 280,
-            flexShrink: 0,
-            borderLeft: "1px solid var(--border)",
-            background: "var(--bg-secondary)",
-            overflowY: "auto",
+            width: 280, flexShrink: 0, borderLeft: "1px solid var(--border)",
+            background: "var(--bg-secondary)", overflowY: "auto",
           }}
         >
-          {!geoLoaded ? (
-            <GeoIpLoader onLoaded={handleGeoLoaded} />
+          {showGeoLoader ? (
+            <GeoIpLoader onLoaded={handleGeoLoaded} onCancel={() => setShowGeoLoader(false)} />
           ) : selectedRow ? (
-            <IpDetail row={selectedRow} />
+            <IpDetail
+              row={selectedRow}
+              abuseApiKey={abuseApiKey}
+              onSaveAbuseKey={saveAbuseKey}
+              onCheckAbuse={checkAbuse}
+              abuseResult={abuseResult}
+              abuseLoading={abuseLoading}
+              abuseError={abuseError}
+            />
           ) : (
-            <div style={{ padding: 20, textAlign: "center", fontSize: 11, color: "var(--text-secondary)", paddingTop: 60 }}>
-              Select an IP to view details
+            <div style={{ padding: 20, textAlign: "center", fontSize: 11, color: "var(--text-secondary)", paddingTop: 48 }}>
+              {!geoLoaded && (
+                <div style={{ marginBottom: 20, padding: 12, background: "var(--bg-tertiary)", borderRadius: 6, border: "1px solid var(--border)" }}>
+                  <div style={{ marginBottom: 6, fontSize: 11, color: "var(--text-secondary)" }}>
+                    Add geo enrichment (country, city, ASN)
+                  </div>
+                  <button
+                    onClick={() => setShowGeoLoader(true)}
+                    style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-primary)", fontSize: 11, padding: "5px 14px", cursor: "pointer" }}
+                  >
+                    Load GeoIP Files…
+                  </button>
+                </div>
+              )}
+              <div>Select an IP to view details</div>
             </div>
           )}
         </div>
@@ -572,7 +589,17 @@ export function IpView({ startMs, endMs }: IpViewProps) {
 // IP detail panel
 // ---------------------------------------------------------------------------
 
-function IpDetail({ row }: { row: IpRow }) {
+interface IpDetailProps {
+  row: IpRow;
+  abuseApiKey: string;
+  onSaveAbuseKey: (key: string) => void;
+  onCheckAbuse: () => void;
+  abuseResult: AbuseCheckResult | null;
+  abuseLoading: boolean;
+  abuseError: string | null;
+}
+
+function IpDetail({ row, abuseApiKey, onSaveAbuseKey, onCheckAbuse, abuseResult, abuseLoading, abuseError }: IpDetailProps) {
   const flag = countryFlag(row.countryCode);
   return (
     <div style={{ padding: 16 }}>
@@ -586,6 +613,16 @@ function IpDetail({ row }: { row: IpRow }) {
       {row.city && <DetailRow label="City" value={row.city} />}
       {row.asn && <DetailRow label="ASN" value={`AS${row.asn}`} mono />}
       {row.asnOrg && <DetailRow label="Org" value={row.asnOrg} />}
+
+      <AbusePanel
+        ip={row.ip}
+        apiKey={abuseApiKey}
+        onSaveKey={onSaveAbuseKey}
+        result={abuseResult}
+        loading={abuseLoading}
+        error={abuseError}
+        onCheck={onCheckAbuse}
+      />
     </div>
   );
 }

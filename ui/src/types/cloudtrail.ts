@@ -146,6 +146,18 @@ export interface IpPage {
   pageSize: number;
 }
 
+export interface AbuseCheckResult {
+  ip: string;
+  isPublic: boolean;
+  abuseConfidenceScore: number;
+  countryCode: string | null;
+  totalReports: number;
+  lastReportedAt: string | null;
+  usageType: string | null;
+  isp: string | null;
+  domain: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Session types
 // ---------------------------------------------------------------------------

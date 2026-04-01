@@ -2,6 +2,24 @@ use tauri::State;
 use trail_inspector_core::geoip::{GeoIpEngine, IpInfo, IpPage};
 use crate::state::AppState;
 
+// ---------------------------------------------------------------------------
+// AbuseIPDB check result
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbuseCheckResult {
+    pub ip: String,
+    pub is_public: bool,
+    pub abuse_confidence_score: u8,
+    pub country_code: Option<String>,
+    pub total_reports: u32,
+    pub last_reported_at: Option<String>,
+    pub usage_type: Option<String>,
+    pub isp: Option<String>,
+    pub domain: Option<String>,
+}
+
 /// Load one or both GeoLite2 MMDB files.
 /// Either path may be null (omitted). Returns the DB metadata string on success.
 #[tauri::command]
@@ -25,6 +43,49 @@ pub async fn load_geoip_db(
     let mut guard = state.geoip.write().map_err(|e| format!("Lock error: {e}"))?;
     *guard = Some(engine);
     Ok(desc)
+}
+
+/// Query AbuseIPDB v2 for reputation data on a single IP.
+/// Requires a valid AbuseIPDB API key (free tier available at abuseipdb.com).
+#[tauri::command]
+pub async fn check_abuseipdb(
+    api_key: String,
+    ip: String,
+) -> Result<AbuseCheckResult, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://api.abuseipdb.com/api/v2/check")
+        .header("Key", &api_key)
+        .header("Accept", "application/json")
+        .query(&[("ipAddress", ip.as_str()), ("maxAgeInDays", "90")])
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("AbuseIPDB returned {status}: {body}"));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("JSON parse error: {e}"))?;
+
+    let data = json.get("data").ok_or("Missing 'data' in AbuseIPDB response")?;
+
+    Ok(AbuseCheckResult {
+        ip: data["ipAddress"].as_str().unwrap_or(&ip).to_string(),
+        is_public: data["isPublic"].as_bool().unwrap_or(true),
+        abuse_confidence_score: data["abuseConfidenceScore"].as_u64().unwrap_or(0) as u8,
+        country_code: data["countryCode"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()),
+        total_reports: data["totalReports"].as_u64().unwrap_or(0) as u32,
+        last_reported_at: data["lastReportedAt"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()),
+        usage_type: data["usageType"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()),
+        isp: data["isp"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()),
+        domain: data["domain"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()),
+    })
 }
 
 /// Look up geo info for a single IP address.
