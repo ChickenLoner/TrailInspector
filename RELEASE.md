@@ -1,3 +1,25 @@
+## TrailInspector v1.1.0 — Performance Optimization
+
+This release eliminates OOM crashes when loading large CloudTrail datasets (1M–3M events), reducing memory usage by ~60–70%.
+
+### What's New
+
+- **1M–3M event support** — the app no longer crashes on large datasets
+- **~60–70% memory reduction** — 1M events now uses ~500–800 MB instead of ~2.5 GB
+- **JSON blob optimization** — `requestParameters`, `responseElements`, `additionalEventData`, and `sessionContext` stored as raw JSON text (`Box<RawValue>`) instead of parsed value trees; saves 500 MB–1.1 GB for 1M records
+- **String interning** — all 11 inverted indexes now share `Arc<str>` keys via a `StringPool`; repeated values like `"us-east-1"` stored once instead of millions of times; saves 150–300 MB
+- **No-clone query engine** — empty queries paginate directly from the sorted index without cloning the full ID vec (8 MB saved per search call)
+- **Fast timeline/stats** — empty-query timeline and field stats read directly from inverted indexes; no full ID materialization (96 MB saved per refresh)
+- **Lazy event detail** — `raw` payload removed from search results; only fetched on-demand when a row is clicked
+- **Alert IPC cap** — alert `matchingRecordIds` capped at 100 per alert; `matchingCount` field carries the true count
+
+### Bug Fixes / Cleanup
+
+- Removed unused `extra: HashMap<String, Value>` fields from `CloudTrailRecord` and `UserIdentity` (saves 100–400 MB and speeds up deserialization)
+- `serde(flatten)` removal improves JSON parse performance for all records
+
+---
+
 ## TrailInspector v1.0.0 — Investigation Platform
 
 This release evolves TrailInspector from a log viewer into a full cloud investigation platform, delivering EG-CERT's recommended enhancements: expanded detection coverage, session activity grouping, and offline IP enrichment.

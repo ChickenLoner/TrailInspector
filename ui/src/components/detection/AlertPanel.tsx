@@ -372,7 +372,7 @@ function AlertRow({ alert, isSelected, onClick, groupBy }: AlertRowProps) {
           {alert.description}
         </div>
         <div style={{ display: "flex", gap: 10, fontSize: 10, color: "var(--text-secondary)", flexWrap: "wrap" }}>
-          <span>{alert.matchingRecordIds.length.toLocaleString()} event(s)</span>
+          <span>{alert.matchingCount.toLocaleString()} event(s)</span>
           <span style={{ color: "var(--border)" }}>|</span>
           {groupBy !== "service" && <ServiceChip label={alert.service} />}
           {groupBy === "service" && <span>{alert.mitreTactic}</span>}

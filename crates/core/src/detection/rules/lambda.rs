@@ -14,7 +14,7 @@ pub fn lm_01_lambda_public_access(store: &Store) -> Vec<Alert> {
         if let Some(r) = store.get_record(id) {
             let params_str = r.record.request_parameters
                 .as_ref()
-                .map(|v| v.to_string())
+                .map(|v| v.get().to_string())
                 .unwrap_or_default();
             // principal "*" means public access
             if params_str.contains("\"principal\":\"*\"")
@@ -39,6 +39,7 @@ pub fn lm_01_lambda_public_access(store: &Store) -> Vec<Alert> {
              Publicly accessible Lambda functions can be invoked by any AWS principal.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),
@@ -63,7 +64,7 @@ pub fn lm_02_lambda_env_updated(store: &Store) -> Vec<Alert> {
                 if let Some(r) = store.get_record(id) {
                     let params_str = r.record.request_parameters
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     if params_str.contains("Environment") || params_str.contains("environment") {
                         matching.push(id);
@@ -86,6 +87,7 @@ pub fn lm_02_lambda_env_updated(store: &Store) -> Vec<Alert> {
              malicious values (e.g., modified endpoints, stolen credentials as env vars).",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),

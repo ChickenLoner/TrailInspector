@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import type { RecordRow, IpInfo } from "../../types/cloudtrail";
-import { lookupIp } from "../../lib/tauri";
+import type { RecordRow, RecordDetail, IpInfo } from "../../types/cloudtrail";
+import { lookupIp, getRecordById } from "../../lib/tauri";
 
 function countryFlag(code?: string): string {
   if (!code || code.length !== 2) return "";
@@ -16,6 +16,7 @@ interface Props {
 
 export function EventDetail({ record, onClose }: Props) {
   const [geoInfo, setGeoInfo] = useState<IpInfo | null>(null);
+  const [detail, setDetail] = useState<RecordDetail | null>(null);
 
   useEffect(() => {
     setGeoInfo(null);
@@ -23,6 +24,14 @@ export function EventDetail({ record, onClose }: Props) {
       lookupIp(record.sourceIPAddress).then(setGeoInfo).catch(() => {});
     }
   }, [record?.sourceIPAddress]);
+
+  // Load full raw payload on demand when a record is selected
+  useEffect(() => {
+    setDetail(null);
+    if (record?.id != null) {
+      getRecordById(record.id).then(setDetail).catch(() => {});
+    }
+  }, [record?.id]);
 
   if (!record) return null;
 
@@ -87,7 +96,7 @@ export function EventDetail({ record, onClose }: Props) {
             wordBreak: 'break-all',
           }}
         >
-          {JSON.stringify(record.raw, null, 2)}
+          {detail ? JSON.stringify(detail.raw, null, 2) : "Loading…"}
         </pre>
       </div>
     </div>

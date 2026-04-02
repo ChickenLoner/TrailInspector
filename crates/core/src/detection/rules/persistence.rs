@@ -25,6 +25,7 @@ pub fn pe_01_iam_user_created(store: &Store) -> Vec<Alert> {
              and authorized.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: meta,
         mitre_tactic: "Persistence".to_string(),
@@ -45,8 +46,8 @@ pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
     for &id in ids {
         if let Some(r) = store.get_record(id) {
             let caller = r.record.user_identity.user_name.as_deref().unwrap_or("");
-            let target = r.record.request_parameters
-                .as_ref()
+            let params = r.record.parse_request_parameters();
+            let target = params.as_ref()
                 .and_then(|v| v.get("userName"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -71,6 +72,7 @@ pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
              This pattern is used to establish covert persistence.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),
@@ -100,6 +102,7 @@ pub fn pe_03_login_profile_created(store: &Store) -> Vec<Alert> {
              This grants password-based console access to previously API-only accounts.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),
@@ -127,7 +130,7 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
         if let Some(ids) = store.idx_event_name.get(*name) {
             for &id in ids {
                 if let Some(r) = store.get_record(id) {
-                    let is_admin = check_admin_policy(&r.record.request_parameters);
+                    let is_admin = check_admin_policy(r.record.parse_request_parameters());
                     if is_admin {
                         matching.push(id);
                     }
@@ -149,6 +152,7 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
              This grants unrestricted access and is a common backdoor technique.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),
@@ -158,7 +162,7 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
     }]
 }
 
-fn check_admin_policy(params: &Option<serde_json::Value>) -> bool {
+fn check_admin_policy(params: Option<serde_json::Value>) -> bool {
     let params = match params {
         Some(p) => p,
         None => return false,

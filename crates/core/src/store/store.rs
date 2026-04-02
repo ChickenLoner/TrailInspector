@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::model::IndexedRecord;
 use rayon::prelude::*;
 use crate::ingest::{decompress::{read_log_file, read_zip_entries}, parser::parse_records};
@@ -14,22 +15,41 @@ pub struct ProgressEvent {
     pub records_total: usize,
 }
 
+/// String pool for deduplicating repeated field values across all records.
+/// Instead of storing "us-east-1" 500_000 times, we store one Arc<str> shared by all.
+struct StringPool {
+    pool: HashMap<Box<str>, Arc<str>>,
+}
+
+impl StringPool {
+    fn new() -> Self { Self { pool: HashMap::new() } }
+
+    fn intern(&mut self, s: &str) -> Arc<str> {
+        if let Some(arc) = self.pool.get(s) {
+            return Arc::clone(arc);
+        }
+        let arc: Arc<str> = Arc::from(s);
+        self.pool.insert(s.into(), Arc::clone(&arc));
+        arc
+    }
+}
+
 pub struct Store {
     pub records: Vec<IndexedRecord>,
     pub file_paths: Vec<String>,
 
-    // Inverted indexes: field_value → Vec<record_id>
-    pub idx_event_name: HashMap<String, Vec<u64>>,
-    pub idx_event_source: HashMap<String, Vec<u64>>,
-    pub idx_region: HashMap<String, Vec<u64>>,
-    pub idx_source_ip: HashMap<String, Vec<u64>>,
-    pub idx_user_arn: HashMap<String, Vec<u64>>,
-    pub idx_user_name: HashMap<String, Vec<u64>>,
-    pub idx_account_id: HashMap<String, Vec<u64>>,
-    pub idx_error_code: HashMap<String, Vec<u64>>,
-    pub idx_identity_type: HashMap<String, Vec<u64>>,
-    pub idx_user_agent: HashMap<String, Vec<u64>>,
-    pub idx_bucket_name: HashMap<String, Vec<u64>>,
+    // Inverted indexes: interned field_value → Vec<record_id>
+    pub idx_event_name: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_event_source: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_region: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_source_ip: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_user_arn: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_user_name: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_account_id: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_error_code: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_identity_type: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_user_agent: HashMap<Arc<str>, Vec<u64>>,
+    pub idx_bucket_name: HashMap<Arc<str>, Vec<u64>>,
 
     // Sorted by timestamp for range queries
     pub time_sorted_ids: Vec<u64>,
@@ -53,6 +73,11 @@ impl Store {
             idx_bucket_name: HashMap::new(),
             time_sorted_ids: Vec::new(),
         }
+    }
+
+    /// Insert a record ID into an inverted index under the given interned key.
+    fn index_push_arc(idx: &mut HashMap<Arc<str>, Vec<u64>>, key: Arc<str>, id: u64) {
+        idx.entry(key).or_default().push(id);
     }
 
     /// Load all log files from a directory, processing in parallel.
@@ -112,6 +137,7 @@ impl Store {
             .collect();
 
         // Sequential ingest into store (indexes must be built single-threaded)
+        let mut pool = StringPool::new();
         let mut total_records = 0usize;
         let mut files_done = 0usize;
         let mut warnings: Vec<IngestWarning> = Vec::new();
@@ -148,36 +174,38 @@ impl Store {
                 rec.id = base_id + i as u64;
             }
 
-            // Build indexes
+            // Build indexes using interned strings to avoid duplicating high-repetition values
             for rec in &batch {
                 let id = rec.id;
-                Self::index_push(&mut self.idx_event_name, &rec.record.event_name, id);
-                Self::index_push(&mut self.idx_event_source, &rec.record.event_source, id);
-                Self::index_push(&mut self.idx_region, &rec.record.aws_region, id);
+                Self::index_push_arc(&mut self.idx_event_name, pool.intern(&rec.record.event_name), id);
+                Self::index_push_arc(&mut self.idx_event_source, pool.intern(&rec.record.event_source), id);
+                Self::index_push_arc(&mut self.idx_region, pool.intern(&rec.record.aws_region), id);
                 if let Some(ip) = &rec.record.source_ip_address {
-                    Self::index_push(&mut self.idx_source_ip, ip, id);
+                    Self::index_push_arc(&mut self.idx_source_ip, pool.intern(ip), id);
                 }
                 if let Some(arn) = &rec.record.user_identity.arn {
-                    Self::index_push(&mut self.idx_user_arn, arn, id);
+                    Self::index_push_arc(&mut self.idx_user_arn, pool.intern(arn), id);
                 }
                 if let Some(name) = &rec.record.user_identity.user_name {
-                    Self::index_push(&mut self.idx_user_name, name, id);
+                    Self::index_push_arc(&mut self.idx_user_name, pool.intern(name), id);
                 }
                 if let Some(acct) = &rec.record.user_identity.account_id {
-                    Self::index_push(&mut self.idx_account_id, acct, id);
+                    Self::index_push_arc(&mut self.idx_account_id, pool.intern(acct), id);
                 }
                 if let Some(err) = &rec.record.error_code {
-                    Self::index_push(&mut self.idx_error_code, err, id);
+                    Self::index_push_arc(&mut self.idx_error_code, pool.intern(err), id);
                 }
                 if let Some(t) = &rec.record.user_identity.identity_type {
-                    Self::index_push(&mut self.idx_identity_type, t, id);
+                    Self::index_push_arc(&mut self.idx_identity_type, pool.intern(t), id);
                 }
                 if let Some(ua) = &rec.record.user_agent {
-                    Self::index_push(&mut self.idx_user_agent, ua, id);
+                    Self::index_push_arc(&mut self.idx_user_agent, pool.intern(ua), id);
                 }
                 if let Some(params) = &rec.record.request_parameters {
-                    if let Some(bucket) = params.get("bucketName").and_then(|v| v.as_str()) {
-                        Self::index_push(&mut self.idx_bucket_name, bucket, id);
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(params.get()) {
+                        if let Some(bucket) = v.get("bucketName").and_then(|v| v.as_str()) {
+                            Self::index_push_arc(&mut self.idx_bucket_name, pool.intern(bucket), id);
+                        }
                     }
                 }
             }
@@ -199,10 +227,6 @@ impl Store {
         self.time_sorted_ids = pairs.into_iter().map(|(_, id)| id).collect();
 
         Ok((total_records, warnings))
-    }
-
-    fn index_push(idx: &mut HashMap<String, Vec<u64>>, key: &str, id: u64) {
-        idx.entry(key.to_string()).or_default().push(id);
     }
 
     /// Get a record by ID

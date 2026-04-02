@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { getSessionDetail, getSessionAlerts, getRecordById } from "../../lib/tauri";
-import type { SessionDetail as SessionDetailType, SessionEvent, AlertStub, Severity, RecordRow } from "../../types/cloudtrail";
+import type { SessionDetail as SessionDetailType, SessionEvent, AlertStub, Severity, RecordDetail } from "../../types/cloudtrail";
 import { EventDetail } from "../results/EventDetail";
 
 const SEV_COLOR: Record<Severity, string> = {
@@ -99,7 +99,7 @@ export function SessionDetail({ sessionId, onClose }: Props) {
 
   // Event inspection
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
-  const [selectedRecord, setSelectedRecord] = useState<RecordRow | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<RecordDetail | null>(null);
   const [recordLoading, setRecordLoading] = useState(false);
 
   async function load(epage: number) {

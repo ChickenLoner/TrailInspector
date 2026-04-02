@@ -28,10 +28,14 @@ pub async fn get_timeline(
         _ => Query::default(),
     };
 
-    // Get all matching IDs (no pagination — we need the full set for stats)
+    // Fast path for empty query: iterate time_sorted_ids directly — no Vec allocation
+    if parsed.is_empty() {
+        let timeline = build_timeline(store, &store.time_sorted_ids, bucket_count);
+        return Ok(timeline);
+    }
+
     let result = execute(store, &parsed, 0, usize::MAX);
     let timeline = build_timeline(store, &result.record_ids, bucket_count);
-
     Ok(timeline)
 }
 
@@ -55,9 +59,34 @@ pub async fn get_top_fields(
         _ => Query::default(),
     };
 
+    // Fast path for empty query: read counts directly from the inverted index —
+    // O(unique_values) instead of O(total_records), no Vec allocation
+    if parsed.is_empty() {
+        let idx = match field.as_str() {
+            "eventName" => &store.idx_event_name,
+            "eventSource" => &store.idx_event_source,
+            "awsRegion" => &store.idx_region,
+            "sourceIPAddress" => &store.idx_source_ip,
+            "userArn" => &store.idx_user_arn,
+            "userName" => &store.idx_user_name,
+            "accountId" => &store.idx_account_id,
+            "errorCode" => &store.idx_error_code,
+            "identityType" => &store.idx_identity_type,
+            "userAgent" => &store.idx_user_agent,
+            "bucketName" => &store.idx_bucket_name,
+            _ => return Err(format!("Unknown field: {field}")),
+        };
+        let mut values: Vec<FieldValueCount> = idx
+            .iter()
+            .map(|(k, v)| FieldValueCount { value: k.to_string(), count: v.len() })
+            .collect();
+        values.sort_unstable_by(|a, b| b.count.cmp(&a.count));
+        values.truncate(top_n);
+        return Ok(values);
+    }
+
     let result = execute(store, &parsed, 0, usize::MAX);
     let values = top_field_values(store, &result.record_ids, &field, top_n);
-
     Ok(values)
 }
 

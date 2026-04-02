@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use crate::store::Store;
 use super::filter::*;
@@ -11,12 +12,20 @@ pub struct QueryResult {
 
 /// Execute a query against the store, returning paginated results sorted by timestamp.
 pub fn execute(store: &Store, query: &Query, page: usize, page_size: usize) -> QueryResult {
-    let matching = if query.is_empty() {
-        store.time_sorted_ids.clone()
-    } else {
-        compute_matching_ids(store, query)
-    };
+    // Fast path: no filters at all — paginate directly from the sorted index, no allocation
+    if query.is_empty() {
+        let total = store.time_sorted_ids.len();
+        let start = page * page_size;
+        let end = (start + page_size).min(total);
+        let record_ids = if start < total {
+            store.time_sorted_ids[start..end].to_vec()
+        } else {
+            vec![]
+        };
+        return QueryResult { record_ids, total };
+    }
 
+    let matching = compute_matching_ids(store, query);
     let total = matching.len();
     let start = page * page_size;
     let end = (start + page_size).min(total);
@@ -31,9 +40,10 @@ pub fn execute(store: &Store, query: &Query, page: usize, page_size: usize) -> Q
 }
 
 fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u64> {
-    // Start from time-filtered candidates for efficiency
-    let time_candidates: Vec<u64> = match &query.time_range {
-        None => store.time_sorted_ids.clone(),
+    // Start from time-filtered candidates for efficiency.
+    // Use Cow to avoid cloning the full vec when there is no time range.
+    let time_candidates: Cow<[u64]> = match &query.time_range {
+        None => Cow::Borrowed(&store.time_sorted_ids),
         Some(tr) => {
             // time_sorted_ids is sorted by timestamp; binary search for the range
             let lo = store.time_sorted_ids.partition_point(|&id| {
@@ -42,15 +52,15 @@ fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u64> {
             let hi = store.time_sorted_ids.partition_point(|&id| {
                 store.get_record(id).map(|r| r.timestamp <= tr.end_ms).unwrap_or(false)
             });
-            store.time_sorted_ids[lo..hi].to_vec()
+            Cow::Owned(store.time_sorted_ids[lo..hi].to_vec())
         }
     };
 
     if query.filter_groups.is_empty() {
-        return time_candidates;
+        return time_candidates.into_owned();
     }
 
-    let candidate_set: HashSet<u64> = time_candidates.into_iter().collect();
+    let candidate_set: HashSet<u64> = time_candidates.iter().copied().collect();
 
     // Union over OR-groups: each group is AND'd internally, then the results are OR'd.
     let mut result: HashSet<u64> = HashSet::new();

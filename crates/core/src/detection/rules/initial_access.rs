@@ -13,11 +13,8 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
     for &id in ids {
         if let Some(r) = store.get_record(id) {
             // Check success
-            let is_success = r.record.response_elements
-                .as_ref()
-                .and_then(|v| v.get("ConsoleLogin"))
-                .and_then(|v| v.as_str())
-                .map(|s| s == "Success")
+            let is_success = r.record.parse_response_elements()
+                .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Success"))
                 .unwrap_or(false);
 
             if !is_success {
@@ -25,11 +22,9 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
             }
 
             // Check MFA not used
-            let mfa_used = r.record.additional_event_data
-                .as_ref()
-                .and_then(|v| v.get("MFAUsed"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("No");
+            let mfa_used = r.record.parse_additional_event_data()
+                .and_then(|v| v.get("MFAUsed").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .unwrap_or_else(|| "No".to_string());
 
             if mfa_used != "Yes" {
                 matching.push(id);
@@ -50,6 +45,7 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
              Accounts without MFA are vulnerable to credential theft.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Initial Access".to_string(),
@@ -82,6 +78,7 @@ pub fn ia_03_root_usage(store: &Store) -> Vec<Alert> {
              as root has unrestricted access to all AWS resources.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: meta,
         mitre_tactic: "Initial Access".to_string(),
@@ -102,11 +99,8 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
     let mut by_ip: HashMap<String, Vec<(i64, u64)>> = HashMap::new();
     for &id in ids {
         if let Some(r) = store.get_record(id) {
-            let is_failure = r.record.response_elements
-                .as_ref()
-                .and_then(|v| v.get("ConsoleLogin"))
-                .and_then(|v| v.as_str())
-                .map(|s| s == "Failure")
+            let is_failure = r.record.parse_response_elements()
+                .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Failure"))
                 .unwrap_or(false);
 
             if is_failure {
@@ -175,6 +169,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
             threshold,
             offending_ips.join(", ")
         ),
+        matching_count: 0,
         matching_record_ids: all_matching,
         metadata: meta,
         mitre_tactic: "Initial Access".to_string(),

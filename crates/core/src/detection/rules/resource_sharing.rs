@@ -14,7 +14,7 @@ pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
         if let Some(r) = store.get_record(id) {
             let params_str = r.record.request_parameters
                 .as_ref()
-                .map(|v| v.to_string())
+                .map(|v| v.get().to_string())
                 .unwrap_or_default();
             // Public AMI adds "all" group to launchPermission
             if (params_str.contains("launchPermission") || params_str.contains("LaunchPermission"))
@@ -38,6 +38,7 @@ pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
              any AWS account and may expose embedded secrets or sensitive configurations.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
@@ -59,7 +60,7 @@ pub fn rs_02_ssm_document_public(store: &Store) -> Vec<Alert> {
         if let Some(r) = store.get_record(id) {
             let params_str = r.record.request_parameters
                 .as_ref()
-                .map(|v| v.to_string())
+                .map(|v| v.get().to_string())
                 .unwrap_or_default();
             if params_str.contains("All") || params_str.contains("\"all\"") {
                 matching.push(id);
@@ -80,6 +81,7 @@ pub fn rs_02_ssm_document_public(store: &Store) -> Vec<Alert> {
              against EC2 instances and may contain sensitive automation logic.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
@@ -103,7 +105,7 @@ pub fn rs_03_rds_snapshot_public(store: &Store) -> Vec<Alert> {
                 if let Some(r) = store.get_record(id) {
                     let params_str = r.record.request_parameters
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     if params_str.contains("all") || params_str.contains("\"restore\"") {
                         matching.push(id);
@@ -126,6 +128,7 @@ pub fn rs_03_rds_snapshot_public(store: &Store) -> Vec<Alert> {
              snapshots can be restored by any AWS account, exposing all data.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),

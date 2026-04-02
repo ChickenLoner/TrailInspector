@@ -11,7 +11,7 @@ pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
         if let Some(ids) = store.idx_event_name.get(*name) {
             for &id in ids {
                 if let Some(r) = store.get_record(id) {
-                    if is_public_grant(&r.record.request_parameters) {
+                    if is_public_grant(r.record.parse_request_parameters()) {
                         matching.push(id);
                     }
                 }
@@ -32,6 +32,7 @@ pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
              Publicly accessible buckets can expose sensitive data.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
@@ -41,7 +42,7 @@ pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
     }]
 }
 
-fn is_public_grant(params: &Option<serde_json::Value>) -> bool {
+fn is_public_grant(params: Option<serde_json::Value>) -> bool {
     let params = match params {
         Some(p) => p,
         None => return false,
@@ -95,6 +96,7 @@ pub fn ex_02_s3_bucket_deleted(store: &Store) -> Vec<Alert> {
              or cleanup of evidence after exfiltration.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
@@ -176,6 +178,7 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
             threshold,
             offending_identities.join(", ")
         ),
+        matching_count: 0,
         matching_record_ids: all_matching,
         metadata: meta,
         mitre_tactic: "Exfiltration".to_string(),
@@ -197,7 +200,7 @@ pub fn ex_04_s3_logging_disabled(store: &Store) -> Vec<Alert> {
         if let Some(r) = store.get_record(id) {
             let params_str = r.record.request_parameters
                 .as_ref()
-                .map(|v| v.to_string())
+                .map(|v| v.get().to_string())
                 .unwrap_or_default();
             // Empty LoggingConfiguration means logging disabled
             if params_str.contains("\"BucketLoggingStatus\":{}")
@@ -222,6 +225,7 @@ pub fn ex_04_s3_logging_disabled(store: &Store) -> Vec<Alert> {
              hides evidence of data access and exfiltration.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
@@ -251,6 +255,7 @@ pub fn ex_05_s3_encryption_removed(store: &Store) -> Vec<Alert> {
              Unencrypted buckets expose data at rest.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),

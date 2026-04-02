@@ -27,6 +27,7 @@ pub fn pe_05_mfa_deactivated(store: &Store) -> Vec<Alert> {
              security and may allow attackers to maintain persistent access via stolen credentials.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),
@@ -48,7 +49,7 @@ pub fn pe_06_policy_version_created(store: &Store) -> Vec<Alert> {
         if let Some(r) = store.get_record(id) {
             let params_str = r.record.request_parameters
                 .as_ref()
-                .map(|v| v.to_string())
+                .map(|v| v.get().to_string())
                 .unwrap_or_default();
             if params_str.contains("\"setAsDefault\":true")
                 || params_str.contains("\"setAsDefault\": true")
@@ -71,6 +72,7 @@ pub fn pe_06_policy_version_created(store: &Store) -> Vec<Alert> {
              This pattern is used to escalate privileges by silently updating policy permissions.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),
@@ -91,11 +93,12 @@ pub fn pe_07_cross_account_assume_role(store: &Store) -> Vec<Alert> {
     for &id in ids {
         if let Some(r) = store.get_record(id) {
             let caller_account = r.record.user_identity.account_id.as_deref().unwrap_or("");
-            let role_arn = r.record.request_parameters
-                .as_ref()
+            let params = r.record.parse_request_parameters();
+            let role_arn_owned = params.as_ref()
                 .and_then(|v| v.get("roleArn"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("");
+                .map(|s| s.to_string());
+            let role_arn = role_arn_owned.as_deref().unwrap_or("");
 
             // Extract account ID from role ARN (arn:aws:iam::ACCOUNT_ID:role/...)
             if !role_arn.is_empty() && !caller_account.is_empty() {
@@ -123,6 +126,7 @@ pub fn pe_07_cross_account_assume_role(store: &Store) -> Vec<Alert> {
              Cross-account access warrants review to verify it is authorized.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),

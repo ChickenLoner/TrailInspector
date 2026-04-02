@@ -18,6 +18,7 @@ pub fn ebs_01_encryption_disabled(store: &Store) -> Vec<Alert> {
              be created unencrypted, exposing data at rest.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
@@ -39,7 +40,7 @@ pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
         if let Some(r) = store.get_record(id) {
             let params_str = r.record.request_parameters
                 .as_ref()
-                .map(|v| v.to_string())
+                .map(|v| v.get().to_string())
                 .unwrap_or_default();
             // Public share adds "all" as a group in createVolumePermission
             if params_str.contains("\"all\"") || params_str.contains("all") && params_str.contains("add") {
@@ -61,6 +62,7 @@ pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
              accessed by any AWS account and may expose sensitive data.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
@@ -86,6 +88,7 @@ pub fn ebs_03_volume_detached(store: &Store) -> Vec<Alert> {
              indicate data staging prior to exfiltration.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
@@ -111,6 +114,7 @@ pub fn ebs_04_snapshot_deleted(store: &Store) -> Vec<Alert> {
              may be used to eliminate forensic evidence.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Impact".to_string(),
@@ -136,6 +140,7 @@ pub fn ebs_05_default_kms_changed(store: &Store) -> Vec<Alert> {
              Changing to an attacker-controlled key can prevent data recovery.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Impact".to_string(),

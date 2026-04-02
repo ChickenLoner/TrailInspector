@@ -408,7 +408,6 @@ fn session_to_summary(s: &Session) -> SessionSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use crate::model::{CloudTrailRecord, IndexedRecord, UserIdentity};
     use crate::detection::{Alert, Severity};
 
@@ -447,7 +446,6 @@ mod tests {
                     user_name: None,
                     session_context: None,
                     invoked_by: None,
-                    extra: HashMap::new(),
                 },
                 request_parameters: None,
                 response_elements: None,
@@ -464,7 +462,6 @@ mod tests {
                 shared_event_id: None,
                 session_credential_from_console: None,
                 resources: vec![],
-                extra: HashMap::new(),
             },
         }
     }
@@ -477,17 +474,17 @@ mod tests {
 
         for rec in &records {
             let id = rec.id;
-            store.idx_event_name.entry(rec.record.event_name.clone()).or_default().push(id);
-            store.idx_event_source.entry(rec.record.event_source.clone()).or_default().push(id);
-            store.idx_region.entry(rec.record.aws_region.clone()).or_default().push(id);
+            store.idx_event_name.entry(rec.record.event_name.as_str().into()).or_default().push(id);
+            store.idx_event_source.entry(rec.record.event_source.as_str().into()).or_default().push(id);
+            store.idx_region.entry(rec.record.aws_region.as_str().into()).or_default().push(id);
             if let Some(ip) = &rec.record.source_ip_address {
-                store.idx_source_ip.entry(ip.clone()).or_default().push(id);
+                store.idx_source_ip.entry(ip.as_str().into()).or_default().push(id);
             }
             if let Some(arn) = &rec.record.user_identity.arn {
-                store.idx_user_arn.entry(arn.clone()).or_default().push(id);
+                store.idx_user_arn.entry(arn.as_str().into()).or_default().push(id);
             }
             if let Some(err) = &rec.record.error_code {
-                store.idx_error_code.entry(err.clone()).or_default().push(id);
+                store.idx_error_code.entry(err.as_str().into()).or_default().push(id);
             }
         }
 
@@ -710,6 +707,7 @@ mod tests {
             severity: Severity::High,
             title: "Test".to_string(),
             description: "Test".to_string(),
+            matching_count: 2,
             matching_record_ids: vec![0, 1],
             metadata: std::collections::HashMap::new(),
             mitre_tactic: "Test".to_string(),
@@ -743,6 +741,7 @@ mod tests {
             severity: Severity::Medium,
             title: "Test".to_string(),
             description: "Test".to_string(),
+            matching_count: 1,
             matching_record_ids: vec![0], // only alice's event
             metadata: std::collections::HashMap::new(),
             mitre_tactic: "Test".to_string(),

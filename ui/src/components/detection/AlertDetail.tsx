@@ -149,7 +149,7 @@ export function AlertDetail({ alert, onViewEvidence, onClose }: Props) {
         <Section title="Evidence">
           <KV
             label="Matching Events"
-            value={`${alert.matchingRecordIds.length.toLocaleString()} record(s)`}
+            value={`${alert.matchingCount.toLocaleString()} record(s)`}
           />
           <KV label="Search Query" value={alert.query} mono />
         </Section>

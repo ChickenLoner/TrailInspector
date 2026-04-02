@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde_json::value::RawValue;
 
 /// Top-level CloudTrail file wrapper
 #[derive(Debug, Deserialize)]
@@ -8,7 +8,9 @@ pub struct CloudTrailFile {
     pub records: Vec<CloudTrailRecord>,
 }
 
-/// Raw CloudTrail record — deserialize all known fields, capture extras
+/// Raw CloudTrail record — deserialize all known fields, ignore unknown fields.
+/// JSON blob fields (requestParameters, responseElements, additionalEventData) are stored
+/// as raw JSON text (Box<RawValue>) rather than parsed Value trees to save ~500 MB per 1M records.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudTrailRecord {
@@ -21,9 +23,9 @@ pub struct CloudTrailRecord {
     pub source_ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub user_identity: UserIdentity,
-    pub request_parameters: Option<serde_json::Value>,
-    pub response_elements: Option<serde_json::Value>,
-    pub additional_event_data: Option<serde_json::Value>,
+    pub request_parameters: Option<Box<RawValue>>,
+    pub response_elements: Option<Box<RawValue>>,
+    pub additional_event_data: Option<Box<RawValue>>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub request_id: Option<String>,
@@ -38,9 +40,26 @@ pub struct CloudTrailRecord {
     pub session_credential_from_console: Option<String>,
     #[serde(default)]
     pub resources: Vec<Resource>,
+}
 
-    #[serde(flatten)]
-    pub extra: HashMap<String, serde_json::Value>,
+impl CloudTrailRecord {
+    /// Parse requestParameters into a Value on demand (only when needed by detection rules).
+    pub fn parse_request_parameters(&self) -> Option<serde_json::Value> {
+        self.request_parameters.as_ref()
+            .and_then(|v| serde_json::from_str(v.get()).ok())
+    }
+
+    /// Parse responseElements into a Value on demand.
+    pub fn parse_response_elements(&self) -> Option<serde_json::Value> {
+        self.response_elements.as_ref()
+            .and_then(|v| serde_json::from_str(v.get()).ok())
+    }
+
+    /// Parse additionalEventData into a Value on demand.
+    pub fn parse_additional_event_data(&self) -> Option<serde_json::Value> {
+        self.additional_event_data.as_ref()
+            .and_then(|v| serde_json::from_str(v.get()).ok())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,11 +72,8 @@ pub struct UserIdentity {
     pub account_id: Option<String>,
     pub access_key_id: Option<String>,
     pub user_name: Option<String>,
-    pub session_context: Option<serde_json::Value>,
+    pub session_context: Option<Box<RawValue>>,
     pub invoked_by: Option<String>,
-
-    #[serde(flatten)]
-    pub extra: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

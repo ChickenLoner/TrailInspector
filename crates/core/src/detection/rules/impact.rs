@@ -51,6 +51,7 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
              Bulk launches may indicate cryptomining or resource abuse.",
             threshold
         ),
+        matching_count: 0,
         matching_record_ids: all_matching,
         metadata: meta,
         mitre_tactic: "Impact".to_string(),
@@ -146,6 +147,7 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
             threshold,
             offending_identities.join(", ")
         ),
+        matching_count: 0,
         matching_record_ids: all_matching,
         metadata: meta,
         mitre_tactic: "Impact".to_string(),
@@ -179,6 +181,7 @@ pub fn im_03_ses_email_verified(store: &Store) -> Vec<Alert> {
              identities to send phishing emails using the compromised account.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Impact".to_string(),

@@ -37,6 +37,7 @@ pub fn di_02_iam_enumeration(store: &Store) -> Vec<Alert> {
              Reconnaissance of IAM resources is a common precursor to privilege escalation.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: meta,
         mitre_tactic: "Discovery".to_string(),
@@ -121,6 +122,7 @@ pub fn di_03_access_denied_spike(store: &Store) -> Vec<Alert> {
             threshold,
             offending_identities.join(", ")
         ),
+        matching_count: 0,
         matching_record_ids: all_matching,
         metadata: meta,
         mitre_tactic: "Discovery".to_string(),

@@ -13,7 +13,7 @@ pub fn nw_01_sg_ingress_all(store: &Store) -> Vec<Alert> {
                 if let Some(r) = store.get_record(id) {
                     let params_str = r.record.request_parameters
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
                         matching.push(id);
@@ -36,6 +36,7 @@ pub fn nw_01_sg_ingress_all(store: &Store) -> Vec<Alert> {
              Open security groups expose instances to internet attacks.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
@@ -56,7 +57,7 @@ pub fn nw_02_nacl_allows_all(store: &Store) -> Vec<Alert> {
                 if let Some(r) = store.get_record(id) {
                     let params_str = r.record.request_parameters
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     // Allow rule (not deny) with broad CIDR
                     if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
@@ -85,6 +86,7 @@ pub fn nw_02_nacl_allows_all(store: &Store) -> Vec<Alert> {
              Permissive NACLs reduce network segmentation effectiveness.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
@@ -118,6 +120,7 @@ pub fn nw_03_igw_created(store: &Store) -> Vec<Alert> {
              unauthorized VPC exposure to the internet.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
@@ -138,7 +141,7 @@ pub fn nw_04_route_to_internet(store: &Store) -> Vec<Alert> {
                 if let Some(r) = store.get_record(id) {
                     let params_str = r.record.request_parameters
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
                         matching.push(id);
@@ -161,6 +164,7 @@ pub fn nw_04_route_to_internet(store: &Store) -> Vec<Alert> {
              Default routes can expose private subnets to internet traffic.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
@@ -190,6 +194,7 @@ pub fn nw_05_vpc_peering_created(store: &Store) -> Vec<Alert> {
              access between previously isolated environments.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Lateral Movement".to_string(),
@@ -219,6 +224,7 @@ pub fn nw_06_sg_deleted(store: &Store) -> Vec<Alert> {
              instances that relied on those rules for protection.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
@@ -240,7 +246,7 @@ pub fn nw_07_subnet_public(store: &Store) -> Vec<Alert> {
         if let Some(r) = store.get_record(id) {
             let params_str = r.record.request_parameters
                 .as_ref()
-                .map(|v| v.to_string())
+                .map(|v| v.get().to_string())
                 .unwrap_or_default();
             if params_str.contains("mapPublicIpOnLaunch") && params_str.contains("\"value\":true") {
                 matching.push(id);
@@ -261,6 +267,7 @@ pub fn nw_07_subnet_public(store: &Store) -> Vec<Alert> {
              subnets will automatically receive public IP addresses.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
@@ -290,6 +297,7 @@ pub fn nw_08_nat_deleted(store: &Store) -> Vec<Alert> {
              internet access for private subnets.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Impact".to_string(),

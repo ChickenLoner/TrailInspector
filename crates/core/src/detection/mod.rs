@@ -28,6 +28,9 @@ pub struct Alert {
     pub severity: Severity,
     pub title: String,
     pub description: String,
+    /// True count of matching records (may exceed matching_record_ids.len()).
+    pub matching_count: usize,
+    /// Up to 100 matching record IDs (capped for IPC efficiency).
     pub matching_record_ids: Vec<u64>,
     pub metadata: HashMap<String, String>,
     pub mitre_tactic: String,
@@ -584,14 +587,27 @@ fn all_rules() -> Vec<DetectionRule> {
 
 /// Run all registered detection rules against the store.
 /// Returns alerts sorted by severity descending (Critical first).
+/// Maximum number of matching record IDs sent over IPC per alert.
+/// The true count is always stored in `alert.matching_count`.
+const MAX_ALERT_IDS: usize = 100;
+
 pub fn run_all_rules(store: &Store) -> Vec<Alert> {
     let mut alerts: Vec<Alert> = all_rules()
         .iter()
         .flat_map(|rule| (rule.evaluate)(store))
         .collect();
 
+    cap_alert_ids(&mut alerts);
     alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
     alerts
+}
+
+/// Cap matching_record_ids to MAX_ALERT_IDS, storing the true count in matching_count.
+fn cap_alert_ids(alerts: &mut [Alert]) {
+    for alert in alerts.iter_mut() {
+        alert.matching_count = alert.matching_record_ids.len();
+        alert.matching_record_ids.truncate(MAX_ALERT_IDS);
+    }
 }
 
 /// Filter alerts to only include matching records within [start_ms, end_ms].
@@ -603,6 +619,7 @@ pub fn filter_alerts_by_time(store: &Store, mut alerts: Vec<Alert>, start_ms: i6
                 .map(|r| r.timestamp >= start_ms && r.timestamp <= end_ms)
                 .unwrap_or(false)
         });
+        alert.matching_count = alert.matching_record_ids.len();
     }
     alerts.retain(|a| !a.matching_record_ids.is_empty());
     alerts
@@ -619,6 +636,7 @@ pub fn run_geo_rules(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
     .flatten()
     .collect::<Vec<_>>();
 
+    cap_alert_ids(&mut alerts);
     alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
     alerts
 }

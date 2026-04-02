@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use crate::store::Store;
 
 // ---------------------------------------------------------------------------
@@ -101,6 +102,15 @@ pub fn top_field_values(
 
     for &id in ids {
         if let Some(r) = store.get_record(id) {
+            if field == "bucketName" {
+                // bucketName is in requestParameters JSON — parse on demand
+                if let Some(bucket) = r.record.parse_request_parameters()
+                    .and_then(|p| p.get("bucketName").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                {
+                    *counts.entry(bucket).or_insert(0) += 1;
+                }
+                continue;
+            }
             let val: Option<&str> = match field {
                 "eventName" => Some(&r.record.event_name),
                 "eventSource" => Some(&r.record.event_source),
@@ -112,10 +122,6 @@ pub fn top_field_values(
                 "errorCode" => r.record.error_code.as_deref(),
                 "identityType" => r.record.user_identity.identity_type.as_deref(),
                 "userAgent" => r.record.user_agent.as_deref(),
-                "bucketName" => r.record.request_parameters
-                    .as_ref()
-                    .and_then(|p| p.get("bucketName"))
-                    .and_then(|v| v.as_str()),
                 _ => None,
             };
             if let Some(v) = val {
@@ -160,7 +166,7 @@ pub struct TimelineEvent {
     pub source_ip: Option<String>,
     pub error_code: Option<String>,
     pub user_agent: Option<String>,
-    pub request_parameters: Option<serde_json::Value>,
+    pub request_parameters: Option<Box<RawValue>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

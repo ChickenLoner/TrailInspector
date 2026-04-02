@@ -12,6 +12,7 @@ pub struct SearchResult {
     pub page_size: usize,
 }
 
+/// Summary row used in the event table (no raw payload — load detail on demand via get_record_by_id).
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordRow {
@@ -26,19 +27,36 @@ pub struct RecordRow {
     pub user_name: Option<String>,
     pub user_arn: Option<String>,
     pub error_code: Option<String>,
+}
+
+/// Full record detail returned by get_record_by_id (includes raw payload).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordDetail {
+    pub id: u64,
+    pub timestamp: i64,
+    pub event_time: String,
+    pub event_name: String,
+    pub event_source: String,
+    pub aws_region: String,
+    #[serde(rename = "sourceIPAddress")]
+    pub source_ip_address: Option<String>,
+    pub user_name: Option<String>,
+    pub user_arn: Option<String>,
+    pub error_code: Option<String>,
     pub raw: CloudTrailRecord,
 }
 
-/// Fetch a single record by its internal ID.
-/// Used by the Sessions tab to load full event details on demand.
+/// Fetch a single record by its internal ID (includes full raw payload).
+/// Called when the user clicks a row to open the detail panel.
 #[tauri::command]
 pub async fn get_record_by_id(
     id: u64,
     state: State<'_, AppState>,
-) -> Result<Option<RecordRow>, String> {
+) -> Result<Option<RecordDetail>, String> {
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
     let store = guard.as_ref().ok_or("No dataset loaded")?;
-    Ok(store.get_record(id).map(|r| RecordRow {
+    Ok(store.get_record(id).map(|r| RecordDetail {
         id: r.id,
         timestamp: r.timestamp,
         event_time: r.record.event_time.clone(),
@@ -94,7 +112,6 @@ pub async fn search(
             user_name: r.record.user_identity.user_name.clone(),
             user_arn: r.record.user_identity.arn.clone(),
             error_code: r.record.error_code.clone(),
-            raw: r.record.clone(),
         })
         .collect();
 
@@ -140,7 +157,7 @@ pub async fn get_field_values(
     let mut values: Vec<FieldValue> = idx
         .iter()
         .map(|(k, v)| FieldValue {
-            value: k.clone(),
+            value: k.to_string(),
             count: v.len(),
         })
         .collect();

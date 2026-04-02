@@ -76,6 +76,7 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
             threshold,
             offending_identities.join(", ")
         ),
+        matching_count: 0,
         matching_record_ids: all_matching,
         metadata: meta,
         mitre_tactic: "Credential Access".to_string(),
@@ -105,6 +106,7 @@ pub fn ca_04_password_policy_weakened(store: &Store) -> Vec<Alert> {
              Weakening password policies enables credential-based attacks.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Credential Access".to_string(),
@@ -129,11 +131,8 @@ pub fn ca_05_root_console_login(store: &Store) -> Vec<Alert> {
                 .map(|t| t == "Root")
                 .unwrap_or(false);
 
-            let is_success = r.record.response_elements
-                .as_ref()
-                .and_then(|v| v.get("ConsoleLogin"))
-                .and_then(|v| v.as_str())
-                .map(|s| s == "Success")
+            let is_success = r.record.parse_response_elements()
+                .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Success"))
                 .unwrap_or(false);
 
             if is_root && is_success {
@@ -155,6 +154,7 @@ pub fn ca_05_root_console_login(store: &Store) -> Vec<Alert> {
              should never occur in normal operations and indicates a critical security event.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Credential Access".to_string(),
@@ -184,6 +184,7 @@ pub fn ca_06_kms_key_deletion(store: &Store) -> Vec<Alert> {
              encrypted data permanently inaccessible, causing data loss.",
             ids.len()
         ),
+        matching_count: 0,
         matching_record_ids: ids,
         metadata: HashMap::new(),
         mitre_tactic: "Credential Access".to_string(),

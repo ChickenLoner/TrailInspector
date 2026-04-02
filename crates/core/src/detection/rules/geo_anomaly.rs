@@ -61,6 +61,7 @@ pub fn geo_01_multi_country(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
             affected.len(),
             affected.join("; ")
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Initial Access".to_string(),
@@ -139,6 +140,7 @@ pub fn geo_02_console_unusual_country(store: &Store, geoip: &GeoIpEngine) -> Vec
             matching.len(),
             details.join("; ")
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Initial Access".to_string(),

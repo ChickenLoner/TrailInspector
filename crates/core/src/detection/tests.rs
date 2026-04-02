@@ -4,7 +4,6 @@
 //! events needed to trigger a rule, then asserts the expected alert fires (or
 //! does not fire).  A shared `helpers` module provides ergonomic builders.
 
-use std::collections::HashMap;
 use serde_json::json;
 use crate::store::Store;
 use crate::model::{CloudTrailRecord, IndexedRecord, UserIdentity};
@@ -25,7 +24,6 @@ fn default_identity() -> UserIdentity {
         user_name: Some("alice".to_string()),
         session_context: None,
         invoked_by: None,
-        extra: HashMap::new(),
     }
 }
 
@@ -55,7 +53,6 @@ fn make_rec(event_name: &str, event_source: &str) -> CloudTrailRecord {
         shared_event_id: None,
         session_credential_from_console: None,
         resources: vec![],
-        extra: HashMap::new(),
     }
 }
 
@@ -73,15 +70,20 @@ fn make_indexed_ts(id: u64, event_name: &str, event_source: &str, ts_ms: i64) ->
     }
 }
 
+/// Convert a serde_json::Value to Box<RawValue> for test fixtures.
+fn to_raw(v: serde_json::Value) -> Box<serde_json::value::RawValue> {
+    serde_json::value::RawValue::from_string(serde_json::to_string(&v).unwrap()).unwrap()
+}
+
 /// Return a copy of `rec` with `request_parameters` replaced.
 fn with_params(mut rec: IndexedRecord, params: serde_json::Value) -> IndexedRecord {
-    rec.record.request_parameters = Some(params);
+    rec.record.request_parameters = Some(to_raw(params));
     rec
 }
 
 /// Return a copy of `rec` with `response_elements` replaced.
 fn with_resp(mut rec: IndexedRecord, resp: serde_json::Value) -> IndexedRecord {
-    rec.record.response_elements = Some(resp);
+    rec.record.response_elements = Some(to_raw(resp));
     rec
 }
 
@@ -98,33 +100,35 @@ fn build_store(records: Vec<IndexedRecord>) -> Store {
 
     for rec in &records {
         let id = rec.id;
-        store.idx_event_name.entry(rec.record.event_name.clone()).or_default().push(id);
-        store.idx_event_source.entry(rec.record.event_source.clone()).or_default().push(id);
-        store.idx_region.entry(rec.record.aws_region.clone()).or_default().push(id);
+        store.idx_event_name.entry(rec.record.event_name.as_str().into()).or_default().push(id);
+        store.idx_event_source.entry(rec.record.event_source.as_str().into()).or_default().push(id);
+        store.idx_region.entry(rec.record.aws_region.as_str().into()).or_default().push(id);
         if let Some(ip) = &rec.record.source_ip_address {
-            store.idx_source_ip.entry(ip.clone()).or_default().push(id);
+            store.idx_source_ip.entry(ip.as_str().into()).or_default().push(id);
         }
         if let Some(arn) = &rec.record.user_identity.arn {
-            store.idx_user_arn.entry(arn.clone()).or_default().push(id);
+            store.idx_user_arn.entry(arn.as_str().into()).or_default().push(id);
         }
         if let Some(name) = &rec.record.user_identity.user_name {
-            store.idx_user_name.entry(name.clone()).or_default().push(id);
+            store.idx_user_name.entry(name.as_str().into()).or_default().push(id);
         }
         if let Some(acct) = &rec.record.user_identity.account_id {
-            store.idx_account_id.entry(acct.clone()).or_default().push(id);
+            store.idx_account_id.entry(acct.as_str().into()).or_default().push(id);
         }
         if let Some(err) = &rec.record.error_code {
-            store.idx_error_code.entry(err.clone()).or_default().push(id);
+            store.idx_error_code.entry(err.as_str().into()).or_default().push(id);
         }
         if let Some(t) = &rec.record.user_identity.identity_type {
-            store.idx_identity_type.entry(t.clone()).or_default().push(id);
+            store.idx_identity_type.entry(t.as_str().into()).or_default().push(id);
         }
         if let Some(ua) = &rec.record.user_agent {
-            store.idx_user_agent.entry(ua.clone()).or_default().push(id);
+            store.idx_user_agent.entry(ua.as_str().into()).or_default().push(id);
         }
         if let Some(params) = &rec.record.request_parameters {
-            if let Some(bucket) = params.get("bucketName").and_then(|v| v.as_str()) {
-                store.idx_bucket_name.entry(bucket.to_string()).or_default().push(id);
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(params.get()) {
+                if let Some(bucket) = v.get("bucketName").and_then(|v| v.as_str()) {
+                    store.idx_bucket_name.entry(bucket.into()).or_default().push(id);
+                }
             }
         }
     }

@@ -13,7 +13,7 @@ pub fn rds_01_deletion_protection_disabled(store: &Store) -> Vec<Alert> {
                 if let Some(r) = store.get_record(id) {
                     let params_str = r.record.request_parameters
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     if params_str.contains("deletionProtection") && params_str.contains("false") {
                         matching.push(id);
@@ -37,6 +37,7 @@ pub fn rds_01_deletion_protection_disabled(store: &Store) -> Vec<Alert> {
              increasing risk of data loss.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Impact".to_string(),
@@ -61,7 +62,7 @@ pub fn rds_02_public_snapshot_restore(store: &Store) -> Vec<Alert> {
                 if let Some(r) = store.get_record(id) {
                     let params_str = r.record.request_parameters
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     if params_str.contains("\"publiclyAccessible\":true")
                         || params_str.contains("\"publiclyAccessible\": true")
@@ -86,6 +87,7 @@ pub fn rds_02_public_snapshot_restore(store: &Store) -> Vec<Alert> {
              Publicly accessible database instances are directly exposed to the internet.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
@@ -106,7 +108,7 @@ pub fn rds_03_master_password_changed(store: &Store) -> Vec<Alert> {
                 if let Some(r) = store.get_record(id) {
                     let params_str = r.record.request_parameters
                         .as_ref()
-                        .map(|v| v.to_string())
+                        .map(|v| v.get().to_string())
                         .unwrap_or_default();
                     if params_str.contains("masterUserPassword")
                         || params_str.contains("MasterUserPassword")
@@ -131,6 +133,7 @@ pub fn rds_03_master_password_changed(store: &Store) -> Vec<Alert> {
              Unexpected password changes may indicate credential takeover.",
             matching.len()
         ),
+        matching_count: 0,
         matching_record_ids: matching,
         metadata: HashMap::new(),
         mitre_tactic: "Credential Access".to_string(),

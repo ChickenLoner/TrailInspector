@@ -38,6 +38,10 @@ export interface RecordRow {
   userName?: string;
   userArn?: string;
   errorCode?: string;
+}
+
+/** Full record detail returned by getRecordById (includes raw payload). */
+export interface RecordDetail extends RecordRow {
   raw: CloudTrailRecord;
 }
 
@@ -255,6 +259,9 @@ export interface Alert {
   severity: Severity;
   title: string;
   description: string;
+  /** True count of matching records (matchingRecordIds is capped at 100). */
+  matchingCount: number;
+  /** Up to 100 matching record IDs. Use matchingCount for display. */
   matchingRecordIds: number[];
   metadata: Record<string, string>;
   mitreTactic: string;
