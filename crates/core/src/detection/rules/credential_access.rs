@@ -10,20 +10,20 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
     };
 
     // Group by identity (ARN or userName)
-    let mut by_identity: HashMap<String, Vec<(i64, u64)>> = HashMap::new();
+    let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
     for &id in ids {
         if let Some(r) = store.get_record(id) {
-            let identity = r.record.user_identity.arn
-                .clone()
-                .or_else(|| r.record.user_identity.user_name.clone())
-                .unwrap_or_else(|| "unknown".to_string());
+            let identity = r.record.user_identity.arn.as_deref()
+                .or_else(|| r.record.user_identity.user_name.as_deref())
+                .unwrap_or("unknown")
+                .to_string();
             by_identity.entry(identity).or_default().push((r.timestamp, id));
         }
     }
 
     let window_ms = 10 * 60 * 1000;
     let threshold = 5;
-    let mut all_matching: Vec<u64> = vec![];
+    let mut all_matching: Vec<u32> = vec![];
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
@@ -131,7 +131,7 @@ pub fn ca_05_root_console_login(store: &Store) -> Vec<Alert> {
                 .map(|t| t == "Root")
                 .unwrap_or(false);
 
-            let is_success = r.record.parse_response_elements()
+            let is_success = store.parse_response_elements(id)
                 .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Success"))
                 .unwrap_or(false);
 

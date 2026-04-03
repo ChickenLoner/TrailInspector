@@ -26,7 +26,7 @@ pub struct TimelineResult {
 ///
 /// `bucket_count` is a hint; the actual number is clamped to `1..=100`.
 /// If there are no records, returns an empty result.
-pub fn build_timeline(store: &Store, ids: &[u64], bucket_count: usize) -> TimelineResult {
+pub fn build_timeline(store: &Store, ids: &[u32], bucket_count: usize) -> TimelineResult {
     if ids.is_empty() {
         return TimelineResult { buckets: vec![], total: 0 };
     }
@@ -94,7 +94,7 @@ pub struct FieldValueCount {
 /// Count field values across a slice of record IDs, return top-N by count.
 pub fn top_field_values(
     store: &Store,
-    ids: &[u64],
+    ids: &[u32],
     field: &str,
     top_n: usize,
 ) -> Vec<FieldValueCount> {
@@ -104,7 +104,7 @@ pub fn top_field_values(
         if let Some(r) = store.get_record(id) {
             if field == "bucketName" {
                 // bucketName is in requestParameters JSON — parse on demand
-                if let Some(bucket) = r.record.parse_request_parameters()
+                if let Some(bucket) = store.parse_request_parameters(id)
                     .and_then(|p| p.get("bucketName").and_then(|v| v.as_str()).map(|s| s.to_string()))
                 {
                     *counts.entry(bucket).or_insert(0) += 1;
@@ -158,7 +158,7 @@ pub struct IdentityEventSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineEvent {
-    pub id: u64,
+    pub id: u32,
     pub timestamp_ms: i64,
     pub event_time: String,
     pub event_name: String,
@@ -193,7 +193,7 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
     }
 
     // Sort IDs by timestamp, filtering by time range if provided
-    let mut timed_ids: Vec<(i64, u64)> = ids
+    let mut timed_ids: Vec<(i64, u32)> = ids
         .iter()
         .filter_map(|&id| store.get_record(id).map(|r| (r.timestamp, id)))
         .filter(|(ts, _)| {
@@ -220,7 +220,7 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
     let mut by_event: HashMap<String, EventAgg> = HashMap::new();
     for &(ts, id) in &timed_ids {
         if let Some(r) = store.get_record(id) {
-            let agg = by_event.entry(r.record.event_name.clone()).or_insert(EventAgg {
+            let agg = by_event.entry(r.record.event_name.to_string()).or_insert(EventAgg {
                 count: 0,
                 first: ts,
                 last: ts,
@@ -230,7 +230,7 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
             if ts < agg.first { agg.first = ts; }
             if ts > agg.last { agg.last = ts; }
             if let Some(e) = &r.record.error_code {
-                agg.errors.insert(e.clone());
+                agg.errors.insert(e.to_string());
             }
         }
     }
@@ -256,13 +256,13 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
             store.get_record(id).map(|r| TimelineEvent {
                 id,
                 timestamp_ms: ts,
-                event_time: r.record.event_time.clone(),
-                event_name: r.record.event_name.clone(),
-                aws_region: r.record.aws_region.clone(),
-                source_ip: r.record.source_ip_address.clone(),
-                error_code: r.record.error_code.clone(),
-                user_agent: r.record.user_agent.clone(),
-                request_parameters: r.record.request_parameters.clone(),
+                event_time: r.record.event_time.to_string(),
+                event_name: r.record.event_name.to_string(),
+                aws_region: r.record.aws_region.to_string(),
+                source_ip: r.record.source_ip_address.as_deref().map(|s| s.to_string()),
+                error_code: r.record.error_code.as_deref().map(|s| s.to_string()),
+                user_agent: r.record.user_agent.as_deref().map(|s| s.to_string()),
+                request_parameters: store.load_raw_request_parameters(id),
             })
         })
         .collect();

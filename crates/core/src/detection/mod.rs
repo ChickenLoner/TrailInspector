@@ -31,7 +31,7 @@ pub struct Alert {
     /// True count of matching records (may exceed matching_record_ids.len()).
     pub matching_count: usize,
     /// Up to 100 matching record IDs (capped for IPC efficiency).
-    pub matching_record_ids: Vec<u64>,
+    pub matching_record_ids: Vec<u32>,
     pub metadata: HashMap<String, String>,
     pub mitre_tactic: String,
     pub mitre_technique: String,

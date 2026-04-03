@@ -1,101 +1,211 @@
 # TrailInspector — Performance Optimization Plan
 
+## v1.1.0 Optimizations (COMPLETE)
+
 > **Goal:** Handle 1M–3M events without crashing.
-> Current: crashes at 1M (~2–4 GB heap). Target: ~400–700 MB for 1M records.
+> Result: ~60-70% memory reduction achieved.
+
+<details>
+<summary>Completed optimizations (click to expand)</summary>
+
+| Step | Description | Savings | Status |
+|------|-------------|---------|--------|
+| A1 | Remove `extra` HashMap from CloudTrailRecord/UserIdentity | 100–400 MB | [x] |
+| A2 | Store JSON blobs as `Box<RawValue>` instead of parsed Value trees | 500 MB–1.1 GB | [x] |
+| A3 | String interning for inverted index keys (StringPool + Arc<str>) | 150–300 MB | [x] |
+| B1 | Skip cloning for empty queries (Cow, direct slice) | 8 MB/call | [x] |
+| B2 | Dedicated timeline/stats skipping ID materialization | 96 MB/call | [x] |
+| B3 | Remove `raw` from RecordRow, load on-demand | 100–500 KB/page | [x] |
+| C1 | Cap alert `matching_record_ids` to 100 in IPC | MBs | [x] |
+
+</details>
 
 ---
 
-## Root Causes
+## v1.1.1 Hotfix — mmap Blob Reads (COMPLETE)
 
-| Cause | Location | Impact |
-|-------|----------|--------|
-| `#[serde(flatten)]` `extra: HashMap<String, Value>` × 2 structs | `model.rs` | 100–400 MB overhead (never read, never used) |
-| `request_parameters/response_elements` as `serde_json::Value` trees | `model.rs` | 500 MB–1.1 GB (biggest single cost) |
-| 11 inverted indexes with duplicated `String` keys | `store.rs` | 150–300 MB (e.g. "us-east-1" cloned millions of times) |
-| `time_sorted_ids.clone()` on every empty-query search | `engine.rs` | 8 MB per call |
-| `execute(store, query, 0, usize::MAX)` for timeline/stats | `stats.rs` | 96 MB per stats refresh |
-| `raw: CloudTrailRecord` in every RecordRow IPC response | `query.rs` | ~500 KB per page, unnecessary |
-| All alert `matching_record_ids` serialized over IPC | `detection.rs` | Potentially MBs |
+> **Problem:** v1.1.0 Phase F introduced slow load times (unbuffered writes) and slow filters (seek+read per blob).
+> **Fix:** BufWriter during ingestion + `seal()` → `memmap2::Mmap` after ingestion. All reads now lock-free pointer arithmetic.
+> **Result:** Load time and filter speed restored to pre-v1.1.0 levels. Memory savings unchanged.
 
 ---
 
-## Implementation Phases
+## v1.2.0 Optimizations — Scale to 5M–10M Events
 
-### Phase A — Memory Reduction (Fix the Crash)
+> **Goal:** 5M events in ~2–3 GB, 10M events in ~4–6 GB.
+> Current: 5M events = ~7–8 GB (unstable). Target: ~60–70% further reduction.
 
-#### A1. Remove `extra` HashMap [x]
-**Files:** `crates/core/src/model.rs`, test helpers in `detection/tests.rs` + `session.rs`
-- Remove `#[serde(flatten)] pub extra: HashMap<String, serde_json::Value>` from `CloudTrailRecord` and `UserIdentity`
-- Never read anywhere. Removing `flatten` also speeds up deserialization.
-- **Savings: 100–400 MB**
+### Current Memory Breakdown (5M events)
 
-#### A2. Store JSON blobs as `Box<RawValue>` [x]
-**Files:** `crates/core/Cargo.toml` (add `raw_value` feature), `model.rs`, `store.rs` (bucket name indexing), `stats.rs` (bucketName in top_field_values), all detection rules using `.get("field")`
-- Change `request_parameters`, `response_elements`, `additional_event_data`, `session_context` from `Option<serde_json::Value>` → `Option<Box<serde_json::value::RawValue>>`
-- Add `parse_request_parameters()` / `parse_response_elements()` / `parse_additional_event_data()` helpers on `CloudTrailRecord` for the ~10 rules using `.get("fieldName")`
-- Rules using `.to_string().contains(...)` → `.get().contains(...)` (simpler)
-- **Savings: 500 MB–1.1 GB**
+| Component | Size | Why |
+|-----------|------|-----|
+| CloudTrailRecord owned Strings | ~3.5 GB | ~20 String fields (24 bytes stack + heap each), duplicated millions of times for values like "us-east-1", "ListBuckets" |
+| RawValue blobs in memory | ~2.0 GB | request_parameters, response_elements, additional_event_data kept in RAM but only needed on-demand |
+| Inverted indexes (11 × Vec<u64>) | ~500 MB | u64 IDs (8 bytes) when u32 (4 bytes) suffices |
+| Sessions, time index, overhead | ~300 MB | event_ids Vec<u64>, duplicated strings |
+| **Total** | **~6.3 GB** | |
 
-#### A3. String interning for inverted index keys [x]
-**Files:** `crates/core/src/store/store.rs`, `crates/app/src/commands/query.rs`
-- Add `StringPool` (`HashMap<Box<str>, Arc<str>>`) to `Store`
-- Change all 11 index types from `HashMap<String, Vec<u64>>` → `HashMap<Arc<str>, Vec<u64>>`
-- `index_push()` interns through the pool. Detection rules / query engine unchanged (Borrow trait).
-- `get_field_values` in `query.rs`: `k.to_string()` on Arc<str> key (minor tweak)
-- **Savings: 150–300 MB**
+### Target Budget (5M events)
 
-#### A4. Intern string fields in CloudTrailRecord [ ]
-**Files:** `model.rs`, `store.rs` (post-parse interning), test helpers
-- Change 7 high-repetition fields to `Arc<str>`: `event_source`, `event_name`, `aws_region`, `source_ip_address`, `error_code`, `identity_type`, `account_id`
-- After `parse_records()`, replace fields with pooled versions using same StringPool from A3
-- **Savings: 100–200 MB**
+| Component | Current | After | Savings |
+|-----------|---------|-------|---------|
+| CloudTrailRecord strings | ~3.5 GB | ~1.0 GB | ~2.5 GB (interning) |
+| RawValue blobs | ~2.0 GB | ~180 MB | ~1.8 GB (disk offload) |
+| Inverted indexes | ~500 MB | ~250 MB | ~250 MB (u32 IDs) |
+| Sessions + other | ~300 MB | ~200 MB | ~100 MB (cleanups) |
+| **Total** | **~6.3 GB** | **~1.6 GB** | **~4.7 GB** |
 
 ---
 
-### Phase B — Eliminate Transient Allocation Spikes
+### Phase D — Use u32 Record IDs (~250 MB savings) [x]
 
-#### B1. Refactor `execute()` to skip cloning for empty queries [x]
-**File:** `crates/core/src/query/engine.rs`
-- Empty query: paginate directly from `store.time_sorted_ids[start..end]` — no clone
-- Time-range-only query: use `Cow::Borrowed` to avoid cloning the full slice
-- **Saves: 8 MB per search call**
+**Simplest change, zero new dependencies.**
 
-#### B2. Dedicated timeline/stats functions skipping ID materialization [x]
-**Files:** `crates/core/src/stats.rs`, `crates/app/src/commands/stats.rs`
-- `get_timeline` with empty query: iterate `&store.time_sorted_ids` directly
-- `get_top_fields` with empty query: read counts from inverted index (`v.len()`) — O(unique_values)
-- **Saves: ~96 MB per stats refresh**
+Change all record IDs from `u64` to `u32`. Max 4,294,967,295 records — more than enough for 10M events.
 
-#### B3. Remove `raw` from RecordRow, load on-demand [x]
-**Files:** `crates/app/src/commands/query.rs`, `ui/src/lib/tauri.ts`, `ui/src/components/results/EventDetail.tsx`, `ui/src/App.tsx`
-- Remove `raw: CloudTrailRecord` from `RecordRow` and from search mapping
-- `EventDetail` calls existing `get_record_by_id` when user clicks a row
-- **Saves: ~100–500 KB IPC per page**
+**Files:**
+- `crates/core/src/model.rs` — `IndexedRecord.id: u32`
+- `crates/core/src/store/store.rs` — All `Vec<u64>` → `Vec<u32>` in 11 indexes + `time_sorted_ids`
+- `crates/core/src/session.rs` — `event_ids: Vec<u32>`, all u64 ID references
+- `crates/core/src/query/engine.rs` — `HashSet<u32>`, query results
+- `crates/core/src/detection/mod.rs` — `matching_record_ids: Vec<u32>`
+- `crates/core/src/stats.rs` — ID references
+- `crates/core/src/export.rs` — ID references
+- `crates/app/src/commands/*.rs` — IPC ID types
+
+**Savings:** 11 indexes × 5M × 4 bytes + time_sorted_ids 20MB + session 20MB = **~260 MB**
 
 ---
 
-### Phase C — Frontend Resilience
+### Phase E — Intern CloudTrailRecord String Fields (~2–2.5 GB savings) [x]
 
-#### C1. Cap alert `matching_record_ids` in IPC response [x]
-**Files:** `crates/app/src/commands/detection.rs`, `crates/core/src/detection/mod.rs`
-- Add `matching_count: usize` to `Alert` struct
-- Truncate `matching_record_ids` to 100 in IPC response
-- **Saves: potentially MBs for large alert result sets**
+**Biggest single win. CloudTrail data is extremely repetitive.**
+
+Change all repetitive String fields in `CloudTrailRecord` and `UserIdentity` to `Arc<str>`, intern through the existing `StringPool` during ingestion.
+
+**Cardinality analysis (typical 5M event dataset):**
+- `event_source`: ~50 unique values → 5M duplicates eliminated
+- `event_name`: ~200 unique → 5M duplicates eliminated
+- `aws_region`: ~20 unique → 5M duplicates eliminated
+- `user_agent`: ~1K–5K unique → high duplication
+- `source_ip_address`: ~10K–100K unique → moderate duplication
+- `identity_type`: ~5 unique → extreme duplication
+- `account_id`: ~1–100 unique → extreme duplication
+
+**Per-field savings math:**
+- `String` = 24 bytes stack + N bytes heap per instance
+- `Arc<str>` = 16 bytes stack, shared heap (one alloc per unique value)
+- Example: `event_name` with 200 unique values across 5M events — String: 220 MB, Arc<str>: 80 MB = **140 MB saved per field**
+- Across ~16 fields: **~2–2.5 GB total savings**
+
+**Fields to intern (CloudTrailRecord):**
+- `event_time`, `event_source`, `event_name`, `aws_region` — mandatory, low cardinality
+- `source_ip_address`, `user_agent` — optional, medium cardinality
+- `error_code`, `error_message` — optional, low cardinality
+- `event_type`, `event_category`, `recipient_account_id` — optional, very low cardinality
+
+**Fields to intern (UserIdentity):**
+- `identity_type`, `arn`, `account_id`, `user_name`, `principal_id`, `invoked_by`
+
+**Fields to leave as String (unique per event):**
+- `request_id`, `event_id`, `shared_event_id`, `session_credential_from_console`
+
+**Fields to drop entirely:**
+- `event_version` — never used in queries, detection, or UI
+
+**Implementation:**
+1. Change field types in `model.rs` from `String` → `Arc<str>`, `Option<String>` → `Option<Arc<str>>`
+2. serde handles `Arc<str>` deserialization natively (but won't intern — each is independent)
+3. Add `CloudTrailRecord::intern(&mut self, pool: &mut StringPool)` method
+4. Call `intern()` in `store.rs` load_directory (lines 178–211) where we already intern index keys
+5. Update Session to use `Arc<str>` for `identity_key`, `source_ip`, `unique_event_names`, `unique_regions`
+6. Update test helpers to use `Arc::from("...")` instead of `"...".to_string()`
+
+**Files:**
+- `crates/core/src/model.rs` — Field type changes + `intern()` method
+- `crates/core/src/store/store.rs` — Extend interning pass to record fields
+- `crates/core/src/session.rs` — Arc<str> for Session fields + identity_key_for()
+- `crates/core/src/detection/tests.rs` — Update test helpers
+- `crates/core/src/stats.rs` — Minor deref changes
+- `crates/app/src/commands/*.rs` — Arc<str> serializes as string (minimal changes)
+
+---
+
+### Phase F — Offload RawValue Blobs to Disk (~1.5–2 GB savings) [x]
+
+**Most complex change but second-biggest win.** Move request_parameters, response_elements, additional_event_data from heap to a temporary file. Keep only `(offset, len)` in memory.
+
+**New struct:**
+```rust
+// crates/core/src/store/blob_store.rs (new file)
+pub struct BlobStore {
+    file: std::fs::File,
+    mmap: Option<memmap2::Mmap>,
+    write_pos: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BlobRef {
+    pub offset: u64,
+    pub len: u32,
+}
+```
+
+**In-memory cost per blob:** 12 bytes (BlobRef) vs ~200–800 bytes (Box<RawValue>)
+**For 5M events × 3 blobs:** 180 MB (BlobRefs) vs ~2 GB (RawValues) = **~1.8 GB saved**
+
+**Changes to CloudTrailRecord:**
+```rust
+// Before:
+pub request_parameters: Option<Box<RawValue>>,
+pub response_elements: Option<Box<RawValue>>,
+pub additional_event_data: Option<Box<RawValue>>,
+// After:
+pub request_parameters: Option<BlobRef>,
+pub response_elements: Option<BlobRef>,
+pub additional_event_data: Option<BlobRef>,
+```
+
+**Detection rule impact:** ~35 call sites across 12 files use `parse_request_parameters()` etc. These will need a `&BlobStore` parameter to load the blob on demand. Detection rules already filter by index first, so only matched events need blob access.
+
+**Files:**
+- `crates/core/src/store/blob_store.rs` — New: BlobStore implementation
+- `crates/core/src/store/mod.rs` — Export blob_store
+- `crates/core/src/model.rs` — RawValue → BlobRef fields + updated parse helpers
+- `crates/core/src/store/store.rs` — Add BlobStore to Store, write blobs during ingestion
+- `crates/core/src/detection/rules/*.rs` — ~35 call sites: pass &BlobStore
+- `crates/app/src/commands/query.rs` — Load blobs on demand for RecordDetail
+- `crates/app/src/state.rs` — BlobStore in AppState
+
+**New dependency:** `memmap2` (or plain `File::seek` + `read_exact` for Windows compatibility)
+
+---
+
+### Phase G — Minor Cleanups (~100–200 MB savings) [x]
+
+1. **SessionIndex secondary indexes** — `by_identity` and `by_ip` duplicate String keys from Session. Use `Arc<str>` (free after Phase E).
+2. **Detection rule index cloning** — Rules do `ids.clone()` on full Vec<u32>. Change to borrowed iteration.
+3. **Session.unique_event_names/unique_regions** — Use `Arc<str>` (free after Phase E).
+4. **identity_key_for()** — Returns cloned String. Return Arc<str> from pool instead.
 
 ---
 
 ## Implementation Order
 
-1. **A1** — remove extra (lowest risk, immediate 100–400 MB win)
-2. **B1** — execute no-clone (15 min, removes per-call spike)
-3. **B3** — remove raw from RecordRow (IPC savings)
-4. **A3** — intern index keys (150–300 MB)
-5. **B2** — direct timeline/stats (96 MB/call)
-6. **A2** — RawValue JSON blobs (biggest win, highest risk)
-7. **C1** — cap alert IDs
-8. **A4** — intern record strings (100–200 MB)
+1. **Phase D** (u32 IDs) — Simplest, safest, no new deps. Good warmup.
+2. **Phase E** (String interning) — Biggest savings, moderate complexity.
+3. **Phase G** (Minor cleanups) — Quick wins while in the area.
+4. **Phase F** (Blob offload) — Most complex, new dependency. Can defer if D+E are sufficient.
 
 ## Verification
 
-After each step: `cargo test -p trail-inspector-core`
-After all steps: load 1M → 2M → 3M event datasets, smoke-test all tabs.
+After each phase:
+- `cargo test -p trail-inspector-core` — All 107+ tests must pass
+- `cargo tauri build` — Must compile
+
+After all phases:
+- Load 1M → 3M → 5M event datasets, measure RSS via Task Manager
+- Verify: event detail view shows request_parameters/response_elements correctly
+- Verify: all 60+ detection rules still fire
+- Verify: session grouping, query, filter, timeline, export, IP view functional
+- Target: 5M events < 3 GB RSS

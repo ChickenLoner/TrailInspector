@@ -8,7 +8,7 @@ pub fn parse_records(
     bytes: &[u8],
     path: &Path,
     file_idx: u32,
-    start_id: u64,
+    start_id: u32,
 ) -> Result<Vec<IndexedRecord>, CoreError> {
     let file: CloudTrailFile = serde_json::from_slice(bytes).map_err(|e| CoreError::Json {
         path: path.to_string_lossy().to_string(),
@@ -26,10 +26,13 @@ pub fn parse_records(
                 .unwrap_or(0);
 
             IndexedRecord {
-                id: start_id + i as u64,
+                id: start_id + i as u32,
                 timestamp,
                 source_file: file_idx,
                 record,
+                request_params_ref: None,
+                response_elements_ref: None,
+                additional_event_data_ref: None,
             }
         })
         .collect();
@@ -59,6 +62,6 @@ mod tests {
         let path = PathBuf::from("test.json");
         let records = parse_records(json.as_bytes(), &path, 0, 0).unwrap();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].record.event_name, "CreateUser");
+        assert_eq!(&*records[0].record.event_name, "CreateUser");
     }
 }

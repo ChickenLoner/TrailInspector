@@ -10,11 +10,8 @@ pub fn nw_01_sg_ingress_all(store: &Store) -> Vec<Alert> {
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
             for &id in ids {
-                if let Some(r) = store.get_record(id) {
-                    let params_str = r.record.request_parameters
-                        .as_ref()
-                        .map(|v| v.get().to_string())
-                        .unwrap_or_default();
+                if store.get_record(id).is_some() {
+                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
                         matching.push(id);
                     }
@@ -54,11 +51,8 @@ pub fn nw_02_nacl_allows_all(store: &Store) -> Vec<Alert> {
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
             for &id in ids {
-                if let Some(r) = store.get_record(id) {
-                    let params_str = r.record.request_parameters
-                        .as_ref()
-                        .map(|v| v.get().to_string())
-                        .unwrap_or_default();
+                if store.get_record(id).is_some() {
+                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     // Allow rule (not deny) with broad CIDR
                     if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
                         // Check it's an allow rule
@@ -138,11 +132,8 @@ pub fn nw_04_route_to_internet(store: &Store) -> Vec<Alert> {
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
             for &id in ids {
-                if let Some(r) = store.get_record(id) {
-                    let params_str = r.record.request_parameters
-                        .as_ref()
-                        .map(|v| v.get().to_string())
-                        .unwrap_or_default();
+                if store.get_record(id).is_some() {
+                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
                         matching.push(id);
                     }
@@ -243,11 +234,8 @@ pub fn nw_07_subnet_public(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for &id in ids {
-        if let Some(r) = store.get_record(id) {
-            let params_str = r.record.request_parameters
-                .as_ref()
-                .map(|v| v.get().to_string())
-                .unwrap_or_default();
+        {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("mapPublicIpOnLaunch") && params_str.contains("\"value\":true") {
                 matching.push(id);
             }

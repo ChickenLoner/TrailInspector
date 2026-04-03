@@ -11,11 +11,8 @@ pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for &id in ids {
-        if let Some(r) = store.get_record(id) {
-            let params_str = r.record.request_parameters
-                .as_ref()
-                .map(|v| v.get().to_string())
-                .unwrap_or_default();
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // Public AMI adds "all" group to launchPermission
             if (params_str.contains("launchPermission") || params_str.contains("LaunchPermission"))
                 && params_str.contains("all")
@@ -57,11 +54,8 @@ pub fn rs_02_ssm_document_public(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for &id in ids {
-        if let Some(r) = store.get_record(id) {
-            let params_str = r.record.request_parameters
-                .as_ref()
-                .map(|v| v.get().to_string())
-                .unwrap_or_default();
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("All") || params_str.contains("\"all\"") {
                 matching.push(id);
             }
@@ -102,11 +96,8 @@ pub fn rs_03_rds_snapshot_public(store: &Store) -> Vec<Alert> {
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
             for &id in ids {
-                if let Some(r) = store.get_record(id) {
-                    let params_str = r.record.request_parameters
-                        .as_ref()
-                        .map(|v| v.get().to_string())
-                        .unwrap_or_default();
+                {
+                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("all") || params_str.contains("\"restore\"") {
                         matching.push(id);
                     }

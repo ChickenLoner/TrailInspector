@@ -12,7 +12,7 @@ fn csv_escape(s: &str) -> String {
 }
 
 /// Resolve all matching record IDs for an optional query string (no pagination — returns all).
-fn resolve_ids(store: &Store, query: Option<&str>) -> Result<Vec<u64>, CoreError> {
+fn resolve_ids(store: &Store, query: Option<&str>) -> Result<Vec<u32>, CoreError> {
     let parsed = match query.map(str::trim) {
         Some(q) if !q.is_empty() => parse_query(q).map_err(|e| CoreError::Query(e.to_string()))?,
         _ => Query::default(),
@@ -34,8 +34,8 @@ pub fn export_csv(store: &Store, query: Option<&str>) -> Result<Vec<u8>, CoreErr
         b"eventTime,eventName,eventSource,awsRegion,sourceIPAddress,userName,userArn,errorCode\n",
     );
 
-    for id in &ids {
-        if let Some(r) = store.get_record(*id) {
+    for &id in &ids {
+        if let Some(r) = store.get_record(id) {
             let rec = &r.record;
             let row = format!(
                 "{},{},{},{},{},{},{},{}\n",
@@ -60,9 +60,11 @@ pub fn export_csv(store: &Store, query: Option<&str>) -> Result<Vec<u8>, CoreErr
 pub fn export_json(store: &Store, query: Option<&str>) -> Result<Vec<u8>, CoreError> {
     let ids = resolve_ids(store, query)?;
 
-    let records: Vec<&crate::model::CloudTrailRecord> = ids
+    // get_full_record loads blob fields (requestParameters etc.) from BlobStore so
+    // the exported JSON includes the complete event payload
+    let records: Vec<crate::model::CloudTrailRecord> = ids
         .iter()
-        .filter_map(|&id| store.get_record(id).map(|r| &r.record))
+        .filter_map(|&id| store.get_full_record(id))
         .collect();
 
     let bytes = serde_json::to_vec_pretty(&records)

@@ -11,9 +11,9 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for &id in ids {
-        if let Some(r) = store.get_record(id) {
+        if store.get_record(id).is_some() {
             // Check success
-            let is_success = r.record.parse_response_elements()
+            let is_success = store.parse_response_elements(id)
                 .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Success"))
                 .unwrap_or(false);
 
@@ -22,7 +22,7 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
             }
 
             // Check MFA not used
-            let mfa_used = r.record.parse_additional_event_data()
+            let mfa_used = store.parse_additional_event_data(id)
                 .and_then(|v| v.get("MFAUsed").and_then(|v| v.as_str()).map(|s| s.to_string()))
                 .unwrap_or_else(|| "No".to_string());
 
@@ -96,16 +96,16 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
     };
 
     // Collect failure events grouped by source IP
-    let mut by_ip: HashMap<String, Vec<(i64, u64)>> = HashMap::new();
+    let mut by_ip: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
     for &id in ids {
         if let Some(r) = store.get_record(id) {
-            let is_failure = r.record.parse_response_elements()
+            let is_failure = store.parse_response_elements(id)
                 .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Failure"))
                 .unwrap_or(false);
 
             if is_failure {
                 if let Some(ip) = &r.record.source_ip_address {
-                    by_ip.entry(ip.clone()).or_default().push((r.timestamp, id));
+                    by_ip.entry(ip.to_string()).or_default().push((r.timestamp, id));
                 }
             }
         }
@@ -113,7 +113,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
 
     let window_ms = 10 * 60 * 1000; // 10 minutes
     let threshold = 5;
-    let mut all_matching: Vec<u64> = vec![];
+    let mut all_matching: Vec<u32> = vec![];
     let mut meta = HashMap::new();
     let mut offending_ips: Vec<String> = vec![];
 
@@ -128,7 +128,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
             let window_count = end - start + 1;
             if window_count >= threshold {
                 // Collect all IDs in this window
-                let window_ids: Vec<u64> = events[start..=end]
+                let window_ids: Vec<u32> = events[start..=end]
                     .iter()
                     .map(|(_, id)| *id)
                     .collect();

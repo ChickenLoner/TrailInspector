@@ -37,11 +37,8 @@ pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for &id in ids {
-        if let Some(r) = store.get_record(id) {
-            let params_str = r.record.request_parameters
-                .as_ref()
-                .map(|v| v.get().to_string())
-                .unwrap_or_default();
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // Public share adds "all" as a group in createVolumePermission
             if params_str.contains("\"all\"") || params_str.contains("all") && params_str.contains("add") {
                 matching.push(id);

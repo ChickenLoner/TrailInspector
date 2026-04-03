@@ -5,7 +5,7 @@ use super::filter::*;
 
 pub struct QueryResult {
     /// Record IDs in time-sorted order for the requested page
-    pub record_ids: Vec<u64>,
+    pub record_ids: Vec<u32>,
     /// Total matching records (before pagination)
     pub total: usize,
 }
@@ -39,10 +39,10 @@ pub fn execute(store: &Store, query: &Query, page: usize, page_size: usize) -> Q
     QueryResult { record_ids, total }
 }
 
-fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u64> {
+fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u32> {
     // Start from time-filtered candidates for efficiency.
     // Use Cow to avoid cloning the full vec when there is no time range.
-    let time_candidates: Cow<[u64]> = match &query.time_range {
+    let time_candidates: Cow<[u32]> = match &query.time_range {
         None => Cow::Borrowed(&store.time_sorted_ids),
         Some(tr) => {
             // time_sorted_ids is sorted by timestamp; binary search for the range
@@ -60,10 +60,10 @@ fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u64> {
         return time_candidates.into_owned();
     }
 
-    let candidate_set: HashSet<u64> = time_candidates.iter().copied().collect();
+    let candidate_set: HashSet<u32> = time_candidates.iter().copied().collect();
 
     // Union over OR-groups: each group is AND'd internally, then the results are OR'd.
-    let mut result: HashSet<u64> = HashSet::new();
+    let mut result: HashSet<u32> = HashSet::new();
     for group in &query.filter_groups {
         let group_result = compute_and_group(store, &candidate_set, group);
         result.extend(group_result);
@@ -81,14 +81,14 @@ fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u64> {
 /// Evaluate one AND-group against the candidate set, returning matching IDs.
 fn compute_and_group(
     store: &Store,
-    candidates: &HashSet<u64>,
+    candidates: &HashSet<u32>,
     filters: &[crate::query::filter::FieldFilter],
-) -> HashSet<u64> {
-    let mut pos_sets: Vec<HashSet<u64>> = Vec::new();
-    let mut neg_sets: Vec<HashSet<u64>> = Vec::new();
+) -> HashSet<u32> {
+    let mut pos_sets: Vec<HashSet<u32>> = Vec::new();
+    let mut neg_sets: Vec<HashSet<u32>> = Vec::new();
 
     for filter in filters {
-        let ids: HashSet<u64> = match_field_filter(store, filter).into_iter().collect();
+        let ids: HashSet<u32> = match_field_filter(store, filter).into_iter().collect();
         if filter.negated {
             neg_sets.push(ids);
         } else {
@@ -117,7 +117,7 @@ fn compute_and_group(
 
 /// Return the record IDs that match the given field filter (ignoring the `negated` flag —
 /// the caller handles negation by using the result as an exclusion set).
-fn match_field_filter(store: &Store, filter: &FieldFilter) -> Vec<u64> {
+fn match_field_filter(store: &Store, filter: &FieldFilter) -> Vec<u32> {
     let idx = match filter.field {
         FieldName::EventName => &store.idx_event_name,
         FieldName::EventSource => &store.idx_event_source,

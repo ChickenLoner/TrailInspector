@@ -5,6 +5,7 @@
 //! events for the same key exceeds `GAP_MS` (default 30 minutes).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use crate::store::Store;
 use crate::detection::Alert;
 
@@ -18,17 +19,17 @@ const GAP_MS: i64 = 30 * 60 * 1_000; // 30 minutes
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     pub id: u32,
-    /// ARN, userName, principalId, or "unknown"
-    pub identity_key: String,
-    pub source_ip: String,
+    /// ARN, userName, principalId, or "unknown" — interned Arc<str> shared with record pool
+    pub identity_key: Arc<str>,
+    pub source_ip: Arc<str>,
     pub first_event_ms: i64,
     pub last_event_ms: i64,
     pub event_count: usize,
-    /// Record IDs (in time order)
-    pub event_ids: Vec<u64>,
+    /// Record IDs (in time order) — u32 saves 4 bytes per entry vs u64
+    pub event_ids: Vec<u32>,
     pub error_count: usize,
-    pub unique_event_names: Vec<String>,
-    pub unique_regions: Vec<String>,
+    pub unique_event_names: Vec<Arc<str>>,
+    pub unique_regions: Vec<Arc<str>>,
 }
 
 impl Session {
@@ -53,22 +54,22 @@ pub struct SessionPage {
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
     pub id: u32,
-    pub identity_key: String,
-    pub source_ip: String,
+    pub identity_key: Arc<str>,
+    pub source_ip: Arc<str>,
     pub first_event_ms: i64,
     pub last_event_ms: i64,
     pub duration_ms: i64,
     pub event_count: usize,
     pub error_count: usize,
-    pub unique_event_names: Vec<String>,
-    pub unique_regions: Vec<String>,
+    pub unique_event_names: Vec<Arc<str>>,
+    pub unique_regions: Vec<Arc<str>>,
 }
 
 /// A single event in a session timeline
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEvent {
-    pub id: u64,
+    pub id: u32,
     pub timestamp_ms: i64,
     pub event_time: String,
     pub event_name: String,
@@ -84,15 +85,15 @@ pub struct SessionEvent {
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
     pub id: u32,
-    pub identity_key: String,
-    pub source_ip: String,
+    pub identity_key: Arc<str>,
+    pub source_ip: Arc<str>,
     pub first_event_ms: i64,
     pub last_event_ms: i64,
     pub duration_ms: i64,
     pub event_count: usize,
     pub error_count: usize,
-    pub unique_event_names: Vec<String>,
-    pub unique_regions: Vec<String>,
+    pub unique_event_names: Vec<Arc<str>>,
+    pub unique_regions: Vec<Arc<str>>,
     /// Paginated event slice
     pub events: Vec<SessionEvent>,
     pub events_page: usize,
@@ -106,15 +107,15 @@ pub struct SessionDetail {
 
 pub struct SessionIndex {
     pub sessions: Vec<Session>,
-    pub by_identity: HashMap<String, Vec<u32>>,
-    pub by_ip: HashMap<String, Vec<u32>>,
+    pub by_identity: HashMap<Arc<str>, Vec<u32>>,
+    pub by_ip: HashMap<Arc<str>, Vec<u32>>,
 }
 
 impl SessionIndex {
     /// Build session index from store. O(n) over time-sorted records.
     pub fn build(store: &Store) -> Self {
         // active_sessions: (identity, ip) -> session_id
-        let mut active: HashMap<(String, String), u32> = HashMap::new();
+        let mut active: HashMap<(Arc<str>, Arc<str>), u32> = HashMap::new();
         let mut sessions: Vec<Session> = Vec::new();
 
         for &record_id in &store.time_sorted_ids {
@@ -124,13 +125,12 @@ impl SessionIndex {
             };
 
             let identity_key = identity_key_for(rec);
-            let source_ip = rec.record.source_ip_address
-                .as_deref()
-                .unwrap_or("unknown")
-                .to_string();
+            let source_ip: Arc<str> = rec.record.source_ip_address
+                .clone()
+                .unwrap_or_else(|| Arc::from("unknown"));
             let ts = rec.timestamp;
 
-            let key = (identity_key.clone(), source_ip.clone());
+            let key = (Arc::clone(&identity_key), Arc::clone(&source_ip));
 
             let session_id = if let Some(&sid) = active.get(&key) {
                 let sess = &sessions[sid as usize];
@@ -175,21 +175,21 @@ impl SessionIndex {
             }
 
             let event_name = &rec.record.event_name;
-            if !sess.unique_event_names.contains(event_name) {
-                sess.unique_event_names.push(event_name.clone());
+            if !sess.unique_event_names.iter().any(|n| n.as_ref() == event_name.as_ref()) {
+                sess.unique_event_names.push(Arc::clone(event_name));
             }
             let region = &rec.record.aws_region;
-            if !sess.unique_regions.contains(region) {
-                sess.unique_regions.push(region.clone());
+            if !sess.unique_regions.iter().any(|r| r.as_ref() == region.as_ref()) {
+                sess.unique_regions.push(Arc::clone(region));
             }
         }
 
-        // Build secondary indexes
-        let mut by_identity: HashMap<String, Vec<u32>> = HashMap::new();
-        let mut by_ip: HashMap<String, Vec<u32>> = HashMap::new();
+        // Build secondary indexes — Arc::clone is O(1), no allocation
+        let mut by_identity: HashMap<Arc<str>, Vec<u32>> = HashMap::new();
+        let mut by_ip: HashMap<Arc<str>, Vec<u32>> = HashMap::new();
         for sess in &sessions {
-            by_identity.entry(sess.identity_key.clone()).or_default().push(sess.id);
-            by_ip.entry(sess.source_ip.clone()).or_default().push(sess.id);
+            by_identity.entry(Arc::clone(&sess.identity_key)).or_default().push(sess.id);
+            by_ip.entry(Arc::clone(&sess.source_ip)).or_default().push(sess.id);
         }
 
         SessionIndex { sessions, by_identity, by_ip }
@@ -273,13 +273,13 @@ impl SessionIndex {
             .filter_map(|&id| store.get_record(id).map(|r| SessionEvent {
                 id,
                 timestamp_ms: r.timestamp,
-                event_time: r.record.event_time.clone(),
-                event_name: r.record.event_name.clone(),
-                event_source: r.record.event_source.clone(),
-                aws_region: r.record.aws_region.clone(),
-                source_ip: r.record.source_ip_address.clone(),
-                error_code: r.record.error_code.clone(),
-                user_agent: r.record.user_agent.clone(),
+                event_time: r.record.event_time.to_string(),
+                event_name: r.record.event_name.to_string(),
+                event_source: r.record.event_source.to_string(),
+                aws_region: r.record.aws_region.to_string(),
+                source_ip: r.record.source_ip_address.as_deref().map(|s| s.to_string()),
+                error_code: r.record.error_code.as_deref().map(|s| s.to_string()),
+                user_agent: r.record.user_agent.as_deref().map(|s| s.to_string()),
             }))
             .collect();
 
@@ -316,7 +316,7 @@ impl SessionIndex {
             None => return vec![],
         };
 
-        let session_ids: HashSet<u64> = sess.event_ids.iter().copied().collect();
+        let session_ids: HashSet<u32> = sess.event_ids.iter().copied().collect();
 
         alerts
             .iter()
@@ -341,7 +341,7 @@ impl SessionIndex {
         &self,
         alert: &Alert,
     ) -> Vec<SessionSummary> {
-        let alert_ids: HashSet<u64> = alert.matching_record_ids.iter().copied().collect();
+        let alert_ids: HashSet<u32> = alert.matching_record_ids.iter().copied().collect();
 
         self.sessions
             .iter()
@@ -373,17 +373,17 @@ pub struct AlertStub {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn identity_key_for(rec: &crate::model::IndexedRecord) -> String {
+fn identity_key_for(rec: &crate::model::IndexedRecord) -> Arc<str> {
     if let Some(arn) = &rec.record.user_identity.arn {
-        return arn.clone();
+        return Arc::clone(arn);
     }
     if let Some(name) = &rec.record.user_identity.user_name {
-        return name.clone();
+        return Arc::clone(name);
     }
     if let Some(pid) = &rec.record.user_identity.principal_id {
-        return pid.clone();
+        return Arc::clone(pid);
     }
-    "unknown".to_string()
+    Arc::from("unknown")
 }
 
 fn session_to_summary(s: &Session) -> SessionSummary {
@@ -408,16 +408,17 @@ fn session_to_summary(s: &Session) -> SessionSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use crate::model::{CloudTrailRecord, IndexedRecord, UserIdentity};
     use crate::detection::{Alert, Severity};
 
     /// Build a minimal `IndexedRecord` suitable for session tests.
-    fn make_event(id: u64, arn: &str, ip: &str, ts_ms: i64) -> IndexedRecord {
+    fn make_event(id: u32, arn: &str, ip: &str, ts_ms: i64) -> IndexedRecord {
         make_event_full(id, arn, ip, ts_ms, "ListBuckets", "s3.amazonaws.com", None)
     }
 
     fn make_event_full(
-        id: u64,
+        id: u32,
         arn: &str,
         ip: &str,
         ts_ms: i64,
@@ -429,19 +430,21 @@ mod tests {
             id,
             timestamp: ts_ms,
             source_file: 0,
+            request_params_ref: None,
+            response_elements_ref: None,
+            additional_event_data_ref: None,
             record: CloudTrailRecord {
-                event_version: None,
-                event_time: "2024-01-15T10:00:00Z".to_string(),
-                event_source: event_source.to_string(),
-                event_name: event_name.to_string(),
-                aws_region: "us-east-1".to_string(),
-                source_ip_address: Some(ip.to_string()),
+                event_time: Arc::from("2024-01-15T10:00:00Z"),
+                event_source: Arc::from(event_source),
+                event_name: Arc::from(event_name),
+                aws_region: Arc::from("us-east-1"),
+                source_ip_address: Some(Arc::from(ip)),
                 user_agent: None,
                 user_identity: UserIdentity {
-                    identity_type: Some("IAMUser".to_string()),
+                    identity_type: Some(Arc::from("IAMUser")),
                     principal_id: None,
-                    arn: Some(arn.to_string()),
-                    account_id: Some("123456789012".to_string()),
+                    arn: Some(Arc::from(arn)),
+                    account_id: Some(Arc::from("123456789012")),
                     access_key_id: None,
                     user_name: None,
                     session_context: None,
@@ -450,7 +453,7 @@ mod tests {
                 request_parameters: None,
                 response_elements: None,
                 additional_event_data: None,
-                error_code: error_code.map(|s| s.to_string()),
+                error_code: error_code.map(Arc::from),
                 error_message: None,
                 request_id: None,
                 event_id: None,
@@ -474,21 +477,21 @@ mod tests {
 
         for rec in &records {
             let id = rec.id;
-            store.idx_event_name.entry(rec.record.event_name.as_str().into()).or_default().push(id);
-            store.idx_event_source.entry(rec.record.event_source.as_str().into()).or_default().push(id);
-            store.idx_region.entry(rec.record.aws_region.as_str().into()).or_default().push(id);
+            store.idx_event_name.entry(rec.record.event_name.clone()).or_default().push(id);
+            store.idx_event_source.entry(rec.record.event_source.clone()).or_default().push(id);
+            store.idx_region.entry(rec.record.aws_region.clone()).or_default().push(id);
             if let Some(ip) = &rec.record.source_ip_address {
-                store.idx_source_ip.entry(ip.as_str().into()).or_default().push(id);
+                store.idx_source_ip.entry(ip.clone()).or_default().push(id);
             }
             if let Some(arn) = &rec.record.user_identity.arn {
-                store.idx_user_arn.entry(arn.as_str().into()).or_default().push(id);
+                store.idx_user_arn.entry(arn.clone()).or_default().push(id);
             }
             if let Some(err) = &rec.record.error_code {
-                store.idx_error_code.entry(err.as_str().into()).or_default().push(id);
+                store.idx_error_code.entry(err.clone()).or_default().push(id);
             }
         }
 
-        let mut sorted: Vec<(i64, u64)> = records.iter().map(|r| (r.timestamp, r.id)).collect();
+        let mut sorted: Vec<(i64, u32)> = records.iter().map(|r| (r.timestamp, r.id)).collect();
         sorted.sort_unstable_by_key(|(ts, _)| *ts);
         store.time_sorted_ids = sorted.into_iter().map(|(_, id)| id).collect();
         store.records = records;
@@ -509,8 +512,8 @@ mod tests {
         let idx = SessionIndex::build(&store);
         assert_eq!(idx.sessions.len(), 1, "all events within gap → 1 session");
         assert_eq!(idx.sessions[0].event_count, 3);
-        assert_eq!(idx.sessions[0].identity_key, "arn:aws:iam::123:user/alice");
-        assert_eq!(idx.sessions[0].source_ip, "1.2.3.4");
+        assert_eq!(&*idx.sessions[0].identity_key, "arn:aws:iam::123:user/alice");
+        assert_eq!(&*idx.sessions[0].source_ip, "1.2.3.4");
     }
 
     #[test]
@@ -616,7 +619,7 @@ mod tests {
     #[test]
     fn test_list_sessions_pagination() {
         let store = build_store(
-            (0u64..5)
+            (0u32..5)
                 .map(|i| make_event(i, &format!("arn:aws:iam::123:user/u{}", i), "1.1.1.1", i as i64 * 1_000))
                 .collect(),
         );
@@ -649,7 +652,7 @@ mod tests {
         let idx = SessionIndex::build(&store);
         let page = idx.list_sessions(0, 10, "first", None, Some("10.0.0.1"), None);
         assert_eq!(page.total, 1);
-        assert_eq!(page.sessions[0].source_ip, "10.0.0.1");
+        assert_eq!(&*page.sessions[0].source_ip, "10.0.0.1");
     }
 
     // -----------------------------------------------------------------------
@@ -671,7 +674,7 @@ mod tests {
     #[test]
     fn test_get_session_detail_pagination() {
         let store = build_store(
-            (0u64..5)
+            (0u32..5)
                 .map(|i| make_event(i, "arn:aws:iam::123:user/alice", "1.2.3.4", i as i64 * 1_000))
                 .collect(),
         );

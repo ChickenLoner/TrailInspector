@@ -10,27 +10,27 @@ use crate::geoip::GeoIpEngine;
 pub fn geo_01_multi_country(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
     // Build identity → set of countries
     let mut by_identity: HashMap<String, HashSet<String>> = HashMap::new();
-    let mut identity_event_ids: HashMap<String, Vec<u64>> = HashMap::new();
+    let mut identity_event_ids: HashMap<String, Vec<u32>> = HashMap::new();
 
     for rec in &store.records {
         let ip = match &rec.record.source_ip_address {
-            Some(ip) => ip.clone(),
+            Some(ip) => ip.as_ref(),
             None => continue,
         };
-        let country = match geoip.lookup(&ip).and_then(|i| i.country_code) {
+        let country = match geoip.lookup(ip).and_then(|i| i.country_code) {
             Some(cc) => cc,
             None => continue,
         };
-        let identity = rec.record.user_identity.arn
-            .clone()
-            .or_else(|| rec.record.user_identity.user_name.clone())
-            .unwrap_or_else(|| "unknown".to_string());
+        let identity = rec.record.user_identity.arn.as_deref()
+            .or_else(|| rec.record.user_identity.user_name.as_deref())
+            .unwrap_or("unknown")
+            .to_string();
 
         by_identity.entry(identity.clone()).or_default().insert(country);
         identity_event_ids.entry(identity).or_default().push(rec.id);
     }
 
-    let mut matching: Vec<u64> = Vec::new();
+    let mut matching: Vec<u32> = Vec::new();
     let mut affected: Vec<String> = Vec::new();
 
     for (identity, countries) in &by_identity {
@@ -81,39 +81,39 @@ pub fn geo_02_console_unusual_country(store: &Store, geoip: &GeoIpEngine) -> Vec
     // Build per-identity baseline from non-login events
     let mut baseline: HashMap<String, HashSet<String>> = HashMap::new();
     for rec in &store.records {
-        if rec.record.event_name == "ConsoleLogin" {
+        if rec.record.event_name.as_ref() == "ConsoleLogin" {
             continue;
         }
         let ip = match &rec.record.source_ip_address {
-            Some(ip) => ip.clone(),
+            Some(ip) => ip.as_ref(),
             None => continue,
         };
-        if let Some(cc) = geoip.lookup(&ip).and_then(|i| i.country_code) {
-            let identity = rec.record.user_identity.arn
-                .clone()
-                .or_else(|| rec.record.user_identity.user_name.clone())
-                .unwrap_or_else(|| "unknown".to_string());
+        if let Some(cc) = geoip.lookup(ip).and_then(|i| i.country_code) {
+            let identity = rec.record.user_identity.arn.as_deref()
+                .or_else(|| rec.record.user_identity.user_name.as_deref())
+                .unwrap_or("unknown")
+                .to_string();
             baseline.entry(identity).or_default().insert(cc);
         }
     }
 
-    let mut matching: Vec<u64> = Vec::new();
+    let mut matching: Vec<u32> = Vec::new();
     let mut details: Vec<String> = Vec::new();
 
     for id in &login_ids {
         if let Some(rec) = store.get_record(*id) {
             let ip = match &rec.record.source_ip_address {
-                Some(ip) => ip.clone(),
+                Some(ip) => ip.as_ref(),
                 None => continue,
             };
-            let login_country = match geoip.lookup(&ip).and_then(|i| i.country_code) {
+            let login_country = match geoip.lookup(ip).and_then(|i| i.country_code) {
                 Some(cc) => cc,
                 None => continue,
             };
-            let identity = rec.record.user_identity.arn
-                .clone()
-                .or_else(|| rec.record.user_identity.user_name.clone())
-                .unwrap_or_else(|| "unknown".to_string());
+            let identity = rec.record.user_identity.arn.as_deref()
+                .or_else(|| rec.record.user_identity.user_name.as_deref())
+                .unwrap_or("unknown")
+                .to_string();
 
             // Only flag if identity has a baseline AND login country is not in it
             if let Some(seen) = baseline.get(&identity) {

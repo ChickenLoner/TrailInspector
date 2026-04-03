@@ -1,3 +1,25 @@
+## TrailInspector v1.1.1 — Performance Fix (mmap blob reads)
+
+This release fixes slow load times and filter/detection latency introduced by the v1.1.0 blob offload (Phase F).
+
+### What's Fixed
+
+- **Faster ingestion** — blob writes during load now use `BufWriter`, batching disk writes instead of one syscall per blob; reduces ~15M individual file writes to a few hundred large flushes for 5M events
+- **Restored filter speed** — after ingestion, the blob file is memory-mapped (`memmap2`); all subsequent reads (detection rules, event detail) are lock-free pointer arithmetic into OS-cached memory, matching pre-v1.1.0 speed
+- **u32/Arc migration** (Phase D/E/G) — record IDs shrunk from `u64` to `u32`; all repetitive string fields (`event_name`, `aws_region`, `event_source`, etc.) interned via `Arc<str>` through a `StringPool`; saves ~250 MB + ~2–2.5 GB for 5M events
+
+### Memory Budget (5M events, estimated)
+
+| Component | v1.0.0 | v1.1.1 |
+|-----------|--------|--------|
+| CloudTrailRecord strings | ~3.5 GB | ~1.0 GB |
+| JSON blobs | ~2.0 GB | ~180 MB |
+| Inverted indexes | ~500 MB | ~250 MB |
+| Sessions + other | ~300 MB | ~200 MB |
+| **Total** | **~6.3 GB** | **~1.6 GB** |
+
+---
+
 ## TrailInspector v1.1.0 — Performance Optimization
 
 This release eliminates OOM crashes when loading large CloudTrail datasets (1M–3M events), reducing memory usage by ~60–70%.

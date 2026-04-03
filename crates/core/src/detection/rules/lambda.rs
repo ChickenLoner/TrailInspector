@@ -11,11 +11,8 @@ pub fn lm_01_lambda_public_access(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for &id in ids {
-        if let Some(r) = store.get_record(id) {
-            let params_str = r.record.request_parameters
-                .as_ref()
-                .map(|v| v.get().to_string())
-                .unwrap_or_default();
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // principal "*" means public access
             if params_str.contains("\"principal\":\"*\"")
                 || params_str.contains("\"Principal\":\"*\"")
@@ -61,11 +58,8 @@ pub fn lm_02_lambda_env_updated(store: &Store) -> Vec<Alert> {
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
             for &id in ids {
-                if let Some(r) = store.get_record(id) {
-                    let params_str = r.record.request_parameters
-                        .as_ref()
-                        .map(|v| v.get().to_string())
-                        .unwrap_or_default();
+                {
+                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("Environment") || params_str.contains("environment") {
                         matching.push(id);
                     }

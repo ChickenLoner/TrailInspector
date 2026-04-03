@@ -4,6 +4,7 @@
 //! events needed to trigger a rule, then asserts the expected alert fires (or
 //! does not fire).  A shared `helpers` module provides ergonomic builders.
 
+use std::sync::Arc;
 use serde_json::json;
 use crate::store::Store;
 use crate::model::{CloudTrailRecord, IndexedRecord, UserIdentity};
@@ -16,12 +17,12 @@ use crate::detection::run_all_rules;
 
 fn default_identity() -> UserIdentity {
     UserIdentity {
-        identity_type: Some("IAMUser".to_string()),
-        principal_id: Some("AIDAEXAMPLE0123456789".to_string()),
-        arn: Some("arn:aws:iam::123456789012:user/alice".to_string()),
-        account_id: Some("123456789012".to_string()),
+        identity_type: Some(Arc::from("IAMUser")),
+        principal_id: Some(Arc::from("AIDAEXAMPLE0123456789")),
+        arn: Some(Arc::from("arn:aws:iam::123456789012:user/alice")),
+        account_id: Some(Arc::from("123456789012")),
         access_key_id: None,
-        user_name: Some("alice".to_string()),
+        user_name: Some(Arc::from("alice")),
         session_context: None,
         invoked_by: None,
     }
@@ -30,12 +31,11 @@ fn default_identity() -> UserIdentity {
 /// Build a minimal `CloudTrailRecord` with sensible defaults.
 fn make_rec(event_name: &str, event_source: &str) -> CloudTrailRecord {
     CloudTrailRecord {
-        event_version: None,
-        event_time: "2024-01-15T10:00:00Z".to_string(),
-        event_source: event_source.to_string(),
-        event_name: event_name.to_string(),
-        aws_region: "us-east-1".to_string(),
-        source_ip_address: Some("203.0.113.10".to_string()),
+        event_time: Arc::from("2024-01-15T10:00:00Z"),
+        event_source: Arc::from(event_source),
+        event_name: Arc::from(event_name),
+        aws_region: Arc::from("us-east-1"),
+        source_ip_address: Some(Arc::from("203.0.113.10")),
         user_agent: None,
         user_identity: default_identity(),
         request_parameters: None,
@@ -57,16 +57,19 @@ fn make_rec(event_name: &str, event_source: &str) -> CloudTrailRecord {
 }
 
 /// Build an IndexedRecord. `id` must equal the eventual index in `Store.records`.
-fn make_indexed(id: u64, event_name: &str, event_source: &str) -> IndexedRecord {
+fn make_indexed(id: u32, event_name: &str, event_source: &str) -> IndexedRecord {
     make_indexed_ts(id, event_name, event_source, id as i64 * 60_000)
 }
 
-fn make_indexed_ts(id: u64, event_name: &str, event_source: &str, ts_ms: i64) -> IndexedRecord {
+fn make_indexed_ts(id: u32, event_name: &str, event_source: &str, ts_ms: i64) -> IndexedRecord {
     IndexedRecord {
         id,
         timestamp: ts_ms,
         source_file: 0,
         record: make_rec(event_name, event_source),
+        request_params_ref: None,
+        response_elements_ref: None,
+        additional_event_data_ref: None,
     }
 }
 
@@ -98,42 +101,52 @@ fn build_store(records: Vec<IndexedRecord>) -> Store {
     let mut records = records;
     records.sort_by_key(|r| r.id);
 
+    // Drain blobs first (mirrors ingestion pipeline) so detection helpers
+    // can find blobs in the store when they call store.parse_request_parameters()
+    for rec in records.iter_mut() {
+        store.drain_blobs(rec);
+    }
+
+    // Seal the blob store (flush BufWriter + mmap) so blob reads work during index building
+    store.blob_store.seal().expect("BlobStore seal failed in test");
+
     for rec in &records {
         let id = rec.id;
-        store.idx_event_name.entry(rec.record.event_name.as_str().into()).or_default().push(id);
-        store.idx_event_source.entry(rec.record.event_source.as_str().into()).or_default().push(id);
-        store.idx_region.entry(rec.record.aws_region.as_str().into()).or_default().push(id);
+        store.idx_event_name.entry(rec.record.event_name.clone()).or_default().push(id);
+        store.idx_event_source.entry(rec.record.event_source.clone()).or_default().push(id);
+        store.idx_region.entry(rec.record.aws_region.clone()).or_default().push(id);
         if let Some(ip) = &rec.record.source_ip_address {
-            store.idx_source_ip.entry(ip.as_str().into()).or_default().push(id);
+            store.idx_source_ip.entry(ip.clone()).or_default().push(id);
         }
         if let Some(arn) = &rec.record.user_identity.arn {
-            store.idx_user_arn.entry(arn.as_str().into()).or_default().push(id);
+            store.idx_user_arn.entry(arn.clone()).or_default().push(id);
         }
         if let Some(name) = &rec.record.user_identity.user_name {
-            store.idx_user_name.entry(name.as_str().into()).or_default().push(id);
+            store.idx_user_name.entry(name.clone()).or_default().push(id);
         }
         if let Some(acct) = &rec.record.user_identity.account_id {
-            store.idx_account_id.entry(acct.as_str().into()).or_default().push(id);
+            store.idx_account_id.entry(acct.clone()).or_default().push(id);
         }
         if let Some(err) = &rec.record.error_code {
-            store.idx_error_code.entry(err.as_str().into()).or_default().push(id);
+            store.idx_error_code.entry(err.clone()).or_default().push(id);
         }
         if let Some(t) = &rec.record.user_identity.identity_type {
-            store.idx_identity_type.entry(t.as_str().into()).or_default().push(id);
+            store.idx_identity_type.entry(t.clone()).or_default().push(id);
         }
         if let Some(ua) = &rec.record.user_agent {
-            store.idx_user_agent.entry(ua.as_str().into()).or_default().push(id);
+            store.idx_user_agent.entry(ua.clone()).or_default().push(id);
         }
-        if let Some(params) = &rec.record.request_parameters {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(params.get()) {
+        // Bucket name index: load from blob store (request_parameters drained above)
+        if let Some(br) = rec.request_params_ref {
+            if let Some(v) = store.blob_store.parse_value(br) {
                 if let Some(bucket) = v.get("bucketName").and_then(|v| v.as_str()) {
-                    store.idx_bucket_name.entry(bucket.into()).or_default().push(id);
+                    store.idx_bucket_name.entry(Arc::from(bucket)).or_default().push(id);
                 }
             }
         }
     }
 
-    let mut sorted: Vec<(i64, u64)> = records.iter().map(|r| (r.timestamp, r.id)).collect();
+    let mut sorted: Vec<(i64, u32)> = records.iter().map(|r| (r.timestamp, r.id)).collect();
     sorted.sort_unstable_by_key(|(ts, _)| *ts);
     store.time_sorted_ids = sorted.into_iter().map(|(_, id)| id).collect();
     store.records = records;
@@ -161,7 +174,7 @@ fn test_de_05_fires_on_delete_flow_logs() {
     let alerts = rules::defense_evasion::de_05_flow_log_deleted(&store);
     assert_eq!(alerts.len(), 1);
     assert_eq!(alerts[0].rule_id, "DE-05");
-    assert_eq!(alerts[0].matching_record_ids, vec![0u64]);
+    assert_eq!(alerts[0].matching_record_ids, vec![0u32]);
 }
 
 #[test]
@@ -482,7 +495,7 @@ fn test_pe_06_no_fire_without_set_as_default() {
 #[test]
 fn test_pe_07_fires_on_cross_account_assume_role() {
     let mut rec = make_indexed(0, "AssumeRole", "sts.amazonaws.com");
-    rec.record.user_identity.account_id = Some("111111111111".to_string());
+    rec.record.user_identity.account_id = Some(Arc::from("111111111111"));
     let rec = with_params(
         rec,
         json!({"roleArn": "arn:aws:iam::999999999999:role/CrossAccountRole"}),
@@ -496,7 +509,7 @@ fn test_pe_07_fires_on_cross_account_assume_role() {
 #[test]
 fn test_pe_07_no_fire_on_same_account_assume_role() {
     let mut rec = make_indexed(0, "AssumeRole", "sts.amazonaws.com");
-    rec.record.user_identity.account_id = Some("123456789012".to_string());
+    rec.record.user_identity.account_id = Some(Arc::from("123456789012"));
     let rec = with_params(
         rec,
         json!({"roleArn": "arn:aws:iam::123456789012:role/SameAccountRole"}),
@@ -513,7 +526,7 @@ fn test_pe_07_no_fire_on_same_account_assume_role() {
 #[test]
 fn test_ca_05_fires_on_successful_root_login() {
     let mut rec = make_indexed(0, "ConsoleLogin", "signin.amazonaws.com");
-    rec.record.user_identity.identity_type = Some("Root".to_string());
+    rec.record.user_identity.identity_type = Some(Arc::from("Root"));
     let rec = with_resp(rec, json!({"ConsoleLogin": "Success"}));
     let store = build_store(vec![rec]);
     let alerts = rules::credential_access::ca_05_root_console_login(&store);
@@ -535,7 +548,7 @@ fn test_ca_05_no_fire_on_non_root_login() {
 #[test]
 fn test_ca_05_no_fire_on_root_login_failure() {
     let mut rec = make_indexed(0, "ConsoleLogin", "signin.amazonaws.com");
-    rec.record.user_identity.identity_type = Some("Root".to_string());
+    rec.record.user_identity.identity_type = Some(Arc::from("Root"));
     let rec = with_resp(rec, json!({"ConsoleLogin": "Failure"}));
     let store = build_store(vec![rec]);
     let alerts = rules::credential_access::ca_05_root_console_login(&store);
@@ -734,7 +747,7 @@ fn test_ex_03_fires_on_bulk_download_within_window() {
     // 50 GetObject events by the same identity within 5 minutes (300_000 ms)
     let base_ts: i64 = 1_700_000_000_000;
     let interval_ms: i64 = 5_000; // 5 s apart → 50 events ≈ 4 min total
-    let records: Vec<IndexedRecord> = (0u64..50)
+    let records: Vec<IndexedRecord> = (0u32..50)
         .map(|i| {
             let mut rec = make_indexed_ts(
                 i,
@@ -743,7 +756,7 @@ fn test_ex_03_fires_on_bulk_download_within_window() {
                 base_ts + i as i64 * interval_ms,
             );
             rec.record.user_identity.arn =
-                Some("arn:aws:iam::123456789012:user/alice".to_string());
+                Some(Arc::from("arn:aws:iam::123456789012:user/alice"));
             rec
         })
         .collect();
@@ -758,7 +771,7 @@ fn test_ex_03_fires_on_bulk_download_within_window() {
 fn test_ex_03_no_fire_below_threshold() {
     // Only 10 GetObject events — below the 50-event threshold
     let base_ts: i64 = 1_700_000_000_000;
-    let records: Vec<IndexedRecord> = (0u64..10)
+    let records: Vec<IndexedRecord> = (0u32..10)
         .map(|i| make_indexed_ts(i, "GetObject", "s3.amazonaws.com", base_ts + i as i64 * 1000))
         .collect();
     let store = build_store(records);
@@ -771,7 +784,7 @@ fn test_ex_03_no_fire_when_spread_across_windows() {
     // 50 GetObject events by same identity but spaced > 5 min apart in pairs
     let base_ts: i64 = 1_700_000_000_000;
     let ten_min_ms: i64 = 10 * 60 * 1000;
-    let records: Vec<IndexedRecord> = (0u64..50)
+    let records: Vec<IndexedRecord> = (0u32..50)
         .map(|i| {
             let mut rec = make_indexed_ts(
                 i,
@@ -780,7 +793,7 @@ fn test_ex_03_no_fire_when_spread_across_windows() {
                 base_ts + i as i64 * ten_min_ms, // each 10 min apart — never 50 in 5 min
             );
             rec.record.user_identity.arn =
-                Some("arn:aws:iam::123456789012:user/alice".to_string());
+                Some(Arc::from("arn:aws:iam::123456789012:user/alice"));
             rec
         })
         .collect();
@@ -949,7 +962,7 @@ fn bench_detection_100k_records() {
         "ModifyDBInstance", "DisableEbsEncryptionByDefault", "DeleteSnapshot",
     ];
 
-    let records: Vec<IndexedRecord> = (0u64..100_000)
+    let records: Vec<IndexedRecord> = (0u32..100_000)
         .map(|i| {
             let event = event_names[i as usize % event_names.len()];
             make_indexed_ts(i, event, "ec2.amazonaws.com", i as i64 * 100)

@@ -1,6 +1,6 @@
 {
   "productName": "TrailInspector",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "identifier": "io.github.chicken0248.trailinspector",
   "build": {
     "frontendDist": "../../ui/dist",

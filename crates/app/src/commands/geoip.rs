@@ -185,7 +185,7 @@ pub async fn list_ips(
             for id in ids_in_range {
                 if let Some(rec) = store.get_record(id) {
                     if let Some(ip) = &rec.record.source_ip_address {
-                        *counts.entry(ip.clone()).or_insert(0) += 1;
+                        *counts.entry(ip.to_string()).or_insert(0) += 1;
                     }
                 }
             }

@@ -46,11 +46,8 @@ pub fn pe_06_policy_version_created(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for &id in ids {
-        if let Some(r) = store.get_record(id) {
-            let params_str = r.record.request_parameters
-                .as_ref()
-                .map(|v| v.get().to_string())
-                .unwrap_or_default();
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("\"setAsDefault\":true")
                 || params_str.contains("\"setAsDefault\": true")
             {
@@ -93,7 +90,7 @@ pub fn pe_07_cross_account_assume_role(store: &Store) -> Vec<Alert> {
     for &id in ids {
         if let Some(r) = store.get_record(id) {
             let caller_account = r.record.user_identity.account_id.as_deref().unwrap_or("");
-            let params = r.record.parse_request_parameters();
+            let params = store.parse_request_parameters(id);
             let role_arn_owned = params.as_ref()
                 .and_then(|v| v.get("roleArn"))
                 .and_then(|v| v.as_str())

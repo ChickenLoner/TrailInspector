@@ -16,7 +16,7 @@ pub struct SearchResult {
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordRow {
-    pub id: u64,
+    pub id: u32,
     pub timestamp: i64,
     pub event_time: String,
     pub event_name: String,
@@ -33,7 +33,7 @@ pub struct RecordRow {
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordDetail {
-    pub id: u64,
+    pub id: u32,
     pub timestamp: i64,
     pub event_time: String,
     pub event_name: String,
@@ -51,23 +51,27 @@ pub struct RecordDetail {
 /// Called when the user clicks a row to open the detail panel.
 #[tauri::command]
 pub async fn get_record_by_id(
-    id: u64,
+    id: u32,
     state: State<'_, AppState>,
 ) -> Result<Option<RecordDetail>, String> {
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
     let store = guard.as_ref().ok_or("No dataset loaded")?;
-    Ok(store.get_record(id).map(|r| RecordDetail {
-        id: r.id,
-        timestamp: r.timestamp,
-        event_time: r.record.event_time.clone(),
-        event_name: r.record.event_name.clone(),
-        event_source: r.record.event_source.clone(),
-        aws_region: r.record.aws_region.clone(),
-        source_ip_address: r.record.source_ip_address.clone(),
-        user_name: r.record.user_identity.user_name.clone(),
-        user_arn: r.record.user_identity.arn.clone(),
-        error_code: r.record.error_code.clone(),
-        raw: r.record.clone(),
+    Ok(store.get_record(id).map(|r| {
+        // get_full_record loads blob fields (requestParameters etc.) from BlobStore
+        let raw = store.get_full_record(r.id).unwrap_or_else(|| r.record.clone());
+        RecordDetail {
+            id: r.id,
+            timestamp: r.timestamp,
+            event_time: r.record.event_time.to_string(),
+            event_name: r.record.event_name.to_string(),
+            event_source: r.record.event_source.to_string(),
+            aws_region: r.record.aws_region.to_string(),
+            source_ip_address: r.record.source_ip_address.as_deref().map(|s| s.to_string()),
+            user_name: r.record.user_identity.user_name.as_deref().map(|s| s.to_string()),
+            user_arn: r.record.user_identity.arn.as_deref().map(|s| s.to_string()),
+            error_code: r.record.error_code.as_deref().map(|s| s.to_string()),
+            raw,
+        }
     }))
 }
 
@@ -104,14 +108,14 @@ pub async fn search(
         .map(|r| RecordRow {
             id: r.id,
             timestamp: r.timestamp,
-            event_time: r.record.event_time.clone(),
-            event_name: r.record.event_name.clone(),
-            event_source: r.record.event_source.clone(),
-            aws_region: r.record.aws_region.clone(),
-            source_ip_address: r.record.source_ip_address.clone(),
-            user_name: r.record.user_identity.user_name.clone(),
-            user_arn: r.record.user_identity.arn.clone(),
-            error_code: r.record.error_code.clone(),
+            event_time: r.record.event_time.to_string(),
+            event_name: r.record.event_name.to_string(),
+            event_source: r.record.event_source.to_string(),
+            aws_region: r.record.aws_region.to_string(),
+            source_ip_address: r.record.source_ip_address.as_deref().map(|s| s.to_string()),
+            user_name: r.record.user_identity.user_name.as_deref().map(|s| s.to_string()),
+            user_arn: r.record.user_identity.arn.as_deref().map(|s| s.to_string()),
+            error_code: r.record.error_code.as_deref().map(|s| s.to_string()),
         })
         .collect();
 

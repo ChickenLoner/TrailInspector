@@ -10,7 +10,7 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
     };
 
     // Collect all RunInstances timestamps
-    let mut events: Vec<(i64, u64)> = ids
+    let mut events: Vec<(i64, u32)> = ids
         .iter()
         .filter_map(|&id| store.get_record(id).map(|r| (r.timestamp, id)))
         .collect();
@@ -19,7 +19,7 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
 
     let window_ms = 10 * 60 * 1000;
     let threshold = 5;
-    let mut all_matching: Vec<u64> = vec![];
+    let mut all_matching: Vec<u32> = vec![];
 
     let mut start = 0;
     for end in 0..events.len() {
@@ -64,7 +64,7 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
 /// IM-02: Resource Deletion Spree (>10 Delete*/Terminate* events in 5 min by same identity)
 pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
     // Collect all Delete* and Terminate* events
-    let mut deletion_ids: Vec<u64> = vec![];
+    let mut deletion_ids: Vec<u32> = vec![];
 
     for (event_name, ids) in &store.idx_event_name {
         if event_name.starts_with("Delete")
@@ -81,20 +81,20 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
     }
 
     // Group by identity
-    let mut by_identity: HashMap<String, Vec<(i64, u64)>> = HashMap::new();
+    let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
     for &id in &deletion_ids {
         if let Some(r) = store.get_record(id) {
-            let identity = r.record.user_identity.arn
-                .clone()
-                .or_else(|| r.record.user_identity.user_name.clone())
-                .unwrap_or_else(|| "unknown".to_string());
+            let identity = r.record.user_identity.arn.as_deref()
+                .or_else(|| r.record.user_identity.user_name.as_deref())
+                .unwrap_or("unknown")
+                .to_string();
             by_identity.entry(identity).or_default().push((r.timestamp, id));
         }
     }
 
     let window_ms = 5 * 60 * 1000; // 5 minutes
     let threshold = 10;
-    let mut all_matching: Vec<u64> = vec![];
+    let mut all_matching: Vec<u32> = vec![];
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {

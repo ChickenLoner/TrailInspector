@@ -10,10 +10,8 @@ pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
             for &id in ids {
-                if let Some(r) = store.get_record(id) {
-                    if is_public_grant(r.record.parse_request_parameters()) {
-                        matching.push(id);
-                    }
+                if is_public_grant(store.parse_request_parameters(id)) {
+                    matching.push(id);
                 }
             }
         }
@@ -113,20 +111,20 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
         None => return vec![],
     };
 
-    let mut by_identity: HashMap<String, Vec<(i64, u64)>> = HashMap::new();
+    let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
     for &id in ids {
         if let Some(r) = store.get_record(id) {
-            let identity = r.record.user_identity.arn
-                .clone()
-                .or_else(|| r.record.user_identity.user_name.clone())
-                .unwrap_or_else(|| "unknown".to_string());
+            let identity = r.record.user_identity.arn.as_deref()
+                .or_else(|| r.record.user_identity.user_name.as_deref())
+                .unwrap_or("unknown")
+                .to_string();
             by_identity.entry(identity).or_default().push((r.timestamp, id));
         }
     }
 
     let window_ms = 5 * 60 * 1000;
     let threshold = 50;
-    let mut all_matching: Vec<u64> = vec![];
+    let mut all_matching: Vec<u32> = vec![];
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
@@ -197,11 +195,8 @@ pub fn ex_04_s3_logging_disabled(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for &id in ids {
-        if let Some(r) = store.get_record(id) {
-            let params_str = r.record.request_parameters
-                .as_ref()
-                .map(|v| v.get().to_string())
-                .unwrap_or_default();
+        {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // Empty LoggingConfiguration means logging disabled
             if params_str.contains("\"BucketLoggingStatus\":{}")
                 || params_str.contains("\"loggingEnabled\":{}")
