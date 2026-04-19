@@ -26,6 +26,7 @@ pub fn run() {
             commands::geoip::list_ips,
             commands::geoip::check_abuseipdb,
             commands::geoip::geo_lookup_online,
+            commands::s3::get_s3_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TrailInspector");
