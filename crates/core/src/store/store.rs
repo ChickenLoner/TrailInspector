@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::model::IndexedRecord;
 use crate::store::blob_store::BlobStore;
+use crate::s3::S3EventData;
 use rayon::prelude::*;
 use crate::ingest::{decompress::{read_log_file, read_zip_entries}, parser::parse_records};
 use crate::error::{CoreError, IngestWarning};
@@ -54,6 +55,10 @@ pub struct Store {
     pub idx_user_agent: HashMap<Arc<str>, Vec<u32>>,
     pub idx_bucket_name: HashMap<Arc<str>, Vec<u32>>,
 
+    /// Per-event S3 data extracted at ingestion time (GetObject events only).
+    /// Keyed by record ID. Enables zero-blob-read aggregation in get_s3_summary.
+    pub s3_event_index: HashMap<u32, S3EventData>,
+
     // Sorted by timestamp for range queries
     pub time_sorted_ids: Vec<u32>,
 
@@ -78,6 +83,7 @@ impl Store {
             idx_identity_type: HashMap::new(),
             idx_user_agent: HashMap::new(),
             idx_bucket_name: HashMap::new(),
+            s3_event_index: HashMap::new(),
             time_sorted_ids: Vec::new(),
             blob_store: BlobStore::new().expect("failed to create blob store temp file"),
         }
@@ -191,10 +197,49 @@ impl Store {
 
                 // Extract bucket name BEFORE draining request_parameters to blob store,
                 // so we avoid a disk read-back during ingestion.
-                let bucket_name: Option<String> = rec.record.request_parameters
+                // For GetObject events also extract the object key and bytes transferred out.
+                let rp_value: Option<serde_json::Value> = rec.record.request_parameters
                     .as_ref()
-                    .and_then(|rp| serde_json::from_str::<serde_json::Value>(rp.get()).ok())
+                    .and_then(|rp| serde_json::from_str::<serde_json::Value>(rp.get()).ok());
+
+                let bucket_name: Option<String> = rp_value
+                    .as_ref()
                     .and_then(|v| v.get("bucketName").and_then(|v| v.as_str()).map(|s| s.to_owned()));
+
+                // S3 enrichment: extract key + bytesTransferredOut for GetObject events
+                if rec.record.event_name.as_ref() == "GetObject" {
+                    if let Some(ref bname) = bucket_name {
+                        let key: Arc<str> = rp_value
+                            .as_ref()
+                            .and_then(|v| v.get("key").and_then(|v| v.as_str()))
+                            .map(|s| pool.intern(s))
+                            .unwrap_or_else(|| Arc::from(""));
+
+                        let bytes_out: u64 = rec.record.additional_event_data
+                            .as_ref()
+                            .and_then(|ae| serde_json::from_str::<serde_json::Value>(ae.get()).ok())
+                            .and_then(|v| {
+                                v.get("bytesTransferredOut")
+                                    .and_then(|b| b.as_u64()
+                                        .or_else(|| b.as_f64().map(|f| f as u64)))
+                            })
+                            .unwrap_or(0);
+
+                        let identity: Arc<str> = rec.record.user_identity.arn
+                            .as_deref()
+                            .or_else(|| rec.record.user_identity.user_name.as_deref())
+                            .map(|s| pool.intern(s))
+                            .unwrap_or_else(|| Arc::from("unknown"));
+
+                        self.s3_event_index.insert(rec.id, crate::s3::S3EventData {
+                            bucket: pool.intern(bname),
+                            key,
+                            bytes_out,
+                            identity,
+                            timestamp: rec.timestamp,
+                        });
+                    }
+                }
 
                 // Drain JSON blobs to disk — frees ~200-800 bytes heap per event.
                 // take() moves out of the Option, setting it to None in the record.
