@@ -252,6 +252,41 @@ export interface GlobalTimeRange {
 // Phase 4 — Detection types
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// S3 enrichment types
+// ---------------------------------------------------------------------------
+
+export interface BucketStat {
+  bucket: string;
+  bytesOut: number;
+  objectCount: number;
+  topIdentity: string;
+}
+
+export interface ObjectStat {
+  bucket: string;
+  key: string;
+  bytesOut: number;
+  accessCount: number;
+}
+
+export interface IdentityStat {
+  identity: string;
+  bytesOut: number;
+  objectCount: number;
+  uniqueBuckets: number;
+}
+
+export interface S3Summary {
+  totalBytesOut: number;
+  totalGetObjects: number;
+  uniqueObjects: number;
+  availableBuckets: string[];
+  buckets: BucketStat[];
+  topObjects: ObjectStat[];
+  identities: IdentityStat[];
+}
+
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 
 export interface Alert {
