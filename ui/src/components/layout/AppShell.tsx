@@ -4,6 +4,7 @@ import { IdentityTimeline } from "../viz/IdentityTimeline";
 import { DetectionView } from "../detection/DetectionView";
 import { SessionView } from "../session/SessionView";
 import { IpView } from "../ip/IpView";
+import { S3View } from "../s3/S3View";
 
 interface Props {
   /** Content for the Search tab (query bar + event table etc.) */
@@ -54,6 +55,12 @@ export function AppShell({ searchView, onFilterSelect, query, activeTab, onTabCh
         {activeTab === "ip" && (
           <div style={{ flex: 1, overflow: "hidden" }}>
             <IpView startMs={startMs} endMs={endMs} />
+          </div>
+        )}
+
+        {activeTab === "s3" && (
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            <S3View startMs={startMs} endMs={endMs} />
           </div>
         )}
 
