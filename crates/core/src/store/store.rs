@@ -231,11 +231,17 @@ impl Store {
                             .map(|s| pool.intern(s))
                             .unwrap_or_else(|| Arc::from("unknown"));
 
+                        let source_ip: Arc<str> = rec.record.source_ip_address
+                            .as_deref()
+                            .map(|s| pool.intern(s))
+                            .unwrap_or_else(|| Arc::from(""));
+
                         self.s3_event_index.insert(rec.id, crate::s3::S3EventData {
                             bucket: pool.intern(bname),
                             key,
                             bytes_out,
                             identity,
+                            source_ip,
                             timestamp: rec.timestamp,
                         });
                     }

@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] — 2026-04-20
+
+### Added
+
+- **S3 Activity tab** — dedicated investigation surface for S3 GetObject events: total bytes out, objects accessed, unique buckets, unique identities stat cards; per-bucket table, per-identity table, top-100 objects by bytes (with total count when truncated)
+- **S3 filters** — bucket, source IP, and identity filter dropdowns populated from ingested events; all filters combine with the global time bar
+- **Byte unit toggle** — auto / B / KB / MB / GB selector applies to all byte values in the S3 tab
+- **EX-03 enrichment** — S3 Bulk Download alert description now includes total bytes transferred; `total_bytes_out` added to alert metadata
+
+### Fixed
+
+- Export (CSV/JSON) on Windows — `dialog:allow-save` was missing from Tauri capability manifest; save dialog now opens correctly on Windows 10 and Windows 11
+
+### Performance
+
+- S3 object key and `bytesTransferredOut` extracted at ingestion time before blob drain; zero blob reads at query time for the S3 tab
+
+---
+
 ## [1.0.0] — 2026-03-31
 
 ### Highlights

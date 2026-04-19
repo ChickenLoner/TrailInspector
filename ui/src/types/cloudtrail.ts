@@ -282,6 +282,8 @@ export interface S3Summary {
   totalGetObjects: number;
   uniqueObjects: number;
   availableBuckets: string[];
+  availableIps: string[];
+  availableIdentities: string[];
   buckets: BucketStat[];
   topObjects: ObjectStat[];
   identities: IdentityStat[];

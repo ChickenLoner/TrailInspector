@@ -12,6 +12,7 @@ pub struct S3EventData {
     pub key: Arc<str>,
     pub bytes_out: u64,
     pub identity: Arc<str>,
+    pub source_ip: Arc<str>,
     pub timestamp: i64,
 }
 
@@ -26,6 +27,8 @@ pub struct S3Summary {
     pub total_get_objects: usize,
     pub unique_objects: usize,
     pub available_buckets: Vec<String>,
+    pub available_ips: Vec<String>,
+    pub available_identities: Vec<String>,
     pub buckets: Vec<BucketStat>,
     pub top_objects: Vec<ObjectStat>,
     pub identities: Vec<IdentityStat>,
@@ -85,23 +88,29 @@ struct IdentityAcc {
 // ---------------------------------------------------------------------------
 
 /// Return an S3Summary aggregated over all GetObject events that match the
-/// optional time range and/or bucket filter.
+/// optional time range, bucket, IP, and identity filters.
 pub fn get_s3_summary(
     store: &Store,
     start_ms: Option<i64>,
     end_ms: Option<i64>,
     bucket_filter: Option<&str>,
+    ip_filter: Option<&str>,
+    identity_filter: Option<&str>,
 ) -> S3Summary {
+    // Collect available dropdown values from s3_event_index (all GetObject events, unfiltered)
+    let (available_buckets, available_ips, available_identities) = available_filter_values(store);
+
     // 1. Start with all GetObject IDs
     let candidate_ids: Vec<u32> = match store.idx_event_name.get("GetObject") {
         Some(ids) => ids.clone(),
         None => {
-            let available_buckets = sorted_bucket_names(store);
             return S3Summary {
                 total_bytes_out: 0,
                 total_get_objects: 0,
                 unique_objects: 0,
                 available_buckets,
+                available_ips,
+                available_identities,
                 buckets: vec![],
                 top_objects: vec![],
                 identities: vec![],
@@ -127,7 +136,7 @@ pub fn get_s3_summary(
     };
 
     // 3. Apply bucket filter
-    let filtered: Vec<u32> = if let Some(bucket) = bucket_filter {
+    let bucket_filtered: Vec<u32> = if let Some(bucket) = bucket_filter {
         if let Some(bucket_ids) = store.idx_bucket_name.get(bucket) {
             let bucket_set: std::collections::HashSet<u32> = bucket_ids.iter().copied().collect();
             time_filtered
@@ -139,6 +148,34 @@ pub fn get_s3_summary(
         }
     } else {
         time_filtered
+    };
+
+    // 4. Apply IP filter (using s3_event_index — no blob reads)
+    let ip_filtered: Vec<u32> = if let Some(ip) = ip_filter {
+        bucket_filtered
+            .into_iter()
+            .filter(|id| {
+                store.s3_event_index.get(id)
+                    .map(|d| d.source_ip.as_ref() == ip)
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        bucket_filtered
+    };
+
+    // 5. Apply identity filter
+    let filtered: Vec<u32> = if let Some(identity) = identity_filter {
+        ip_filtered
+            .into_iter()
+            .filter(|id| {
+                store.s3_event_index.get(id)
+                    .map(|d| d.identity.as_ref() == identity)
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        ip_filtered
     };
 
     // 4 + 5. Aggregate
@@ -238,28 +275,37 @@ pub fn get_s3_summary(
         .collect();
     identities.sort_unstable_by(|a, b| b.bytes_out.cmp(&a.bytes_out));
 
-    // 7. available_buckets — all buckets in the store, for the dropdown
-    let available_buckets = sorted_bucket_names(store);
-
     S3Summary {
         total_bytes_out,
         total_get_objects: filtered.len(),
         unique_objects,
         available_buckets,
+        available_ips,
+        available_identities,
         buckets,
         top_objects,
         identities,
     }
 }
 
-fn sorted_bucket_names(store: &Store) -> Vec<String> {
-    let mut names: Vec<String> = store
-        .idx_bucket_name
-        .keys()
-        .map(|k| k.as_ref().to_owned())
-        .collect();
-    names.sort();
-    names
+/// Collect sorted unique buckets, IPs, and identities from s3_event_index (unfiltered).
+fn available_filter_values(store: &Store) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut buckets: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut ips: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut identities: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for data in store.s3_event_index.values() {
+        buckets.insert(data.bucket.as_ref().to_owned());
+        if !data.source_ip.is_empty() {
+            ips.insert(data.source_ip.as_ref().to_owned());
+        }
+        identities.insert(data.identity.as_ref().to_owned());
+    }
+
+    let mut bv: Vec<String> = buckets.into_iter().collect(); bv.sort();
+    let mut iv: Vec<String> = ips.into_iter().collect(); iv.sort();
+    let mut idv: Vec<String> = identities.into_iter().collect(); idv.sort();
+    (bv, iv, idv)
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +403,7 @@ mod tests {
                     key: Arc::from(*key),
                     bytes_out: *bytes_out,
                     identity: Arc::from(*arn),
+                    source_ip: Arc::from("1.2.3.4"),
                     timestamp: *ts,
                 },
             );
@@ -378,7 +425,7 @@ mod tests {
             (2, 3000, "arn:aws:iam::123:user/bob",   "my-bucket", "file3.txt",   500_000),
         ]);
 
-        let summary = get_s3_summary(&store, None, None, None);
+        let summary = get_s3_summary(&store, None, None, None, None, None);
         assert_eq!(summary.total_bytes_out, 3_500_000);
         assert_eq!(summary.total_get_objects, 3);
         assert_eq!(summary.unique_objects, 3);
@@ -393,7 +440,7 @@ mod tests {
         ]);
 
         // Filter: only timestamps in [5000, 15000]
-        let summary = get_s3_summary(&store, Some(5_000), Some(15_000), None);
+        let summary = get_s3_summary(&store, Some(5_000), Some(15_000), None, None, None);
         assert_eq!(summary.total_get_objects, 1);
         assert_eq!(summary.total_bytes_out, 200);
     }
@@ -406,7 +453,7 @@ mod tests {
             (2, 3000, "arn:aws:iam::123:user/alice", "bucket-a", "k3", 300),
         ]);
 
-        let summary = get_s3_summary(&store, None, None, Some("bucket-a"));
+        let summary = get_s3_summary(&store, None, None, Some("bucket-a"), None, None);
         assert_eq!(summary.total_get_objects, 2);
         assert_eq!(summary.total_bytes_out, 400);
         // bucket-b events should not appear
@@ -438,13 +485,14 @@ mod tests {
                 key: Arc::from(key.as_str()),
                 bytes_out: i as u64 * 1000,
                 identity: Arc::from("arn:aws:iam::123:user/alice"),
+                source_ip: Arc::from("1.2.3.4"),
                 timestamp: i as i64 * 1000,
             });
         }
 
         store.time_sorted_ids = (0u32..150).collect();
 
-        let summary = get_s3_summary(&store, None, None, None);
+        let summary = get_s3_summary(&store, None, None, None, None, None);
         assert_eq!(summary.unique_objects, 150);
         assert_eq!(summary.top_objects.len(), 100, "top_objects must be capped at 100");
         // Highest bytes should be first
@@ -454,7 +502,7 @@ mod tests {
     #[test]
     fn test_s3_empty_store() {
         let store = Store::new();
-        let summary = get_s3_summary(&store, None, None, None);
+        let summary = get_s3_summary(&store, None, None, None, None, None);
         assert_eq!(summary.total_get_objects, 0);
         assert_eq!(summary.total_bytes_out, 0);
         assert!(summary.buckets.is_empty());

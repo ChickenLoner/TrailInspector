@@ -45,6 +45,21 @@ Pivot to any IAM identity and see every action it took in chronological order �
 
 ![Identity Timeline](assets/identity_ui.png)
 
+### Sessions
+Activity automatically clustered into sessions by `(identity, source IP)` with a 30-minute inactivity gap. Each session shows duration, event count, errors, regions, and correlated alerts.
+
+![Sessions](assets/session_ui.png)
+
+### IP Enrichment
+All source IPs enriched with country, city, ASN, and organisation via DB-IP Lite (offline MMDB) or automatic online lookup. Optional AbuseIPDB reputation check.
+
+![IP Enrichment](assets/ipenrich_ui.png)
+
+### S3 Activity
+Dedicated investigation surface for S3 data exfiltration analysis — total bytes transferred out, top objects by bytes, per-bucket and per-identity breakdowns. Filter by bucket, source IP, or identity. Byte unit toggle (auto / B / KB / MB / GB). Respects the global time bar.
+
+![S3 Activity](assets/s3enrich_ui.png)
+
 ---
 
 ## Features
@@ -57,9 +72,10 @@ Pivot to any IAM identity and see every action it took in chronological order �
 | **Detect** | 60 MITRE ATT&CK-mapped rules across IAM, EC2, S3, VPC, RDS, EBS, Lambda, KMS, and more |
 | **Sessions** | Automatic activity session grouping by `(identity, IP)` with 30-min inactivity gap |
 | **IP Enrichment** | Offline GeoIP lookup (DB-IP Lite, free, no registration) — country, city, ASN; geo anomaly rules |
+| **S3 Analysis** | Bytes transferred out, top objects, per-bucket/identity breakdown; bucket, IP, and identity filters |
 | **Investigate** | One-click "View Evidence" jumps from alert → filtered event table |
 | **Correlate** | Session ↔ alert cross-linking; AssumeRole chain detection across accounts |
-| **Export** | Save filtered results as JSON or ZIP archive |
+| **Export** | Save filtered results as CSV or JSON |
 | **Offline** | No telemetry, no cloud dependency — all processing happens locally |
 
 ---

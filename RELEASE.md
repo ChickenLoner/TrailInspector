@@ -1,8 +1,18 @@
-## TrailInspector v1.1.2 — Bug Fixes
+## TrailInspector v1.2.0 — S3 Enrichment Tab
+
+This release adds a dedicated S3 investigation surface for data exfiltration analysis, plus a Windows export fix.
+
+### What's New
+
+- **S3 Activity tab** — new tab showing S3 GetObject activity: total bytes transferred out, objects accessed, per-bucket breakdown, per-identity breakdown, and top objects ranked by bytes
+- **Exfiltration filters** — filter S3 activity by bucket, source IP, and identity; respects the global time bar for date range scoping
+- **Byte unit toggle** — switch between auto / B / KB / MB / GB display for all byte values
+- **EX-03 enhanced** — S3 Bulk Download alert now includes total bytes transferred in its description and metadata
+- **Zero query-time overhead** — bytes and object keys are extracted at ingestion time (before blob drain); all S3 summary queries run without any blob reads
 
 ### What's Fixed
 
-- **Export (CSV/JSON) now works on Windows** — the `dialog:allow-save` capability was missing from Tauri's permission manifest, causing the save dialog to be silently blocked; clicking Export now correctly opens a file-save dialog on Windows 10 and Windows 11
+- **Export (CSV/JSON) now works on Windows** — the `dialog:allow-save` capability was missing from Tauri's permission manifest, causing the save dialog to be silently blocked; now correctly opens a file-save dialog on Windows 10 and Windows 11
 
 ---
 

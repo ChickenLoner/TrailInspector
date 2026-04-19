@@ -169,11 +169,13 @@ export async function checkAbuseIpdb(apiKey: string, ip: string): Promise<AbuseC
   return invoke<AbuseCheckResult>("check_abuseipdb", { apiKey, ip });
 }
 
-export async function getS3Summary(startMs?: number, endMs?: number, bucket?: string): Promise<S3Summary> {
+export async function getS3Summary(startMs?: number, endMs?: number, bucket?: string, ip?: string, identity?: string): Promise<S3Summary> {
   return invoke<S3Summary>("get_s3_summary", {
     startMs: startMs ?? null,
     endMs: endMs ?? null,
     bucket: bucket ?? null,
+    ip: ip ?? null,
+    identity: identity ?? null,
   });
 }
 
