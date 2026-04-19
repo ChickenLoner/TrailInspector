@@ -152,8 +152,17 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
         return vec![];
     }
 
+    // Sum bytes transferred from s3_event_index (zero blob reads)
+    let total_bytes: u64 = all_matching
+        .iter()
+        .filter_map(|&id| store.s3_event_index.get(&id))
+        .map(|d| d.bytes_out)
+        .sum();
+
     let mut meta = HashMap::new();
     meta.insert("identities".to_string(), offending_identities.join(", "));
+    meta.insert("total_bytes_out".to_string(), format_bytes(total_bytes));
+    meta.insert("object_count".to_string(), all_matching.len().to_string());
 
     let query = if offending_identities.len() == 1 {
         let id = &offending_identities[0];
@@ -171,9 +180,10 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
         severity: Severity::Medium,
         title: "S3 Bulk Object Download".to_string(),
         description: format!(
-            "≥{} S3 GetObject calls within 5 minutes by same identity. \
+            "≥{} S3 GetObject calls within 5 minutes by same identity; ~{} transferred. \
              Bulk downloads suggest data exfiltration. Identities: {}",
             threshold,
+            format_bytes(total_bytes),
             offending_identities.join(", ")
         ),
         matching_count: 0,
@@ -184,6 +194,18 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
         service: "S3".to_string(),
         query,
     }]
+}
+
+fn format_bytes(b: u64) -> String {
+    if b < 1_024 {
+        format!("{} B", b)
+    } else if b < 1_024 * 1_024 {
+        format!("{:.1} KB", b as f64 / 1_024.0)
+    } else if b < 1_024 * 1_024 * 1_024 {
+        format!("{:.1} MB", b as f64 / (1_024.0 * 1_024.0))
+    } else {
+        format!("{:.1} GB", b as f64 / (1_024.0 * 1_024.0 * 1_024.0))
+    }
 }
 
 /// EX-04: S3 Bucket Logging Disabled
