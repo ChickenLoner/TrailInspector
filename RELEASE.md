@@ -1,3 +1,11 @@
+## TrailInspector v1.1.2 — Bug Fixes
+
+### What's Fixed
+
+- **Export (CSV/JSON) now works on Windows** — the `dialog:allow-save` capability was missing from Tauri's permission manifest, causing the save dialog to be silently blocked; clicking Export now correctly opens a file-save dialog on Windows 10 and Windows 11
+
+---
+
 ## TrailInspector v1.1.1 — Performance Fix (mmap blob reads)
 
 This release fixes slow load times and filter/detection latency introduced by the v1.1.0 blob offload (Phase F).
