@@ -21,7 +21,7 @@
 
 TrailInspector loads raw CloudTrail exports — `.json`, `.json.gz`, or ZIP archives — entirely in memory and lets you search, visualize, triage threats, and investigate sessions without sending data to any external service.
 
-The investigation workflow is modeled after Splunk: a query bar with SPL-like syntax, a timeline histogram for scoping time windows, field statistics for pivoting on values, a detections panel that fires **60 MITRE ATT&CK-mapped rules** automatically, session grouping to cluster activity by identity and IP, and offline IP enrichment via DB-IP Lite.
+The investigation workflow is modeled after Splunk: a query bar with SPL-like syntax, a timeline histogram for scoping time windows, field statistics for pivoting on values, a detections panel that fires **60 MITRE ATT&CK-mapped rules** automatically plus any **custom YAML rules** you define, session grouping to cluster activity by identity and IP, and offline IP enrichment via DB-IP Lite.
 
 ## Screenshots
 
@@ -69,7 +69,7 @@ Dedicated investigation surface for S3 data exfiltration analysis — total byte
 | **Ingest** | `.json`, `.json.gz`, `.zip`, and nested directory trees; parallel decompression via Rayon |
 | **Search** | SPL-like query bar — `AND` / `OR` / `NOT`, field matching, wildcards, time presets |
 | **Visualize** | Timeline histogram, field statistics, identity activity timeline |
-| **Detect** | 60 MITRE ATT&CK-mapped rules across IAM, EC2, S3, VPC, RDS, EBS, Lambda, KMS, and more |
+| **Detect** | 60 built-in MITRE ATT&CK-mapped rules + custom YAML rules with AND/OR/NOT filters and sliding-window thresholds |
 | **Sessions** | Automatic activity session grouping by `(identity, IP)` with 30-min inactivity gap |
 | **IP Enrichment** | Offline GeoIP lookup (DB-IP Lite, free, no registration) — country, city, ASN; geo anomaly rules |
 | **S3 Analysis** | Bytes transferred out, top objects, per-bucket/identity breakdown; bucket, IP, and identity filters |
@@ -156,7 +156,9 @@ TrailInspector/
 
 ## Detection Rules
 
-TrailInspector ships **60 detection rules** across 13 service categories. See [RULES.md](RULES.md) for the complete rule catalogue with trigger events and MITRE technique mappings.
+TrailInspector ships **60 built-in detection rules** across 13 service categories. See [RULES.md](RULES.md) for the complete rule catalogue with trigger events and MITRE technique mappings.
+
+You can also write **custom YAML rules** that fire alongside the built-ins — no Rust required. Rules support recursive AND/OR/NOT filter trees, multi-event matching, and sliding-window thresholds. Edit `rules.yaml` in your app config directory and click **Reload Rules** in the Detection tab.
 
 **Quick summary by category:**
 

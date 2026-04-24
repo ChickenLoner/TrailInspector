@@ -179,6 +179,18 @@ export async function getS3Summary(startMs?: number, endMs?: number, bucket?: st
   });
 }
 
+export async function getCustomRuleErrors(): Promise<string[]> {
+  return invoke<string[]>("get_custom_rule_errors");
+}
+
+export async function reloadCustomRules(): Promise<string[]> {
+  return invoke<string[]>("reload_custom_rules");
+}
+
+export async function openRulesFile(): Promise<void> {
+  return invoke<void>("open_rules_file");
+}
+
 export async function exportCsv(query: string, path: string): Promise<void> {
   return invoke<void>("export_csv", { query, path });
 }

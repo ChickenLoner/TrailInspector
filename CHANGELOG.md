@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.0] — 2026-04-24
+
+### Added
+
+- **Custom detection rules (YAML)** — write rules in `~/.config/trail-inspector/rules.yaml` (or platform equivalent); fires alongside all 60 built-in rules
+- **Recursive filter tree** — `and`, `or`, `not` operators compose arbitrarily; leaf conditions match fields: `identity_type`, `user_name`, `user_arn`, `source_ip`, `event_source`, `region`, `account_id`, `user_agent`, `bucket_name`, `error_code`
+- **Multi-event matching** — `event_name` accepts a string or list of strings
+- **Threshold detection** — `threshold.count` + `threshold.window_secs` sliding-window rate detector built into every rule
+- **MITRE ATT&CK fields** — `tactic`, `technique`, `technique_id`, `mitre_url` per rule; surfaces in AlertDetail
+- **Hot-reload** — "Reload Rules" button re-parses `rules.yaml` and re-runs detections without app restart
+- **Open in editor** — "Open Rules File" button opens `rules.yaml` in the OS default text editor
+- **Non-blocking error model** — parse errors show amber banner listing each bad rule; built-ins continue running
+- **Duplicate ID rejection** — rules with a duplicate `id` are both rejected and individually reported
+- **5 shipped example rules** — `rules.yaml` is written on first launch with CR-01 through CR-05
+- **30 new unit tests** — cover filter evaluation, threshold logic, YAML parsing, and error reporting
+
+---
+
 ## [1.2.0] — 2026-04-20
 
 ### Added

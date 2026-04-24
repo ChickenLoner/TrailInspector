@@ -3,6 +3,7 @@ use crate::store::Store;
 use crate::geoip::GeoIpEngine;
 
 pub mod rules;
+pub mod custom_rules;
 
 #[cfg(test)]
 mod tests;

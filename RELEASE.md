@@ -1,78 +1,44 @@
-## TrailInspector v1.2.0 — S3 Enrichment Tab
+## TrailInspector v1.3.0 — Custom Detection Rules
 
-This release adds a dedicated S3 investigation surface for data exfiltration analysis, plus a Windows export fix.
-
-### What's New
-
-- **S3 Activity tab** — new tab showing S3 GetObject activity: total bytes transferred out, objects accessed, per-bucket breakdown, per-identity breakdown, and top objects ranked by bytes
-- **Exfiltration filters** — filter S3 activity by bucket, source IP, and identity; respects the global time bar for date range scoping
-- **Byte unit toggle** — switch between auto / B / KB / MB / GB display for all byte values
-- **EX-03 enhanced** — S3 Bulk Download alert now includes total bytes transferred in its description and metadata
-- **Zero query-time overhead** — bytes and object keys are extracted at ingestion time (before blob drain); all S3 summary queries run without any blob reads
-
-### What's Fixed
-
-- **Export (CSV/JSON) now works on Windows** — the `dialog:allow-save` capability was missing from Tauri's permission manifest, causing the save dialog to be silently blocked; now correctly opens a file-save dialog on Windows 10 and Windows 11
-
----
-
-## TrailInspector v1.1.1 — Performance Fix (mmap blob reads)
-
-This release fixes slow load times and filter/detection latency introduced by the v1.1.0 blob offload (Phase F).
-
-### What's Fixed
-
-- **Faster ingestion** — blob writes during load now use `BufWriter`, batching disk writes instead of one syscall per blob; reduces ~15M individual file writes to a few hundred large flushes for 5M events
-- **Restored filter speed** — after ingestion, the blob file is memory-mapped (`memmap2`); all subsequent reads (detection rules, event detail) are lock-free pointer arithmetic into OS-cached memory, matching pre-v1.1.0 speed
-- **u32/Arc migration** (Phase D/E/G) — record IDs shrunk from `u64` to `u32`; all repetitive string fields (`event_name`, `aws_region`, `event_source`, etc.) interned via `Arc<str>` through a `StringPool`; saves ~250 MB + ~2–2.5 GB for 5M events
-
-### Memory Budget (5M events, estimated)
-
-| Component | v1.0.0 | v1.1.1 |
-|-----------|--------|--------|
-| CloudTrailRecord strings | ~3.5 GB | ~1.0 GB |
-| JSON blobs | ~2.0 GB | ~180 MB |
-| Inverted indexes | ~500 MB | ~250 MB |
-| Sessions + other | ~300 MB | ~200 MB |
-| **Total** | **~6.3 GB** | **~1.6 GB** |
-
----
-
-## TrailInspector v1.1.0 — Performance Optimization
-
-This release eliminates OOM crashes when loading large CloudTrail datasets (1M–3M events), reducing memory usage by ~60–70%.
+This release lets users write their own YAML detection rules without touching Rust code, alongside the existing 60 built-in rules.
 
 ### What's New
 
-- **1M–3M event support** — the app no longer crashes on large datasets
-- **~60–70% memory reduction** — 1M events now uses ~500–800 MB instead of ~2.5 GB
-- **JSON blob optimization** — `requestParameters`, `responseElements`, `additionalEventData`, and `sessionContext` stored as raw JSON text (`Box<RawValue>`) instead of parsed value trees; saves 500 MB–1.1 GB for 1M records
-- **String interning** — all 11 inverted indexes now share `Arc<str>` keys via a `StringPool`; repeated values like `"us-east-1"` stored once instead of millions of times; saves 150–300 MB
-- **No-clone query engine** — empty queries paginate directly from the sorted index without cloning the full ID vec (8 MB saved per search call)
-- **Fast timeline/stats** — empty-query timeline and field stats read directly from inverted indexes; no full ID materialization (96 MB saved per refresh)
-- **Lazy event detail** — `raw` payload removed from search results; only fetched on-demand when a row is clicked
-- **Alert IPC cap** — alert `matchingRecordIds` capped at 100 per alert; `matchingCount` field carries the true count
+- **Custom rules (YAML)** — define your own detection rules in `rules.yaml` using a recursive AND/OR/NOT filter tree; rules fire alongside built-in rules in the Detection tab
+- **Event name matching** — `event_name` accepts a single string or a list; match any of multiple API calls in one rule
+- **Threshold detection** — optional sliding-window threshold (`count` events within `window_secs`) turns any rule into a frequency-based detector
+- **MITRE ATT&CK metadata** — each rule carries optional `tactic`, `technique`, `technique_id`, and `mitre_url` fields surfaced in the alert detail panel
+- **Hot-reload** — edit `rules.yaml`, click "Reload Rules" in the Detection tab; no app restart required
+- **Open in editor** — "Open Rules File" button launches `rules.yaml` in your default text editor
+- **Parse error reporting** — invalid rules show an amber banner listing each error; built-in rules continue running unaffected
+- **Duplicate ID detection** — rules sharing an `id` are both rejected and reported as errors
+- **5 example rules** — `rules.yaml` is pre-populated with CR-01 through CR-05 on first launch
 
-### Bug Fixes / Cleanup
+### Schema
 
-- Removed unused `extra: HashMap<String, Value>` fields from `CloudTrailRecord` and `UserIdentity` (saves 100–400 MB and speeds up deserialization)
-- `serde(flatten)` removal improves JSON parse performance for all records
-
----
-
-## TrailInspector v1.0.0 — Investigation Platform
-
-This release evolves TrailInspector from a log viewer into a full cloud investigation platform, delivering EG-CERT's recommended enhancements: expanded detection coverage, session activity grouping, and offline IP enrichment.
-
-### What's New
-
-- **60 detection rules** — +42 new rules covering VPC/Network, RDS, EBS, Lambda, resource sharing, Defense Evasion, Credential Access, and Geo Anomalies (up from 18)
-- **Session Grouping** — events are automatically clustered into sessions by `(identity, source IP)` with a 30-minute inactivity gap; new Sessions tab shows activity timelines
-- **IP Enrichment** — offline GeoIP lookup via MaxMind GeoLite2; country, city, ASN per source IP; new IPs tab
-- **Geo Anomaly Rules** — GEO-01 (same identity from multiple countries) and GEO-02 (console login from new country)
-- **Session-Alert Correlation** — SessionDetail surfaces related alerts; AlertDetail surfaces owning sessions; AssumeRole chains link sessions across accounts
-- **Detection UI** — severity filter chips, group-by (Severity / Service / Tactic), search box, collapsible sections
-- **107 automated tests** — covering all 40+ new detection rules, session engine, and GeoIP engine
+```yaml
+rules:
+  - id: CR-01
+    name: "Human-readable rule name"
+    enabled: true
+    severity: High        # Critical | High | Medium | Low | Info
+    tactic: Persistence
+    technique: "Valid Accounts"
+    technique_id: T1078
+    match_spec:
+      event_name: DeleteGroup          # or a list: [DeleteGroup, DeleteUser]
+      event_source: iam.amazonaws.com  # optional
+    filters:                           # optional recursive AND/OR/NOT tree
+      and:
+        - field: user_name
+          value: "alice"
+        - not:
+            field: user_agent
+            value: "terraform/*"
+    threshold:                         # optional — fires only if count within window
+      count: 5
+      window_secs: 300
+```
 
 ### Installation
 
@@ -81,44 +47,6 @@ This release evolves TrailInspector from a log viewer into a full cloud investig
 | Windows 10+ | `.exe` (NSIS installer) |
 | macOS 11+ | `.dmg` disk image |
 | Linux | `.deb` package or `.AppImage` |
-
-### GeoIP Setup (Optional)
-
-Download the free **DB-IP Lite** databases (no registration required, CC BY 4.0) from [db-ip.com/db/lite](https://db-ip.com/db/lite) and load them via the IP tab to enable IP enrichment and geo anomaly rules:
-- `dbip-city-lite.mmdb`
-- `dbip-asn-lite.mmdb`
-
-### Built with
-
-Tauri v2 · Rust · React · TypeScript · TailwindCSS
-
----
-
-## TrailInspector v0.1.0 — Initial Release
-
-First public release of TrailInspector, an offline desktop tool for investigating AWS CloudTrail logs.
-
-### Features
-
-- **Ingest** — load `.json.gz` files from standard AWS directory structures, or drop a ZIP archive; parallel decompression via Rayon
-- **Search** — SPL-like query syntax with `AND`, `OR`, `NOT`, wildcards, and field-level filtering (`eventName=AssumeRole AND errorCode=*`)
-- **Timeline** — histogram of event volume over time; field statistics breakdown
-- **Detections** — 18 MITRE ATT&CK-mapped rules covering privilege escalation, credential access, persistence, and defense evasion
-- **Evidence linking** — click any alert to auto-filter the event table to matching evidence
-- **Export** — save filtered results as CSV or JSON
-- **Session persistence** — query state and active tab survive app restarts
-- **Keyboard shortcuts** — `/` to focus query bar, `Escape` to clear, `Ctrl+E` to export
-- **No cloud required** — works fully offline; no AWS credentials needed
-
-### Installation
-
-| Platform | File |
-|----------|------|
-| Windows 10+ | `.exe` (NSIS installer) |
-| macOS 11+ | `.dmg` disk image |
-| Linux | `.deb` package or `.AppImage` |
-
-> **Linux note:** The `.AppImage` runs on any modern distro without installation. The `.deb` targets Debian/Ubuntu.
 
 ### Built with
 

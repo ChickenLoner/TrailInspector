@@ -6,3 +6,4 @@ pub mod export;
 pub mod session;
 pub mod geoip;
 pub mod s3;
+pub mod custom_rules;

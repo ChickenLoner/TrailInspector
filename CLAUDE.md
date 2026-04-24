@@ -27,6 +27,7 @@ cargo tauri build                     # production build
 - `blizzardbreakdown/` — ~130MB compressed, multi-region
 - `hbk_denouement/` — ~25MB
 - `nubilum_2/` — ~7MB
+- `custom_rules_test/` — 13 synthetic events targeting CR-01 through CR-05 (plain `.json`, not gzipped)
 
 ## Applied Learning
 When something fails repeatedly, when user has to re-explain, or when a workaround is found for a tool limitation, add one-liner bullet here. Keep each bullet under 15 words. No explaination. Only add things that will save time in future session
