@@ -2,6 +2,55 @@ use std::collections::HashMap;
 use crate::store::Store;
 use crate::detection::{Alert, Severity};
 
+fn mass_ec2_op_inner(
+    store: &Store,
+    event_name: &str,
+    threshold: usize,
+    window_ms: i64,
+) -> (Vec<u32>, Vec<String>) {
+    let ids = match store.idx_event_name.get(event_name) {
+        Some(ids) => ids,
+        None => return (vec![], vec![]),
+    };
+
+    let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
+    for &id in ids {
+        if let Some(r) = store.get_record(id) {
+            let identity = r.record.user_identity.arn.as_deref()
+                .or_else(|| r.record.user_identity.user_name.as_deref())
+                .unwrap_or("unknown")
+                .to_string();
+            by_identity.entry(identity).or_default().push((r.timestamp, id));
+        }
+    }
+
+    let mut all_matching: Vec<u32> = vec![];
+    let mut offending_identities: Vec<String> = vec![];
+
+    for (identity, mut events) in by_identity {
+        events.sort_unstable_by_key(|(ts, _)| *ts);
+        let mut start = 0;
+        for end in 0..events.len() {
+            while events[end].0 - events[start].0 > window_ms {
+                start += 1;
+            }
+            if end - start + 1 > threshold {
+                for (_, wid) in &events[start..=end] {
+                    if !all_matching.contains(wid) {
+                        all_matching.push(*wid);
+                    }
+                }
+                if !offending_identities.contains(&identity) {
+                    offending_identities.push(identity.clone());
+                }
+                break;
+            }
+        }
+    }
+
+    (all_matching, offending_identities)
+}
+
 /// IM-01: EC2 Instances Launched in Bulk (>5 RunInstances in 10 min, any identity)
 pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("RunInstances") {
@@ -153,6 +202,144 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1485".to_string(),
         service: "Multi".to_string(),
+        query,
+    }]
+}
+
+/// IM-04: Mass EC2 Instance Stop (>3 StopInstances by same identity in 5 min)
+pub fn im_04_mass_instance_stop(store: &Store) -> Vec<Alert> {
+    let window_ms = 5 * 60 * 1000;
+    let threshold = 3;
+    let (all_matching, offending_identities) =
+        mass_ec2_op_inner(store, "StopInstances", threshold, window_ms);
+
+    if all_matching.is_empty() {
+        return vec![];
+    }
+
+    let query = if offending_identities.len() == 1 {
+        let id = &offending_identities[0];
+        if id.starts_with("arn:") {
+            format!("eventName=StopInstances arn=\"{}\"", id)
+        } else {
+            format!("eventName=StopInstances userName=\"{}\"", id)
+        }
+    } else {
+        "eventName=StopInstances".to_string()
+    };
+
+    let mut meta = HashMap::new();
+    meta.insert("identities".to_string(), offending_identities.join(", "));
+
+    vec![Alert {
+        rule_id: "IM-04".to_string(),
+        severity: Severity::High,
+        title: "Mass EC2 Instance Stop".to_string(),
+        description: format!(
+            ">{} StopInstances events within 5 minutes by the same identity. \
+             Bulk stops are a common ransomware precursor — instances are stopped before \
+             EBS snapshots are exfiltrated or encrypted. Identities: {}",
+            threshold,
+            offending_identities.join(", ")
+        ),
+        matching_count: 0,
+        matching_record_ids: all_matching,
+        metadata: meta,
+        mitre_tactic: "Impact".to_string(),
+        mitre_technique: "T1489".to_string(),
+        service: "EC2".to_string(),
+        query,
+    }]
+}
+
+/// IM-05: Mass EC2 Instance Terminate (>3 TerminateInstances by same identity in 5 min)
+pub fn im_05_mass_instance_terminate(store: &Store) -> Vec<Alert> {
+    let window_ms = 5 * 60 * 1000;
+    let threshold = 3;
+    let (all_matching, offending_identities) =
+        mass_ec2_op_inner(store, "TerminateInstances", threshold, window_ms);
+
+    if all_matching.is_empty() {
+        return vec![];
+    }
+
+    let query = if offending_identities.len() == 1 {
+        let id = &offending_identities[0];
+        if id.starts_with("arn:") {
+            format!("eventName=TerminateInstances arn=\"{}\"", id)
+        } else {
+            format!("eventName=TerminateInstances userName=\"{}\"", id)
+        }
+    } else {
+        "eventName=TerminateInstances".to_string()
+    };
+
+    let mut meta = HashMap::new();
+    meta.insert("identities".to_string(), offending_identities.join(", "));
+
+    vec![Alert {
+        rule_id: "IM-05".to_string(),
+        severity: Severity::Critical,
+        title: "Mass EC2 Instance Termination".to_string(),
+        description: format!(
+            ">{} TerminateInstances events within 5 minutes by the same identity. \
+             Bulk termination is irreversible and indicates destructive wiper or ransomware activity. \
+             Identities: {}",
+            threshold,
+            offending_identities.join(", ")
+        ),
+        matching_count: 0,
+        matching_record_ids: all_matching,
+        metadata: meta,
+        mitre_tactic: "Impact".to_string(),
+        mitre_technique: "T1485".to_string(),
+        service: "EC2".to_string(),
+        query,
+    }]
+}
+
+/// IM-06: Mass EC2 Instance Start (>5 StartInstances by same identity in 5 min)
+pub fn im_06_mass_instance_start(store: &Store) -> Vec<Alert> {
+    let window_ms = 5 * 60 * 1000;
+    let threshold = 5;
+    let (all_matching, offending_identities) =
+        mass_ec2_op_inner(store, "StartInstances", threshold, window_ms);
+
+    if all_matching.is_empty() {
+        return vec![];
+    }
+
+    let query = if offending_identities.len() == 1 {
+        let id = &offending_identities[0];
+        if id.starts_with("arn:") {
+            format!("eventName=StartInstances arn=\"{}\"", id)
+        } else {
+            format!("eventName=StartInstances userName=\"{}\"", id)
+        }
+    } else {
+        "eventName=StartInstances".to_string()
+    };
+
+    let mut meta = HashMap::new();
+    meta.insert("identities".to_string(), offending_identities.join(", "));
+
+    vec![Alert {
+        rule_id: "IM-06".to_string(),
+        severity: Severity::Medium,
+        title: "Mass EC2 Instance Start".to_string(),
+        description: format!(
+            ">{} StartInstances events within 5 minutes by the same identity. \
+             Bulk starts on pre-existing stopped instances may indicate unauthorized \
+             compute spin-up for cryptomining. Identities: {}",
+            threshold,
+            offending_identities.join(", ")
+        ),
+        matching_count: 0,
+        matching_record_ids: all_matching,
+        metadata: meta,
+        mitre_tactic: "Impact".to_string(),
+        mitre_technique: "T1496".to_string(),
+        service: "EC2".to_string(),
         query,
     }]
 }

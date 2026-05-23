@@ -1,6 +1,6 @@
 # TrailInspector Detection Rules
 
-TrailInspector ships **60 built-in detection rules** mapped to MITRE ATT&CK tactics and techniques, plus a **custom YAML rule engine** so you can write your own rules without touching Rust code.
+TrailInspector ships **71 built-in detection rules** mapped to MITRE ATT&CK tactics and techniques, plus a **custom YAML rule engine** so you can write your own rules without touching Rust code.
 
 All rules run entirely in-memory against the loaded CloudTrail event set — no network calls required.
 
@@ -20,6 +20,7 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
   - [Network / VPC](#network--vpc)
   - [RDS](#rds)
   - [EBS](#ebs)
+  - [EC2](#ec2)
   - [Lambda](#lambda)
   - [Resource Sharing](#resource-sharing)
   - [Geo Anomaly](#geo-anomaly)
@@ -560,6 +561,9 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 | IM-01 | EC2 Instances Launched in Bulk | High | EC2 | T1496 |
 | IM-02 | Resource Deletion Spree | Critical | Multi | T1485 |
 | IM-03 | SES Email Identity Verified | Low | SES | T1534 |
+| IM-04 | Mass EC2 Instance Stop | High | EC2 | T1489 |
+| IM-05 | Mass EC2 Instance Termination | Critical | EC2 | T1485 |
+| IM-06 | Mass EC2 Instance Start | Medium | EC2 | T1496 |
 
 ---
 
@@ -599,6 +603,51 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 - Source: `ses.amazonaws.com`
 
 **Why it matters:** Verifying a new SES identity sets up the ability to send email from that address using AWS infrastructure. Attackers use this for phishing and spear-phishing campaigns that bypass reputation filters.
+
+---
+
+#### IM-04 — Mass EC2 Instance Stop
+
+**Trigger:** More than 3 `StopInstances` events from the **same identity** within a **5-minute sliding window**.
+
+**Criteria:**
+- Event name: `StopInstances`
+- Same `userIdentity.arn`
+- > 3 events within 300 seconds
+
+**Why it matters:** Bulk stopping of instances is a common ransomware precursor — instances are stopped before EBS volumes are snapshotted, shared cross-account, and exfiltrated. Also used for deliberate service disruption.
+
+**False positives:** Automated scaling-down or scheduled maintenance scripts. Review the identity, time-of-day, and whether a corresponding legitimate change event exists.
+
+---
+
+#### IM-05 — Mass EC2 Instance Termination
+
+**Trigger:** More than 3 `TerminateInstances` events from the **same identity** within a **5-minute sliding window**.
+
+**Criteria:**
+- Event name: `TerminateInstances`
+- Same `userIdentity.arn`
+- > 3 events within 300 seconds
+
+**Why it matters:** Bulk termination is irreversible — terminated instances and their ephemeral storage cannot be recovered. This pattern indicates a destructive wiper, ransomware endpoint, or insider threat.
+
+**False positives:** Auto Scaling group scale-in, or automated cleanup of spot instances. Correlate with Auto Scaling activity and the instance IDs terminated.
+
+---
+
+#### IM-06 — Mass EC2 Instance Start
+
+**Trigger:** More than 5 `StartInstances` events from the **same identity** within a **5-minute sliding window**.
+
+**Criteria:**
+- Event name: `StartInstances`
+- Same `userIdentity.arn`
+- > 5 events within 300 seconds
+
+**Why it matters:** Starting many previously stopped instances provides an attacker with pre-provisioned compute at no setup cost, commonly used for cryptomining on the victim's existing infrastructure.
+
+**False positives:** Disaster recovery runbooks, environment spin-up automation. Review whether the identity is a known automation role and whether the instances started are expected.
 
 ---
 
@@ -826,6 +875,133 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 
 ---
 
+### EC2
+
+| ID | Rule | Severity | Service | Technique |
+|----|------|----------|---------|-----------|
+| EC-01 | EC2 Instance User Data Modified | High | EC2 | T1059 |
+| EC-02 | EC2 Key Pair Created | Medium | EC2 | T1098.004 |
+| EC-03 | Launch Template Created with User Data | Medium | EC2 | T1059 |
+| EC-04 | EC2 IMDSv2 Enforcement Disabled | High | EC2 | T1552.005 |
+| EC-05 | EC2 Windows Instance Password Retrieved | Medium | EC2 | T1078.004 |
+| EC-06 | EC2 Instance Connect SSH Key Pushed | High | EC2 | T1098.004 |
+| EC-07 | SSM Run Command Sent | High | SSM | T1651 |
+| EC-08 | EC2 Serial Console Access Enabled | Medium | EC2 | T1078 |
+
+---
+
+#### EC-01 — EC2 Instance User Data Modified
+
+**Trigger:** `ModifyInstanceAttribute` where `requestParameters` contains `userData`.
+
+**Criteria:**
+- Event name: `ModifyInstanceAttribute`
+- `requestParameters` contains `userData`
+
+**Why it matters:** User data is a shell script executed as root on instance start. Modifying it on a running instance injects a backdoor that activates on the next reboot or stop/start cycle — a low-visibility persistence and execution technique.
+
+**False positives:** Legitimate configuration management or bootstrapping changes. Correlate with change management records and review the base64-decoded user data content.
+
+---
+
+#### EC-02 — EC2 Key Pair Created
+
+**Trigger:** `CreateKeyPair`.
+
+**Criteria:**
+- Event name: `CreateKeyPair`
+- Source: `ec2.amazonaws.com`
+
+**Why it matters:** Creating a new key pair establishes SSH access to any future instance (or existing instance if reconfigured). Attackers create key pairs to maintain persistent access that survives password rotation.
+
+**False positives:** Normal infrastructure provisioning. Review whether the key pair name follows naming conventions and whether it was created outside a known IaC workflow.
+
+---
+
+#### EC-03 — Launch Template Created with User Data
+
+**Trigger:** `CreateLaunchTemplate` or `CreateLaunchTemplateVersion` where `requestParameters` contains `userData`.
+
+**Criteria:**
+- Event name: `CreateLaunchTemplate` or `CreateLaunchTemplateVersion`
+- `requestParameters` contains `userData`
+
+**Why it matters:** User data embedded in a launch template executes on every instance launched from it. Injecting malicious user data into a template is a durable persistence technique that affects all future launches.
+
+**False positives:** Standard bootstrapping of new instance types or AMIs. Review the base64-decoded user data and the template's intended use.
+
+---
+
+#### EC-04 — EC2 IMDSv2 Enforcement Disabled
+
+**Trigger:** `ModifyInstanceMetadataOptions` where `httpTokens` is set to `optional`.
+
+**Criteria:**
+- Event name: `ModifyInstanceMetadataOptions`
+- `requestParameters.httpTokens = optional`
+
+**Why it matters:** IMDSv1 (enabled when `httpTokens=optional`) is vulnerable to SSRF attacks — a web vulnerability in an EC2 application can be chained to steal IAM credentials from the instance metadata service at `169.254.169.254`. IMDSv2 requires a session token that prevents SSRF exploitation.
+
+**False positives:** Legacy applications that have not been updated to use IMDSv2. These should be tracked and remediated rather than suppressed.
+
+---
+
+#### EC-05 — EC2 Windows Instance Password Retrieved
+
+**Trigger:** `GetPasswordData`.
+
+**Criteria:**
+- Event name: `GetPasswordData`
+- Source: `ec2.amazonaws.com`
+
+**Why it matters:** `GetPasswordData` retrieves the RSA-encrypted Windows administrator password. An attacker who also holds the instance key pair can decrypt it and gain full RDP access to the instance.
+
+**False positives:** Legitimate administrators retrieving the initial admin password after first launch. Review whether the calling identity is expected to manage that instance.
+
+---
+
+#### EC-06 — EC2 Instance Connect SSH Key Pushed
+
+**Trigger:** `SendSSHPublicKey` or `SendSerialConsoleSSHPublicKey`.
+
+**Criteria:**
+- Event name: `SendSSHPublicKey` or `SendSerialConsoleSSHPublicKey`
+- Source: `ec2-instance-connect.amazonaws.com`
+
+**Why it matters:** EC2 Instance Connect pushes a temporary SSH public key to an instance for 60 seconds, granting shell access without leaving a persistent key pair. Attackers use this for lateral movement to instances they can't reach via conventional SSH, with minimal forensic footprint.
+
+**False positives:** Legitimate use of Instance Connect for interactive administration. Review the calling identity and the instance targeted.
+
+---
+
+#### EC-07 — SSM Run Command Sent
+
+**Trigger:** `SendCommand`.
+
+**Criteria:**
+- Event name: `SendCommand`
+- Source: `ssm.amazonaws.com`
+
+**Why it matters:** SSM Run Command executes arbitrary commands on managed EC2 instances without requiring open SSH ports or direct network access. It is commonly abused post-compromise for lateral movement, data collection, and persistence installation.
+
+**False positives:** Legitimate operational use of Systems Manager for patching, configuration, and automation. Review the document name, targets, and parameters in the event.
+
+---
+
+#### EC-08 — EC2 Serial Console Access Enabled
+
+**Trigger:** `EnableSerialConsoleAccess`.
+
+**Criteria:**
+- Event name: `EnableSerialConsoleAccess`
+- Source: `ec2.amazonaws.com`
+
+**Why it matters:** EC2 serial console provides direct terminal access to an instance's boot process and OS, bypassing all SSH key requirements and security group rules. Once enabled account-wide, any user with `ec2:GetSerialConsoleAccessStatus` permission can access any instance.
+
+**False positives:** Enabling serial console for emergency troubleshooting. Should be a time-boxed change with corresponding change management approval.
+
+---
+
 ### Lambda
 
 | ID | Rule | Severity | Service | Technique |
@@ -954,20 +1130,21 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 | Credential Access | 4 |
 | Discovery | 2 |
 | Exfiltration | 5 |
-| Impact | 3 |
+| Impact | 6 |
 | Network / VPC | 8 |
 | RDS | 3 |
 | EBS | 5 |
+| EC2 | 8 |
 | Lambda | 2 |
 | Resource Sharing | 3 |
 | Geo Anomaly | 2 |
-| **Total** | **60** |
+| **Total** | **71** |
 
 ---
 
 ## Custom YAML Rules
 
-Custom rules let you write your own detections without touching Rust. They fire alongside all 60 built-in rules in the Detection tab.
+Custom rules let you write your own detections without touching Rust. They fire alongside all 71 built-in rules in the Detection tab.
 
 ### Where is rules.yaml?
 
