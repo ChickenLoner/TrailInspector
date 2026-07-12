@@ -1,5 +1,5 @@
 use tauri::State;
-use trail_inspector_core::query::{execute, parse_query, Query};
+use trail_inspector_core::query::{execute, parse_query_opt};
 use trail_inspector_core::stats::{
     build_timeline, get_identity_summary, top_field_values,
     FieldValueCount, IdentitySummary, TimelineResult,
@@ -21,12 +21,7 @@ pub async fn get_timeline(
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
     let store = guard.as_ref().ok_or("No dataset loaded")?;
 
-    let parsed = match query.as_deref().map(str::trim) {
-        Some(q) if !q.is_empty() => {
-            parse_query(q).map_err(|e| format!("Query error: {e}"))?
-        }
-        _ => Query::default(),
-    };
+    let parsed = parse_query_opt(query.as_deref()).map_err(|e| format!("Query error: {e}"))?;
 
     // Fast path for empty query: iterate time_sorted_ids directly — no Vec allocation
     if parsed.is_empty() {
@@ -52,30 +47,14 @@ pub async fn get_top_fields(
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
     let store = guard.as_ref().ok_or("No dataset loaded")?;
 
-    let parsed = match query.as_deref().map(str::trim) {
-        Some(q) if !q.is_empty() => {
-            parse_query(q).map_err(|e| format!("Query error: {e}"))?
-        }
-        _ => Query::default(),
-    };
+    let parsed = parse_query_opt(query.as_deref()).map_err(|e| format!("Query error: {e}"))?;
 
     // Fast path for empty query: read counts directly from the inverted index —
     // O(unique_values) instead of O(total_records), no Vec allocation
     if parsed.is_empty() {
-        let idx = match field.as_str() {
-            "eventName" => &store.idx_event_name,
-            "eventSource" => &store.idx_event_source,
-            "awsRegion" => &store.idx_region,
-            "sourceIPAddress" => &store.idx_source_ip,
-            "userArn" => &store.idx_user_arn,
-            "userName" => &store.idx_user_name,
-            "accountId" => &store.idx_account_id,
-            "errorCode" => &store.idx_error_code,
-            "identityType" => &store.idx_identity_type,
-            "userAgent" => &store.idx_user_agent,
-            "bucketName" => &store.idx_bucket_name,
-            _ => return Err(format!("Unknown field: {field}")),
-        };
+        let idx = store
+            .index_for(field.as_str())
+            .ok_or_else(|| format!("Unknown field: {field}"))?;
         let mut values: Vec<FieldValueCount> = idx
             .iter()
             .map(|(k, v)| FieldValueCount { value: k.to_string(), count: v.len() })

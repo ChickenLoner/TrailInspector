@@ -109,46 +109,18 @@ impl Store {
         let paths = crate::ingest::discovery::find_log_files(root);
         let files_total = paths.len();
 
-        // Process files in parallel.
-        // Each result carries: (path_str, source_file_idx, records).
-        // ZIP files produce multiple batches — one per inner entry — all attributed to the
-        // same source file index so the path table stays compact.
-        let results: Vec<Result<(String, u32, Vec<IndexedRecord>), CoreError>> = paths
-            .par_iter()
-            .enumerate()
-            .flat_map_iter(|(file_idx, path)| {
-                let path_str = path.to_string_lossy().into_owned();
-                let src_idx = file_idx as u32;
-
-                let is_zip = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.eq_ignore_ascii_case("zip"))
-                    .unwrap_or(false);
-
-                if is_zip {
-                    match read_zip_entries(path) {
-                        Ok(entries) => entries
-                            .into_iter()
-                            .map(|bytes| {
-                                let p = path_str.clone();
-                                parse_records(&bytes, path, src_idx, 0)
-                                    .map(|r| (p, src_idx, r))
-                            })
-                            .collect::<Vec<_>>(),
-                        Err(e) => vec![Err(e)],
-                    }
-                } else {
-                    match read_log_file(path) {
-                        Ok(bytes) => {
-                            vec![parse_records(&bytes, path, src_idx, 0)
-                                .map(|r| (path_str, src_idx, r))]
-                        }
-                        Err(e) => vec![Err(e)],
-                    }
-                }
-            })
-            .collect();
+        // Producer/consumer pipeline. Files are parsed in parallel and streamed
+        // through a bounded channel; only ~`bound` in-flight batches (with their
+        // still-inline JSON blobs) are resident at once. This caps peak RAM
+        // instead of collecting every parsed record — blobs and all — into one
+        // giant Vec before the blob-draining ingest phase even begins.
+        //
+        // Each message carries: (path_str, source_file_idx, records).
+        // ZIP files produce multiple batches — one per inner entry — all
+        // attributed to the same source file index so the path table stays compact.
+        type IngestMsg = Result<(String, u32, Vec<IndexedRecord>), CoreError>;
+        let bound = (rayon::current_num_threads() * 4).max(8);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<IngestMsg>(bound);
 
         // Sequential ingest into store (indexes must be built single-threaded)
         let mut pool = StringPool::new();
@@ -156,7 +128,54 @@ impl Store {
         let mut files_done = 0usize;
         let mut warnings: Vec<IngestWarning> = Vec::new();
 
-        for result in results {
+        std::thread::scope(|scope| {
+            // Producer: parse files in parallel, stream batches into the channel.
+            scope.spawn(move || {
+                paths.par_iter().enumerate().for_each(|(file_idx, path)| {
+                    let path_str = path.to_string_lossy().into_owned();
+                    let src_idx = file_idx as u32;
+
+                    let is_zip = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("zip"))
+                        .unwrap_or(false);
+
+                    if is_zip {
+                        match read_zip_entries(path) {
+                            Ok(entries) => {
+                                for bytes in entries {
+                                    let msg = parse_records(&bytes, path, src_idx, 0)
+                                        .map(|r| (path_str.clone(), src_idx, r));
+                                    if tx.send(msg).is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(e));
+                            }
+                        }
+                    } else {
+                        match read_log_file(path) {
+                            Ok(bytes) => {
+                                let _ = tx.send(
+                                    parse_records(&bytes, path, src_idx, 0)
+                                        .map(|r| (path_str, src_idx, r)),
+                                );
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(e));
+                            }
+                        }
+                    }
+                });
+                // `tx` is dropped here → the consumer's `rx` loop terminates.
+            });
+
+            // Consumer (this thread): single-threaded ingest keeps ids monotonic,
+            // so every posting list stays sorted ascending by id.
+            for result in rx {
             let (path_str, src_idx, mut batch) = match result {
                 Ok(v) => v,
                 Err(e) => {
@@ -248,22 +267,8 @@ impl Store {
                 }
 
                 // Drain JSON blobs to disk — frees ~200-800 bytes heap per event.
-                // take() moves out of the Option, setting it to None in the record.
-                if let Some(rp) = rec.record.request_parameters.take() {
-                    if let Ok(br) = self.blob_store.write(rp.get().as_bytes()) {
-                        rec.request_params_ref = Some(br);
-                    }
-                }
-                if let Some(re) = rec.record.response_elements.take() {
-                    if let Ok(br) = self.blob_store.write(re.get().as_bytes()) {
-                        rec.response_elements_ref = Some(br);
-                    }
-                }
-                if let Some(ae) = rec.record.additional_event_data.take() {
-                    if let Ok(br) = self.blob_store.write(ae.get().as_bytes()) {
-                        rec.additional_event_data_ref = Some(br);
-                    }
-                }
+                // (S3/bucket extraction above already read request_parameters.)
+                self.drain_blobs(rec);
 
                 let id = rec.id;
 
@@ -307,7 +312,8 @@ impl Store {
                 files_done,
                 records_total: total_records,
             });
-        }
+            }
+        });
 
         // Flush BlobStore write buffer and memory-map the file for fast reads.
         // All subsequent blob access (detection rules, event detail) will use
@@ -331,16 +337,61 @@ impl Store {
         self.records.get(id as usize)
     }
 
-    /// Return all record IDs whose timestamp falls within [start_ms, end_ms] (inclusive).
-    /// Uses binary search on the pre-sorted `time_sorted_ids` index — O(log n).
-    pub fn get_ids_in_range(&self, start_ms: i64, end_ms: i64) -> Vec<u32> {
-        let start_idx = self.time_sorted_ids.partition_point(|&id| {
+    /// Single source of truth: map a canonical camelCase field name to its
+    /// inverted index. Every field→index lookup (query engine, aggregation
+    /// commands) goes through here, so adding a field means editing one match.
+    pub fn index_for(&self, field: &str) -> Option<&HashMap<Arc<str>, Vec<u32>>> {
+        Some(match field {
+            "eventName" => &self.idx_event_name,
+            "eventSource" => &self.idx_event_source,
+            "awsRegion" => &self.idx_region,
+            "sourceIPAddress" => &self.idx_source_ip,
+            "userArn" => &self.idx_user_arn,
+            "userName" => &self.idx_user_name,
+            "accountId" => &self.idx_account_id,
+            "errorCode" => &self.idx_error_code,
+            "identityType" => &self.idx_identity_type,
+            "userAgent" => &self.idx_user_agent,
+            "bucketName" => &self.idx_bucket_name,
+            _ => return None,
+        })
+    }
+
+    /// Read a record's value for a canonical field name (in-memory fields only;
+    /// `bucketName` lives in the request-parameters blob and is not covered here).
+    pub fn field_str<'a>(rec: &'a IndexedRecord, field: &str) -> Option<&'a str> {
+        match field {
+            "eventName" => Some(&rec.record.event_name),
+            "eventSource" => Some(&rec.record.event_source),
+            "awsRegion" => Some(&rec.record.aws_region),
+            "sourceIPAddress" => rec.record.source_ip_address.as_deref(),
+            "userArn" => rec.record.user_identity.arn.as_deref(),
+            "userName" => rec.record.user_identity.user_name.as_deref(),
+            "accountId" => rec.record.user_identity.account_id.as_deref(),
+            "errorCode" => rec.record.error_code.as_deref(),
+            "identityType" => rec.record.user_identity.identity_type.as_deref(),
+            "userAgent" => rec.record.user_agent.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Half-open index range `[lo, hi)` into `time_sorted_ids` whose records fall
+    /// within `[start_ms, end_ms]` (inclusive). Binary search — O(log n).
+    /// Shared by `get_ids_in_range` and the query engine's time filter.
+    pub fn time_range_bounds(&self, start_ms: i64, end_ms: i64) -> (usize, usize) {
+        let lo = self.time_sorted_ids.partition_point(|&id| {
             self.get_record(id).map(|r| r.timestamp).unwrap_or(i64::MAX) < start_ms
         });
-        let end_idx = self.time_sorted_ids.partition_point(|&id| {
+        let hi = self.time_sorted_ids.partition_point(|&id| {
             self.get_record(id).map(|r| r.timestamp).unwrap_or(i64::MAX) <= end_ms
         });
-        self.time_sorted_ids[start_idx..end_idx].to_vec()
+        (lo, hi)
+    }
+
+    /// Return all record IDs whose timestamp falls within [start_ms, end_ms] (inclusive).
+    pub fn get_ids_in_range(&self, start_ms: i64, end_ms: i64) -> Vec<u32> {
+        let (lo, hi) = self.time_range_bounds(start_ms, end_ms);
+        self.time_sorted_ids[lo..hi].to_vec()
     }
 
     /// Total record count

@@ -1,6 +1,6 @@
 use tauri::State;
-use trail_inspector_core::model::CloudTrailRecord;
-use trail_inspector_core::query::{execute, parse_query, Query};
+use trail_inspector_core::model::{CloudTrailRecord, IndexedRecord};
+use trail_inspector_core::query::{execute, parse_query_opt};
 use crate::state::AppState;
 
 #[derive(Debug, serde::Serialize)]
@@ -29,21 +29,32 @@ pub struct RecordRow {
     pub error_code: Option<String>,
 }
 
+impl RecordRow {
+    /// Build the table-summary row from an indexed record. Single source of
+    /// truth for the record→row field mapping (reused by RecordDetail).
+    pub fn from_record(r: &IndexedRecord) -> Self {
+        RecordRow {
+            id: r.id,
+            timestamp: r.timestamp,
+            event_time: r.record.event_time.to_string(),
+            event_name: r.record.event_name.to_string(),
+            event_source: r.record.event_source.to_string(),
+            aws_region: r.record.aws_region.to_string(),
+            source_ip_address: r.record.source_ip_address.as_deref().map(|s| s.to_string()),
+            user_name: r.record.user_identity.user_name.as_deref().map(|s| s.to_string()),
+            user_arn: r.record.user_identity.arn.as_deref().map(|s| s.to_string()),
+            error_code: r.record.error_code.as_deref().map(|s| s.to_string()),
+        }
+    }
+}
+
 /// Full record detail returned by get_record_by_id (includes raw payload).
+/// The summary fields are flattened in, so the JSON shape is `RecordRow` + `raw`.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordDetail {
-    pub id: u32,
-    pub timestamp: i64,
-    pub event_time: String,
-    pub event_name: String,
-    pub event_source: String,
-    pub aws_region: String,
-    #[serde(rename = "sourceIPAddress")]
-    pub source_ip_address: Option<String>,
-    pub user_name: Option<String>,
-    pub user_arn: Option<String>,
-    pub error_code: Option<String>,
+    #[serde(flatten)]
+    pub row: RecordRow,
     pub raw: CloudTrailRecord,
 }
 
@@ -59,19 +70,7 @@ pub async fn get_record_by_id(
     Ok(store.get_record(id).map(|r| {
         // get_full_record loads blob fields (requestParameters etc.) from BlobStore
         let raw = store.get_full_record(r.id).unwrap_or_else(|| r.record.clone());
-        RecordDetail {
-            id: r.id,
-            timestamp: r.timestamp,
-            event_time: r.record.event_time.to_string(),
-            event_name: r.record.event_name.to_string(),
-            event_source: r.record.event_source.to_string(),
-            aws_region: r.record.aws_region.to_string(),
-            source_ip_address: r.record.source_ip_address.as_deref().map(|s| s.to_string()),
-            user_name: r.record.user_identity.user_name.as_deref().map(|s| s.to_string()),
-            user_arn: r.record.user_identity.arn.as_deref().map(|s| s.to_string()),
-            error_code: r.record.error_code.as_deref().map(|s| s.to_string()),
-            raw,
-        }
+        RecordDetail { row: RecordRow::from_record(r), raw }
     }))
 }
 
@@ -92,12 +91,7 @@ pub async fn search(
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
     let store = guard.as_ref().ok_or("No dataset loaded")?;
 
-    let parsed = match query.as_deref().map(str::trim) {
-        Some(q) if !q.is_empty() => {
-            parse_query(q).map_err(|e| format!("Query error: {e}"))?
-        }
-        _ => Query::default(),
-    };
+    let parsed = parse_query_opt(query.as_deref()).map_err(|e| format!("Query error: {e}"))?;
 
     let result = execute(store, &parsed, page, page_size);
 
@@ -105,18 +99,7 @@ pub async fn search(
         .record_ids
         .iter()
         .filter_map(|&id| store.get_record(id))
-        .map(|r| RecordRow {
-            id: r.id,
-            timestamp: r.timestamp,
-            event_time: r.record.event_time.to_string(),
-            event_name: r.record.event_name.to_string(),
-            event_source: r.record.event_source.to_string(),
-            aws_region: r.record.aws_region.to_string(),
-            source_ip_address: r.record.source_ip_address.as_deref().map(|s| s.to_string()),
-            user_name: r.record.user_identity.user_name.as_deref().map(|s| s.to_string()),
-            user_arn: r.record.user_identity.arn.as_deref().map(|s| s.to_string()),
-            error_code: r.record.error_code.as_deref().map(|s| s.to_string()),
-        })
+        .map(RecordRow::from_record)
         .collect();
 
     Ok(SearchResult {
@@ -143,20 +126,9 @@ pub async fn get_field_values(
     let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
     let store = guard.as_ref().ok_or("No dataset loaded")?;
 
-    let idx = match field.as_str() {
-        "eventName" => &store.idx_event_name,
-        "eventSource" => &store.idx_event_source,
-        "awsRegion" => &store.idx_region,
-        "sourceIPAddress" => &store.idx_source_ip,
-        "userArn" => &store.idx_user_arn,
-        "userName" => &store.idx_user_name,
-        "accountId" => &store.idx_account_id,
-        "errorCode" => &store.idx_error_code,
-        "identityType" => &store.idx_identity_type,
-        "userAgent" => &store.idx_user_agent,
-        "bucketName" => &store.idx_bucket_name,
-        _ => return Err(format!("Unknown field: {field}")),
-    };
+    let idx = store
+        .index_for(field.as_str())
+        .ok_or_else(|| format!("Unknown field: {field}"))?;
 
     let mut values: Vec<FieldValue> = idx
         .iter()

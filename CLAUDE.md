@@ -31,3 +31,6 @@ cargo tauri build                     # production build
 
 ## Applied Learning
 When something fails repeatedly, when user has to re-explain, or when a workaround is found for a tool limitation, add one-liner bullet here. Keep each bullet under 15 words. No explaination. Only add things that will save time in future session
+- `idx_*` posting lists MUST stay sorted-ascending by id — engine.rs sorted-merge depends on it.
+- Field→index lookup: use `Store::index_for(field)`, don't re-match the 11 fields.
+- simd-json can't deserialize `Box<serde_json::value::RawValue>` — don't swap parser.rs to it.
