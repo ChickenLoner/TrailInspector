@@ -65,13 +65,13 @@ pub async fn get_record_by_id(
     id: u32,
     state: State<'_, AppState>,
 ) -> Result<Option<RecordDetail>, String> {
-    let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
-    let store = guard.as_ref().ok_or("No dataset loaded")?;
-    Ok(store.get_record(id).map(|r| {
-        // get_full_record loads blob fields (requestParameters etc.) from BlobStore
-        let raw = store.get_full_record(r.id).unwrap_or_else(|| r.record.clone());
-        RecordDetail { row: RecordRow::from_record(r), raw }
-    }))
+    state.with_store(|store| {
+        Ok(store.get_record(id).map(|r| {
+            // get_full_record loads blob fields (requestParameters etc.) from BlobStore
+            let raw = store.get_full_record(r.id).unwrap_or_else(|| r.record.clone());
+            RecordDetail { row: RecordRow::from_record(r), raw }
+        }))
+    })
 }
 
 /// Search the loaded dataset.
@@ -88,25 +88,24 @@ pub async fn search(
     let page = page.unwrap_or(0);
     let page_size = page_size.unwrap_or(100).min(500);
 
-    let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
-    let store = guard.as_ref().ok_or("No dataset loaded")?;
+    state.with_store(|store| {
+        let parsed = parse_query_opt(query.as_deref()).map_err(|e| format!("Query error: {e}"))?;
 
-    let parsed = parse_query_opt(query.as_deref()).map_err(|e| format!("Query error: {e}"))?;
+        let result = execute(store, &parsed, page, page_size);
 
-    let result = execute(store, &parsed, page, page_size);
+        let records: Vec<RecordRow> = result
+            .record_ids
+            .iter()
+            .filter_map(|&id| store.get_record(id))
+            .map(RecordRow::from_record)
+            .collect();
 
-    let records: Vec<RecordRow> = result
-        .record_ids
-        .iter()
-        .filter_map(|&id| store.get_record(id))
-        .map(RecordRow::from_record)
-        .collect();
-
-    Ok(SearchResult {
-        records,
-        total: result.total,
-        page,
-        page_size,
+        Ok(SearchResult {
+            records,
+            total: result.total,
+            page,
+            page_size,
+        })
     })
 }
 
@@ -123,23 +122,22 @@ pub async fn get_field_values(
     state: State<'_, AppState>,
 ) -> Result<Vec<FieldValue>, String> {
     let top_n = top_n.unwrap_or(20);
-    let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
-    let store = guard.as_ref().ok_or("No dataset loaded")?;
+    state.with_store(|store| {
+        let idx = store
+            .index_for(field.as_str())
+            .ok_or_else(|| format!("Unknown field: {field}"))?;
 
-    let idx = store
-        .index_for(field.as_str())
-        .ok_or_else(|| format!("Unknown field: {field}"))?;
+        let mut values: Vec<FieldValue> = idx
+            .iter()
+            .map(|(k, v)| FieldValue {
+                value: k.to_string(),
+                count: v.len() as usize,
+            })
+            .collect();
 
-    let mut values: Vec<FieldValue> = idx
-        .iter()
-        .map(|(k, v)| FieldValue {
-            value: k.to_string(),
-            count: v.len() as usize,
-        })
-        .collect();
+        values.sort_unstable_by(|a, b| b.count.cmp(&a.count));
+        values.truncate(top_n);
 
-    values.sort_unstable_by(|a, b| b.count.cmp(&a.count));
-    values.truncate(top_n);
-
-    Ok(values)
+        Ok(values)
+    })
 }
