@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-use std::collections::HashSet;
+use roaring::RoaringBitmap;
 use crate::store::Store;
 use super::filter::*;
 
@@ -39,120 +38,161 @@ pub fn execute(store: &Store, query: &Query, page: usize, page_size: usize) -> Q
     QueryResult { record_ids, total }
 }
 
+/// Compute the full matching id set, in time-sorted order.
+///
+/// Posting lists are `RoaringBitmap`s, so AND/OR/NOT are native compressed-bitmap
+/// operations. The bitmap iterates ids in ascending order; the final step
+/// reorders the (usually small) match set into timestamp order.
 fn compute_matching_ids(store: &Store, query: &Query) -> Vec<u32> {
-    // Start from time-filtered candidates for efficiency.
-    // Use Cow to avoid cloning the full vec when there is no time range.
-    let time_candidates: Cow<[u32]> = match &query.time_range {
-        None => Cow::Borrowed(&store.time_sorted_ids),
-        Some(tr) => {
-            // time_sorted_ids is sorted by timestamp; binary search for the range
-            let lo = store.time_sorted_ids.partition_point(|&id| {
-                store.get_record(id).map(|r| r.timestamp < tr.start_ms).unwrap_or(false)
-            });
-            let hi = store.time_sorted_ids.partition_point(|&id| {
-                store.get_record(id).map(|r| r.timestamp <= tr.end_ms).unwrap_or(false)
-            });
-            Cow::Owned(store.time_sorted_ids[lo..hi].to_vec())
+    // Union the OR-groups. `None` means "no field filters → every id".
+    let matched: Option<RoaringBitmap> = if query.filter_groups.is_empty() {
+        None
+    } else {
+        let mut acc = RoaringBitmap::new();
+        for group in &query.filter_groups {
+            acc |= compute_and_group(store, group);
         }
+        Some(acc)
     };
 
-    if query.filter_groups.is_empty() {
-        return time_candidates.into_owned();
+    match (&query.time_range, matched) {
+        // No filters, no range — the empty-query fast path in `execute` covers the
+        // common case; this arm is only hit when a caller passes usize::MAX paging.
+        (None, None) => store.time_sorted_ids.clone(),
+
+        // Time range only — the sorted index slice is already in time order.
+        (Some(tr), None) => {
+            let (lo, hi) = store.time_range_bounds(tr.start_ms, tr.end_ms);
+            store.time_sorted_ids[lo..hi].to_vec()
+        }
+
+        // Field filters only — reorder the by-id match set into time order.
+        (None, Some(bm)) => reorder_to_time(store, bm.iter()),
+
+        // Both — drop ids outside the window, then reorder into time order.
+        (Some(tr), Some(bm)) => {
+            let filtered = bm.iter().filter(|&id| {
+                store
+                    .get_record(id)
+                    .map(|r| r.timestamp >= tr.start_ms && r.timestamp <= tr.end_ms)
+                    .unwrap_or(false)
+            });
+            reorder_to_time(store, filtered)
+        }
     }
-
-    let candidate_set: HashSet<u32> = time_candidates.iter().copied().collect();
-
-    // Union over OR-groups: each group is AND'd internally, then the results are OR'd.
-    let mut result: HashSet<u32> = HashSet::new();
-    for group in &query.filter_groups {
-        let group_result = compute_and_group(store, &candidate_set, group);
-        result.extend(group_result);
-    }
-
-    // Return IDs in time-sorted order
-    store
-        .time_sorted_ids
-        .iter()
-        .filter(|id| result.contains(id))
-        .cloned()
-        .collect()
 }
 
-/// Evaluate one AND-group against the candidate set, returning matching IDs.
-fn compute_and_group(
-    store: &Store,
-    candidates: &HashSet<u32>,
-    filters: &[crate::query::filter::FieldFilter],
-) -> HashSet<u32> {
-    let mut pos_sets: Vec<HashSet<u32>> = Vec::new();
-    let mut neg_sets: Vec<HashSet<u32>> = Vec::new();
+/// Reorder a set of ids into ascending-timestamp order.
+/// O(k log k) in the result size — cheaper than scanning the whole time index
+/// whenever the result is small relative to the dataset.
+fn reorder_to_time(store: &Store, ids: impl Iterator<Item = u32>) -> Vec<u32> {
+    let mut timed: Vec<(i64, u32)> = ids
+        .filter_map(|id| store.get_record(id).map(|r| (r.timestamp, id)))
+        .collect();
+    timed.sort_unstable_by_key(|(ts, _)| *ts);
+    timed.into_iter().map(|(_, id)| id).collect()
+}
+
+/// Evaluate one AND-group, returning the matching id bitmap.
+fn compute_and_group(store: &Store, filters: &[FieldFilter]) -> RoaringBitmap {
+    let mut pos: Vec<RoaringBitmap> = Vec::new();
+    let mut neg: Vec<RoaringBitmap> = Vec::new();
 
     for filter in filters {
-        let ids: HashSet<u32> = match_field_filter(store, filter).into_iter().collect();
+        let bm = match_field_filter(store, filter);
         if filter.negated {
-            neg_sets.push(ids);
+            neg.push(bm);
         } else {
-            pos_sets.push(ids);
+            pos.push(bm);
         }
     }
 
-    // Intersect: start with candidates, apply positive filters, subtract negatives
-    let mut result = candidates.clone();
-
-    // Sort by size ascending to prune early (cheapest intersections first)
-    pos_sets.sort_unstable_by_key(|s| s.len());
-    for pos in &pos_sets {
-        result.retain(|id| pos.contains(id));
-        if result.is_empty() {
-            return HashSet::new();
+    // Base set: intersection of positive filters (cheapest first to prune early),
+    // or the full id space when the group is negative-only.
+    let mut result = if pos.is_empty() {
+        let mut all = RoaringBitmap::new();
+        all.insert_range(0..store.records.len() as u32);
+        all
+    } else {
+        pos.sort_unstable_by_key(|b| b.len());
+        let mut acc = pos[0].clone();
+        for p in &pos[1..] {
+            acc &= p;
+            if acc.is_empty() {
+                return RoaringBitmap::new();
+            }
         }
-    }
+        acc
+    };
 
-    for neg in &neg_sets {
-        result.retain(|id| !neg.contains(id));
+    for n in &neg {
+        result -= n;
     }
-
     result
 }
 
-/// Return the record IDs that match the given field filter (ignoring the `negated` flag —
-/// the caller handles negation by using the result as an exclusion set).
-fn match_field_filter(store: &Store, filter: &FieldFilter) -> Vec<u32> {
-    let idx = match filter.field {
-        FieldName::EventName => &store.idx_event_name,
-        FieldName::EventSource => &store.idx_event_source,
-        FieldName::AwsRegion => &store.idx_region,
-        FieldName::SourceIPAddress => &store.idx_source_ip,
-        FieldName::UserArn => &store.idx_user_arn,
-        FieldName::UserName => &store.idx_user_name,
-        FieldName::AccountId => &store.idx_account_id,
-        FieldName::ErrorCode => &store.idx_error_code,
-        FieldName::IdentityType => &store.idx_identity_type,
-        FieldName::UserAgent => &store.idx_user_agent,
-        FieldName::BucketName => &store.idx_bucket_name,
+/// Return the id bitmap matching a field filter (ignoring `negated` —
+/// the caller subtracts it).
+fn match_field_filter(store: &Store, filter: &FieldFilter) -> RoaringBitmap {
+    let idx = match store.index_for(filter.field.as_str()) {
+        Some(idx) => idx,
+        None => return RoaringBitmap::new(),
     };
 
     match &filter.mode {
+        // Single posting list.
         MatchMode::Exact(val) => idx.get(val.as_str()).cloned().unwrap_or_default(),
 
-        MatchMode::Prefix(prefix) => idx
-            .iter()
-            .filter(|(k, _)| k.to_lowercase().starts_with(prefix.as_str()))
-            .flat_map(|(_, v)| v.iter().cloned())
-            .collect(),
-
-        MatchMode::Suffix(suffix) => idx
-            .iter()
-            .filter(|(k, _)| k.to_lowercase().ends_with(suffix.as_str()))
-            .flat_map(|(_, v)| v.iter().cloned())
-            .collect(),
-
-        MatchMode::Contains(substr) => idx
-            .iter()
-            .filter(|(k, _)| k.to_lowercase().contains(substr.as_str()))
-            .flat_map(|(_, v)| v.iter().cloned())
-            .collect(),
-
-        MatchMode::Exists => idx.values().flat_map(|v| v.iter().cloned()).collect(),
+        // Wildcard / Exists modes union the posting lists of every matching key.
+        // Case-insensitive key match is done in place (patterns are pre-lowercased
+        // by the parser) — no per-key allocation.
+        MatchMode::Prefix(prefix) => union_keys(idx, |k| ascii_ci_starts_with(k, prefix)),
+        MatchMode::Suffix(suffix) => union_keys(idx, |k| ascii_ci_ends_with(k, suffix)),
+        MatchMode::Contains(substr) => union_keys(idx, |k| ascii_ci_contains(k, substr)),
+        MatchMode::Exists => union_keys(idx, |_| true),
     }
+}
+
+/// Union the posting lists of every key satisfying `pred`.
+fn union_keys<F>(
+    idx: &std::collections::HashMap<std::sync::Arc<str>, RoaringBitmap>,
+    pred: F,
+) -> RoaringBitmap
+where
+    F: Fn(&str) -> bool,
+{
+    let mut out = RoaringBitmap::new();
+    for (k, v) in idx {
+        if pred(k) {
+            out |= v;
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Allocation-free ASCII case-insensitive matching (patterns pre-lowercased)
+// ---------------------------------------------------------------------------
+
+fn ascii_ci_starts_with(hay: &str, needle_lower: &str) -> bool {
+    let (h, n) = (hay.as_bytes(), needle_lower.as_bytes());
+    h.len() >= n.len() && h[..n.len()].iter().zip(n).all(|(a, b)| a.to_ascii_lowercase() == *b)
+}
+
+fn ascii_ci_ends_with(hay: &str, needle_lower: &str) -> bool {
+    let (h, n) = (hay.as_bytes(), needle_lower.as_bytes());
+    h.len() >= n.len()
+        && h[h.len() - n.len()..].iter().zip(n).all(|(a, b)| a.to_ascii_lowercase() == *b)
+}
+
+fn ascii_ci_contains(hay: &str, needle_lower: &str) -> bool {
+    let (h, n) = (hay.as_bytes(), needle_lower.as_bytes());
+    if n.is_empty() {
+        return true;
+    }
+    if h.len() < n.len() {
+        return false;
+    }
+    (0..=h.len() - n.len())
+        .any(|i| h[i..i + n.len()].iter().zip(n).all(|(a, b)| a.to_ascii_lowercase() == *b))
 }

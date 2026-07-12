@@ -91,53 +91,74 @@ pub struct FieldValueCount {
     pub count: usize,
 }
 
+/// Merge counts from `b` into `a` (used as the rayon reduce step).
+fn merge_counts<K: std::hash::Hash + Eq>(
+    mut a: HashMap<K, usize>,
+    b: HashMap<K, usize>,
+) -> HashMap<K, usize> {
+    for (k, v) in b {
+        *a.entry(k).or_insert(0) += v;
+    }
+    a
+}
+
+fn top_n_counts(counts: Vec<FieldValueCount>, top_n: usize) -> Vec<FieldValueCount> {
+    let mut result = counts;
+    result.sort_unstable_by(|a, b| b.count.cmp(&a.count));
+    result.truncate(top_n);
+    result
+}
+
 /// Count field values across a slice of record IDs, return top-N by count.
+///
+/// Parallelized with rayon (per-thread map, then merge). For in-memory fields
+/// the map keys on the interned `&str` — no per-record `String` allocation;
+/// owned strings are materialized only for the ≤ unique-value final set.
 pub fn top_field_values(
     store: &Store,
     ids: &[u32],
     field: &str,
     top_n: usize,
 ) -> Vec<FieldValueCount> {
-    let mut counts: HashMap<String, usize> = HashMap::new();
+    use rayon::prelude::*;
 
-    for &id in ids {
-        if let Some(r) = store.get_record(id) {
-            if field == "bucketName" {
-                // bucketName is in requestParameters JSON — parse on demand
-                if let Some(bucket) = store.parse_request_parameters(id)
-                    .and_then(|p| p.get("bucketName").and_then(|v| v.as_str()).map(|s| s.to_string()))
-                {
-                    *counts.entry(bucket).or_insert(0) += 1;
+    // bucketName lives in the requestParameters blob — parse on demand (owned key).
+    if field == "bucketName" {
+        let counts = ids
+            .par_iter()
+            .fold(HashMap::<String, usize>::new, |mut m, &id| {
+                if let Some(bucket) = store.parse_request_parameters(id).and_then(|p| {
+                    p.get("bucketName").and_then(|v| v.as_str()).map(|s| s.to_string())
+                }) {
+                    *m.entry(bucket).or_insert(0) += 1;
                 }
-                continue;
-            }
-            let val: Option<&str> = match field {
-                "eventName" => Some(&r.record.event_name),
-                "eventSource" => Some(&r.record.event_source),
-                "awsRegion" => Some(&r.record.aws_region),
-                "sourceIPAddress" => r.record.source_ip_address.as_deref(),
-                "userArn" => r.record.user_identity.arn.as_deref(),
-                "userName" => r.record.user_identity.user_name.as_deref(),
-                "accountId" => r.record.user_identity.account_id.as_deref(),
-                "errorCode" => r.record.error_code.as_deref(),
-                "identityType" => r.record.user_identity.identity_type.as_deref(),
-                "userAgent" => r.record.user_agent.as_deref(),
-                _ => None,
-            };
-            if let Some(v) = val {
-                *counts.entry(v.to_string()).or_insert(0) += 1;
-            }
-        }
+                m
+            })
+            .reduce(HashMap::new, merge_counts);
+        let vec = counts
+            .into_iter()
+            .map(|(value, count)| FieldValueCount { value, count })
+            .collect();
+        return top_n_counts(vec, top_n);
     }
 
-    let mut result: Vec<FieldValueCount> = counts
-        .into_iter()
-        .map(|(value, count)| FieldValueCount { value, count })
-        .collect();
+    let counts = ids
+        .par_iter()
+        .fold(HashMap::<&str, usize>::new, |mut m, &id| {
+            if let Some(r) = store.get_record(id) {
+                if let Some(v) = Store::field_str(r, field) {
+                    *m.entry(v).or_insert(0) += 1;
+                }
+            }
+            m
+        })
+        .reduce(HashMap::new, merge_counts);
 
-    result.sort_unstable_by(|a, b| b.count.cmp(&a.count));
-    result.truncate(top_n);
-    result
+    let vec = counts
+        .into_iter()
+        .map(|(value, count)| FieldValueCount { value: value.to_string(), count })
+        .collect();
+    top_n_counts(vec, top_n)
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +216,7 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
     // Sort IDs by timestamp, filtering by time range if provided
     let mut timed_ids: Vec<(i64, u32)> = ids
         .iter()
-        .filter_map(|&id| store.get_record(id).map(|r| (r.timestamp, id)))
+        .filter_map(|id| store.get_record(id).map(|r| (r.timestamp, id)))
         .filter(|(ts, _)| {
             if let Some((start_ms, end_ms)) = time_range {
                 *ts >= start_ms && *ts <= end_ms

@@ -162,6 +162,10 @@ export default function App() {
   const [timelineBuckets, setTimelineBuckets] = useState<TimeBucket[]>([]);
   const timelineAbortRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Monotonic request id — guards against out-of-order search responses.
+  // Rapid typing/paging fires overlapping invokes; only the latest wins.
+  const searchReqRef = useRef(0);
+
   // Timing tracking
   const [loadTimeMs, setLoadTimeMs] = useState<number | undefined>();
   const [queryTimeMs, setQueryTimeMs] = useState<number | undefined>();
@@ -208,17 +212,20 @@ export default function App() {
 
   const fetchPage = useCallback(
     async (p: number, fullQuery: string) => {
+      const reqId = ++searchReqRef.current;
       setLoading(true);
       const t0 = performance.now();
       try {
         const r = await search(p, 100, fullQuery || undefined);
+        if (reqId !== searchReqRef.current) return; // superseded by a newer query
         setResults(r);
         setPage(p);
         setQueryTimeMs(Math.round(performance.now() - t0));
       } catch (e) {
+        if (reqId !== searchReqRef.current) return;
         console.error("Search error:", e);
       } finally {
-        setLoading(false);
+        if (reqId === searchReqRef.current) setLoading(false);
       }
     },
     []

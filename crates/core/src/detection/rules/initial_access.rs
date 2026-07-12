@@ -10,7 +10,7 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             // Check success
             let is_success = store.parse_response_elements(id)
@@ -79,7 +79,7 @@ pub fn ia_03_root_usage(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: meta,
         mitre_tactic: "Initial Access".to_string(),
         mitre_technique: "T1078.004".to_string(),
@@ -97,7 +97,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
 
     // Collect failure events grouped by source IP
     let mut by_ip: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
-    for &id in ids {
+    for id in ids {
         if let Some(r) = store.get_record(id) {
             let is_failure = store.parse_response_elements(id)
                 .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Failure"))

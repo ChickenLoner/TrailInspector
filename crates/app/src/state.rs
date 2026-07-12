@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard};
 use trail_inspector_core::store::Store;
 use trail_inspector_core::session::SessionIndex;
 use trail_inspector_core::geoip::GeoIpEngine;
@@ -25,5 +25,49 @@ impl AppState {
             custom_rule_errors: RwLock::new(errors),
             rules_path,
         }
+    }
+
+    // ── Lock-read helpers ────────────────────────────────────────────────────
+    // Every command repeated `.read().map_err(|e| format!("Lock error: {e}"))?`;
+    // these centralize the poison→String mapping.
+
+    pub fn store_read(&self) -> Result<RwLockReadGuard<'_, Option<Store>>, String> {
+        self.store.read().map_err(|e| format!("Lock error: {e}"))
+    }
+
+    pub fn geoip_read(&self) -> Result<RwLockReadGuard<'_, Option<GeoIpEngine>>, String> {
+        self.geoip.read().map_err(|e| format!("Lock error: {e}"))
+    }
+
+    pub fn custom_rules_read(&self) -> Result<RwLockReadGuard<'_, Vec<CustomRule>>, String> {
+        self.custom_rules.read().map_err(|e| format!("Lock error: {e}"))
+    }
+
+    pub fn session_index_read(&self) -> Result<RwLockReadGuard<'_, Option<SessionIndex>>, String> {
+        self.session_index.read().map_err(|e| format!("Lock error: {e}"))
+    }
+
+    /// Run `f` with a borrowed `&Store`, or fail with "No dataset loaded".
+    /// Collapses the read-lock + None-check that every store command repeated.
+    pub fn with_store<T>(&self, f: impl FnOnce(&Store) -> Result<T, String>) -> Result<T, String> {
+        let guard = self.store_read()?;
+        let store = guard.as_ref().ok_or("No dataset loaded")?;
+        f(store)
+    }
+
+    /// Build the SessionIndex on first use (lazy). No-op once built.
+    /// Shared by every session command that needs the index present.
+    pub fn ensure_session_index(&self) -> Result<(), String> {
+        if self.session_index_read()?.is_some() {
+            return Ok(());
+        }
+        let index = self.with_store(|store| Ok(SessionIndex::build(store)))?;
+        let mut sidx = self.session_index.write().map_err(|e| format!("Lock error: {e}"))?;
+        // Another thread may have built it between our check and the write lock;
+        // only install if still empty.
+        if sidx.is_none() {
+            *sidx = Some(index);
+        }
+        Ok(())
     }
 }

@@ -31,6 +31,24 @@ impl FieldName {
             _ => None,
         }
     }
+
+    /// Canonical camelCase field key — the single name used to look up the
+    /// corresponding inverted index via `Store::index_for`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::EventName => "eventName",
+            Self::EventSource => "eventSource",
+            Self::AwsRegion => "awsRegion",
+            Self::SourceIPAddress => "sourceIPAddress",
+            Self::UserArn => "userArn",
+            Self::UserName => "userName",
+            Self::AccountId => "accountId",
+            Self::ErrorCode => "errorCode",
+            Self::IdentityType => "identityType",
+            Self::UserAgent => "userAgent",
+            Self::BucketName => "bucketName",
+        }
+    }
 }
 
 /// How to match the filter value

@@ -477,17 +477,17 @@ mod tests {
 
         for rec in &records {
             let id = rec.id;
-            store.idx_event_name.entry(rec.record.event_name.clone()).or_default().push(id);
-            store.idx_event_source.entry(rec.record.event_source.clone()).or_default().push(id);
-            store.idx_region.entry(rec.record.aws_region.clone()).or_default().push(id);
+            store.idx_event_name.entry(rec.record.event_name.clone()).or_default().insert(id);
+            store.idx_event_source.entry(rec.record.event_source.clone()).or_default().insert(id);
+            store.idx_region.entry(rec.record.aws_region.clone()).or_default().insert(id);
             if let Some(ip) = &rec.record.source_ip_address {
-                store.idx_source_ip.entry(ip.clone()).or_default().push(id);
+                store.idx_source_ip.entry(ip.clone()).or_default().insert(id);
             }
             if let Some(arn) = &rec.record.user_identity.arn {
-                store.idx_user_arn.entry(arn.clone()).or_default().push(id);
+                store.idx_user_arn.entry(arn.clone()).or_default().insert(id);
             }
             if let Some(err) = &rec.record.error_code {
-                store.idx_error_code.entry(err.clone()).or_default().push(id);
+                store.idx_error_code.entry(err.clone()).or_default().insert(id);
             }
         }
 

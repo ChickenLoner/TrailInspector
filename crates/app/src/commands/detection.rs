@@ -16,18 +16,18 @@ pub async fn run_detections(
     end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Alert>, String> {
-    let store_guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
+    let store_guard = state.store_read()?;
     let store = store_guard.as_ref().ok_or("No dataset loaded")?;
 
     let mut alerts = run_all_rules(store);
 
-    let geoip_guard = state.geoip.read().map_err(|e| format!("Lock error: {e}"))?;
+    let geoip_guard = state.geoip_read()?;
     if let Some(geoip) = geoip_guard.as_ref() {
         let mut geo_alerts = run_geo_rules(store, geoip);
         alerts.append(&mut geo_alerts);
     }
 
-    let rules_guard = state.custom_rules.read().map_err(|e| format!("Lock error: {e}"))?;
+    let rules_guard = state.custom_rules_read()?;
     let mut custom_alerts = run_custom_rules(&rules_guard, store);
     alerts.append(&mut custom_alerts);
 

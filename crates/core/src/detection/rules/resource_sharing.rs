@@ -10,7 +10,7 @@ pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // Public AMI adds "all" group to launchPermission
@@ -53,7 +53,7 @@ pub fn rs_02_ssm_document_public(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("All") || params_str.contains("\"all\"") {
@@ -95,7 +95,7 @@ pub fn rs_03_rds_snapshot_public(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("all") || params_str.contains("\"restore\"") {

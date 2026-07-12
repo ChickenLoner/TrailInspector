@@ -9,7 +9,7 @@ pub fn nw_01_sg_ingress_all(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if store.get_record(id).is_some() {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
@@ -50,7 +50,7 @@ pub fn nw_02_nacl_allows_all(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if store.get_record(id).is_some() {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     // Allow rule (not deny) with broad CIDR
@@ -97,7 +97,7 @@ pub fn nw_03_igw_created(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 
@@ -131,7 +131,7 @@ pub fn nw_04_route_to_internet(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if store.get_record(id).is_some() {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
@@ -186,7 +186,7 @@ pub fn nw_05_vpc_peering_created(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Lateral Movement".to_string(),
         mitre_technique: "T1021".to_string(),
@@ -216,7 +216,7 @@ pub fn nw_06_sg_deleted(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.007".to_string(),
@@ -233,7 +233,7 @@ pub fn nw_07_subnet_public(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("mapPublicIpOnLaunch") && params_str.contains("\"value\":true") {
@@ -286,7 +286,7 @@ pub fn nw_08_nat_deleted(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1485".to_string(),

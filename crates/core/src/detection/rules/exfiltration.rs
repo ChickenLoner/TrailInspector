@@ -9,7 +9,7 @@ pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if is_public_grant(store.parse_request_parameters(id)) {
                     matching.push(id);
                 }
@@ -95,7 +95,7 @@ pub fn ex_02_s3_bucket_deleted(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1485".to_string(),
@@ -112,7 +112,7 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
     };
 
     let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
-    for &id in ids {
+    for id in ids {
         if let Some(r) = store.get_record(id) {
             let identity = r.record.user_identity.arn.as_deref()
                 .or_else(|| r.record.user_identity.user_name.as_deref())
@@ -216,7 +216,7 @@ pub fn ex_04_s3_logging_disabled(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // Empty LoggingConfiguration means logging disabled
@@ -273,7 +273,7 @@ pub fn ex_05_s3_encryption_removed(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),

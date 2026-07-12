@@ -59,6 +59,16 @@ pub fn parse_query(input: &str) -> Result<Query, CoreError> {
     Ok(query)
 }
 
+/// Parse an optional query string, treating `None`, empty, or all-whitespace
+/// input as the empty (match-everything) query. Centralizes the trim/is-empty
+/// dance that every query-taking command was repeating.
+pub fn parse_query_opt(query: Option<&str>) -> Result<Query, CoreError> {
+    match query.map(str::trim) {
+        Some(q) if !q.is_empty() => parse_query(q),
+        _ => Ok(Query::default()),
+    }
+}
+
 /// Tokenize on whitespace, respecting double-quoted strings.
 fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();

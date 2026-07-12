@@ -101,7 +101,7 @@ pub fn geo_02_console_unusual_country(store: &Store, geoip: &GeoIpEngine) -> Vec
     let mut details: Vec<String> = Vec::new();
 
     for id in &login_ids {
-        if let Some(rec) = store.get_record(*id) {
+        if let Some(rec) = store.get_record(id) {
             let ip = match &rec.record.source_ip_address {
                 Some(ip) => ip.as_ref(),
                 None => continue,
@@ -118,7 +118,7 @@ pub fn geo_02_console_unusual_country(store: &Store, geoip: &GeoIpEngine) -> Vec
             // Only flag if identity has a baseline AND login country is not in it
             if let Some(seen) = baseline.get(&identity) {
                 if !seen.contains(&login_country) {
-                    matching.push(*id);
+                    matching.push(id);
                     details.push(format!("{} from {}", identity, login_country));
                 }
             }

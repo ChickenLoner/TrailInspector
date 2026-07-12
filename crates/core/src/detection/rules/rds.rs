@@ -9,7 +9,7 @@ pub fn rds_01_deletion_protection_disabled(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if store.get_record(id).is_some() {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("deletionProtection") && params_str.contains("false") {
@@ -55,7 +55,7 @@ pub fn rds_02_public_snapshot_restore(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if store.get_record(id).is_some() {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("\"publiclyAccessible\":true")
@@ -98,7 +98,7 @@ pub fn rds_03_master_password_changed(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if store.get_record(id).is_some() {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("masterUserPassword")

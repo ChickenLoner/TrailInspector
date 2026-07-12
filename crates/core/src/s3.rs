@@ -102,7 +102,7 @@ pub fn get_s3_summary(
 
     // 1. Start with all GetObject IDs
     let candidate_ids: Vec<u32> = match store.idx_event_name.get("GetObject") {
-        Some(ids) => ids.clone(),
+        Some(ids) => ids.iter().collect(),
         None => {
             return S3Summary {
                 total_bytes_out: 0,
@@ -138,7 +138,7 @@ pub fn get_s3_summary(
     // 3. Apply bucket filter
     let bucket_filtered: Vec<u32> = if let Some(bucket) = bucket_filter {
         if let Some(bucket_ids) = store.idx_bucket_name.get(bucket) {
-            let bucket_set: std::collections::HashSet<u32> = bucket_ids.iter().copied().collect();
+            let bucket_set: std::collections::HashSet<u32> = bucket_ids.iter().collect();
             time_filtered
                 .into_iter()
                 .filter(|id| bucket_set.contains(id))
@@ -386,7 +386,7 @@ mod tests {
             store.idx_event_name
                 .entry(rec.record.event_name.clone())
                 .or_default()
-                .push(id);
+                .insert(id);
         }
 
         // Insert s3_event_index entries and bucket index
@@ -395,7 +395,7 @@ mod tests {
             store.idx_bucket_name
                 .entry(bucket_arc.clone())
                 .or_default()
-                .push(*id);
+                .insert(*id);
             store.s3_event_index.insert(
                 *id,
                 S3EventData {
@@ -473,11 +473,11 @@ mod tests {
             store.idx_event_name
                 .entry(Arc::from("GetObject"))
                 .or_default()
-                .push(i);
+                .insert(i);
             store.idx_bucket_name
                 .entry(bucket_arc.clone())
                 .or_default()
-                .push(i);
+                .insert(i);
             // unique key per object
             let key = format!("key-{}", i);
             store.s3_event_index.insert(i, S3EventData {

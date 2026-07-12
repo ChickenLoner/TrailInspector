@@ -10,7 +10,7 @@ pub fn lm_01_lambda_public_access(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // principal "*" means public access
@@ -57,7 +57,7 @@ pub fn lm_02_lambda_env_updated(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("Environment") || params_str.contains("environment") {

@@ -17,7 +17,7 @@ pub fn di_02_iam_enumeration(store: &Store) -> Vec<Alert> {
     let mut matching = vec![];
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 
@@ -56,7 +56,7 @@ pub fn di_03_access_denied_spike(store: &Store) -> Vec<Alert> {
 
     // Group by identity
     let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
-    for &id in ids {
+    for id in ids {
         if let Some(r) = store.get_record(id) {
             let identity = r.record.user_identity.arn.as_deref()
                 .or_else(|| r.record.user_identity.user_name.as_deref())

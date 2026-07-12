@@ -154,7 +154,7 @@ pub async fn lookup_ip(
     ip: String,
     state: State<'_, AppState>,
 ) -> Result<Option<IpInfo>, String> {
-    let guard = state.geoip.read().map_err(|e| format!("Lock error: {e}"))?;
+    let guard = state.geoip_read()?;
     match guard.as_ref() {
         None => Ok(None),
         Some(engine) => Ok(engine.lookup(&ip)),
@@ -175,9 +175,7 @@ pub async fn list_ips(
     state: State<'_, AppState>,
 ) -> Result<IpPage, String> {
     // Build ip→count map from store (time-filtered if range provided)
-    let ip_counts = {
-        let store_guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
-        let store = store_guard.as_ref().ok_or("No dataset loaded")?;
+    let ip_counts = state.with_store(|store| {
         if let (Some(s), Some(e)) = (start_ms, end_ms) {
             // Build counts only from records in range
             let ids_in_range = store.get_ids_in_range(s, e);
@@ -189,16 +187,16 @@ pub async fn list_ips(
                     }
                 }
             }
-            counts
+            Ok(counts)
         } else {
-            store.idx_source_ip
+            Ok(store.idx_source_ip
                 .iter()
-                .map(|(ip, ids)| (ip.to_string(), ids.len()))
-                .collect::<std::collections::HashMap<String, usize>>()
+                .map(|(ip, ids)| (ip.to_string(), ids.len() as usize))
+                .collect::<std::collections::HashMap<String, usize>>())
         }
-    };
+    })?;
 
-    let geoip_guard = state.geoip.read().map_err(|e| format!("Lock error: {e}"))?;
+    let geoip_guard = state.geoip_read()?;
     match geoip_guard.as_ref() {
         None => {
             // No GeoIP engine — return rows without geo data, sorted by events

@@ -5,7 +5,7 @@ use crate::detection::{Alert, Severity};
 /// EBS-01: EBS Default Encryption Disabled
 pub fn ebs_01_encryption_disabled(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("DisableEbsEncryptionByDefault") {
-        Some(ids) => ids.to_vec(),
+        Some(ids) => ids.clone(),
         None => return vec![],
     };
 
@@ -19,7 +19,7 @@ pub fn ebs_01_encryption_disabled(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1486".to_string(),
@@ -36,7 +36,7 @@ pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // Public share adds "all" as a group in createVolumePermission
@@ -72,7 +72,7 @@ pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
 /// EBS-03: EBS Volume Detached
 pub fn ebs_03_volume_detached(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("DetachVolume") {
-        Some(ids) => ids.to_vec(),
+        Some(ids) => ids.clone(),
         None => return vec![],
     };
 
@@ -86,7 +86,7 @@ pub fn ebs_03_volume_detached(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
@@ -98,7 +98,7 @@ pub fn ebs_03_volume_detached(store: &Store) -> Vec<Alert> {
 /// EBS-04: EBS Snapshot Deleted
 pub fn ebs_04_snapshot_deleted(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("DeleteSnapshot") {
-        Some(ids) => ids.to_vec(),
+        Some(ids) => ids.clone(),
         None => return vec![],
     };
 
@@ -112,7 +112,7 @@ pub fn ebs_04_snapshot_deleted(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1485".to_string(),
@@ -124,7 +124,7 @@ pub fn ebs_04_snapshot_deleted(store: &Store) -> Vec<Alert> {
 /// EBS-05: EBS Default KMS Key Changed
 pub fn ebs_05_default_kms_changed(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("ModifyEbsDefaultKmsKeyId") {
-        Some(ids) => ids.to_vec(),
+        Some(ids) => ids.clone(),
         None => return vec![],
     };
 
@@ -138,7 +138,7 @@ pub fn ebs_05_default_kms_changed(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1486".to_string(),

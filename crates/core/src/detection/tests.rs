@@ -112,35 +112,35 @@ fn build_store(records: Vec<IndexedRecord>) -> Store {
 
     for rec in &records {
         let id = rec.id;
-        store.idx_event_name.entry(rec.record.event_name.clone()).or_default().push(id);
-        store.idx_event_source.entry(rec.record.event_source.clone()).or_default().push(id);
-        store.idx_region.entry(rec.record.aws_region.clone()).or_default().push(id);
+        store.idx_event_name.entry(rec.record.event_name.clone()).or_default().insert(id);
+        store.idx_event_source.entry(rec.record.event_source.clone()).or_default().insert(id);
+        store.idx_region.entry(rec.record.aws_region.clone()).or_default().insert(id);
         if let Some(ip) = &rec.record.source_ip_address {
-            store.idx_source_ip.entry(ip.clone()).or_default().push(id);
+            store.idx_source_ip.entry(ip.clone()).or_default().insert(id);
         }
         if let Some(arn) = &rec.record.user_identity.arn {
-            store.idx_user_arn.entry(arn.clone()).or_default().push(id);
+            store.idx_user_arn.entry(arn.clone()).or_default().insert(id);
         }
         if let Some(name) = &rec.record.user_identity.user_name {
-            store.idx_user_name.entry(name.clone()).or_default().push(id);
+            store.idx_user_name.entry(name.clone()).or_default().insert(id);
         }
         if let Some(acct) = &rec.record.user_identity.account_id {
-            store.idx_account_id.entry(acct.clone()).or_default().push(id);
+            store.idx_account_id.entry(acct.clone()).or_default().insert(id);
         }
         if let Some(err) = &rec.record.error_code {
-            store.idx_error_code.entry(err.clone()).or_default().push(id);
+            store.idx_error_code.entry(err.clone()).or_default().insert(id);
         }
         if let Some(t) = &rec.record.user_identity.identity_type {
-            store.idx_identity_type.entry(t.clone()).or_default().push(id);
+            store.idx_identity_type.entry(t.clone()).or_default().insert(id);
         }
         if let Some(ua) = &rec.record.user_agent {
-            store.idx_user_agent.entry(ua.clone()).or_default().push(id);
+            store.idx_user_agent.entry(ua.clone()).or_default().insert(id);
         }
         // Bucket name index: load from blob store (request_parameters drained above)
         if let Some(br) = rec.request_params_ref {
             if let Some(v) = store.blob_store.parse_value(br) {
                 if let Some(bucket) = v.get("bucketName").and_then(|v| v.as_str()) {
-                    store.idx_bucket_name.entry(Arc::from(bucket)).or_default().push(id);
+                    store.idx_bucket_name.entry(Arc::from(bucket)).or_default().insert(id);
                 }
             }
         }

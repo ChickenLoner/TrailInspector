@@ -11,7 +11,7 @@ pub async fn get_s3_summary(
     identity: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<s3::S3Summary, String> {
-    let guard = state.store.read().map_err(|e| format!("Lock error: {e}"))?;
-    let store = guard.as_ref().ok_or("No dataset loaded")?;
-    Ok(s3::get_s3_summary(store, start_ms, end_ms, bucket.as_deref(), ip.as_deref(), identity.as_deref()))
+    state.with_store(|store| {
+        Ok(s3::get_s3_summary(store, start_ms, end_ms, bucket.as_deref(), ip.as_deref(), identity.as_deref()))
+    })
 }

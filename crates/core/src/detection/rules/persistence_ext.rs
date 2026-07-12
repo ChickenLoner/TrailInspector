@@ -10,7 +10,7 @@ pub fn pe_05_mfa_deactivated(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 
@@ -45,7 +45,7 @@ pub fn pe_06_policy_version_created(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("\"setAsDefault\":true")
@@ -87,7 +87,7 @@ pub fn pe_07_cross_account_assume_role(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if let Some(r) = store.get_record(id) {
             let caller_account = r.record.user_identity.account_id.as_deref().unwrap_or("");
             let params = store.parse_request_parameters(id);

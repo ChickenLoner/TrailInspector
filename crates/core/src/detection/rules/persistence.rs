@@ -26,7 +26,7 @@ pub fn pe_01_iam_user_created(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: meta,
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1136.003".to_string(),
@@ -43,7 +43,7 @@ pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if let Some(r) = store.get_record(id) {
             let caller = r.record.user_identity.user_name.as_deref().unwrap_or("");
             let params = store.parse_request_parameters(id);
@@ -103,7 +103,7 @@ pub fn pe_03_login_profile_created(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098".to_string(),
@@ -128,7 +128,7 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if store.get_record(id).is_some() {
                     let is_admin = check_admin_policy(store.parse_request_parameters(id));
                     if is_admin {
