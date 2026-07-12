@@ -14,7 +14,7 @@ fn mass_ec2_op_inner(
     };
 
     let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
-    for &id in ids {
+    for id in ids {
         if let Some(r) = store.get_record(id) {
             let identity = r.record.user_identity.arn.as_deref()
                 .or_else(|| r.record.user_identity.user_name.as_deref())
@@ -61,7 +61,7 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
     // Collect all RunInstances timestamps
     let mut events: Vec<(i64, u32)> = ids
         .iter()
-        .filter_map(|&id| store.get_record(id).map(|r| (r.timestamp, id)))
+        .filter_map(|id| store.get_record(id).map(|r| (r.timestamp, id)))
         .collect();
 
     events.sort_unstable_by_key(|(ts, _)| *ts);
@@ -121,7 +121,7 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
             || event_name.starts_with("Destroy")
             || event_name.starts_with("Remove")
         {
-            deletion_ids.extend_from_slice(ids);
+            deletion_ids.extend(ids);
         }
     }
 
@@ -351,7 +351,7 @@ pub fn im_03_ses_email_verified(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 

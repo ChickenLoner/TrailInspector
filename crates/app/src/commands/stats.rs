@@ -57,7 +57,7 @@ pub async fn get_top_fields(
             .ok_or_else(|| format!("Unknown field: {field}"))?;
         let mut values: Vec<FieldValueCount> = idx
             .iter()
-            .map(|(k, v)| FieldValueCount { value: k.to_string(), count: v.len() })
+            .map(|(k, v)| FieldValueCount { value: k.to_string(), count: v.len() as usize })
             .collect();
         values.sort_unstable_by(|a, b| b.count.cmp(&a.count));
         values.truncate(top_n);

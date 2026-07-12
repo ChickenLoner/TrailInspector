@@ -134,7 +134,7 @@ pub async fn get_field_values(
         .iter()
         .map(|(k, v)| FieldValue {
             value: k.to_string(),
-            count: v.len(),
+            count: v.len() as usize,
         })
         .collect();
 

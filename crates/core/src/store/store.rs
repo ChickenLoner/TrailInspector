@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use roaring::RoaringBitmap;
 use crate::model::IndexedRecord;
 use crate::store::blob_store::BlobStore;
 use crate::s3::S3EventData;
@@ -41,19 +42,20 @@ pub struct Store {
     pub records: Vec<IndexedRecord>,
     pub file_paths: Vec<String>,
 
-    // Inverted indexes: interned field_value → Vec<record_id>
-    // u32 IDs: 4 bytes each vs u64's 8 bytes — saves ~250 MB for 5M events
-    pub idx_event_name: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_event_source: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_region: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_source_ip: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_user_arn: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_user_name: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_account_id: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_error_code: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_identity_type: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_user_agent: HashMap<Arc<str>, Vec<u32>>,
-    pub idx_bucket_name: HashMap<Arc<str>, Vec<u32>>,
+    // Inverted indexes: interned field_value → RoaringBitmap of record ids.
+    // Compressed bitmaps shrink dense/high-cardinality posting lists vs Vec<u32>
+    // and give native SIMD AND/OR/NOT for the query engine.
+    pub idx_event_name: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_event_source: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_region: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_source_ip: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_user_arn: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_user_name: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_account_id: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_error_code: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_identity_type: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_user_agent: HashMap<Arc<str>, RoaringBitmap>,
+    pub idx_bucket_name: HashMap<Arc<str>, RoaringBitmap>,
 
     /// Per-event S3 data extracted at ingestion time (GetObject events only).
     /// Keyed by record ID. Enables zero-blob-read aggregation in get_s3_summary.
@@ -90,8 +92,8 @@ impl Store {
     }
 
     /// Insert a record ID into an inverted index under the given interned key.
-    fn index_push_arc(idx: &mut HashMap<Arc<str>, Vec<u32>>, key: Arc<str>, id: u32) {
-        idx.entry(key).or_default().push(id);
+    fn index_push_arc(idx: &mut HashMap<Arc<str>, RoaringBitmap>, key: Arc<str>, id: u32) {
+        idx.entry(key).or_default().insert(id);
     }
 
     /// Load all log files from a directory, processing in parallel.
@@ -340,7 +342,7 @@ impl Store {
     /// Single source of truth: map a canonical camelCase field name to its
     /// inverted index. Every field→index lookup (query engine, aggregation
     /// commands) goes through here, so adding a field means editing one match.
-    pub fn index_for(&self, field: &str) -> Option<&HashMap<Arc<str>, Vec<u32>>> {
+    pub fn index_for(&self, field: &str) -> Option<&HashMap<Arc<str>, RoaringBitmap>> {
         Some(match field {
             "eventName" => &self.idx_event_name,
             "eventSource" => &self.idx_event_source,

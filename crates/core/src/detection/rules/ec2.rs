@@ -10,7 +10,7 @@ pub fn ec_01_userdata_modified(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("userData") {
@@ -46,7 +46,7 @@ pub fn ec_01_userdata_modified(store: &Store) -> Vec<Alert> {
 /// EC-02: EC2 Key Pair Created
 pub fn ec_02_keypair_created(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("CreateKeyPair") {
-        Some(ids) => ids.to_vec(),
+        Some(ids) => ids.clone(),
         None => return vec![],
     };
 
@@ -64,7 +64,7 @@ pub fn ec_02_keypair_created(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098.004".to_string(),
@@ -80,7 +80,7 @@ pub fn ec_03_launch_template_userdata(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            for &id in ids {
+            for id in ids {
                 if store.get_record(id).is_some() {
                     let params_str = store.get_request_parameters_str(id).unwrap_or_default();
                     if params_str.contains("userData") {
@@ -123,7 +123,7 @@ pub fn ec_04_imds_v2_downgraded(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("httpTokens") && params_str.contains("optional") {
@@ -159,7 +159,7 @@ pub fn ec_04_imds_v2_downgraded(store: &Store) -> Vec<Alert> {
 /// EC-05: Windows EC2 Instance Password Retrieved
 pub fn ec_05_get_password_data(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("GetPasswordData") {
-        Some(ids) => ids.to_vec(),
+        Some(ids) => ids.clone(),
         None => return vec![],
     };
 
@@ -178,7 +178,7 @@ pub fn ec_05_get_password_data(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1078.004".to_string(),
@@ -194,7 +194,7 @@ pub fn ec_06_instance_connect(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 
@@ -225,7 +225,7 @@ pub fn ec_06_instance_connect(store: &Store) -> Vec<Alert> {
 /// EC-07: SSM Run Command Sent to EC2 Instances
 pub fn ec_07_ssm_run_command(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("SendCommand") {
-        Some(ids) => ids.to_vec(),
+        Some(ids) => ids.clone(),
         None => return vec![],
     };
 
@@ -244,7 +244,7 @@ pub fn ec_07_ssm_run_command(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Execution".to_string(),
         mitre_technique: "T1651".to_string(),
@@ -256,7 +256,7 @@ pub fn ec_07_ssm_run_command(store: &Store) -> Vec<Alert> {
 /// EC-08: EC2 Serial Console Access Enabled Account-Wide
 pub fn ec_08_serial_console_enabled(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_event_name.get("EnableSerialConsoleAccess") {
-        Some(ids) => ids.to_vec(),
+        Some(ids) => ids.clone(),
         None => return vec![],
     };
 
@@ -275,7 +275,7 @@ pub fn ec_08_serial_console_enabled(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1078".to_string(),

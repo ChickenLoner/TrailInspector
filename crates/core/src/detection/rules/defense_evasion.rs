@@ -9,7 +9,7 @@ pub fn de_01_cloudtrail_stopped(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 
@@ -46,7 +46,7 @@ pub fn de_02_guardduty_disabled(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 
@@ -80,7 +80,7 @@ pub fn de_04_config_recorder_stopped(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 
@@ -128,7 +128,7 @@ pub fn de_05_flow_log_deleted(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.008".to_string(),
@@ -158,7 +158,7 @@ pub fn de_06_log_group_deleted(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.008".to_string(),
@@ -175,7 +175,7 @@ pub fn de_07_cloudtrail_s3_changed(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let has_s3_change = store.parse_request_parameters(id)
                 .and_then(|v| v.get("s3BucketName").map(|_| true))
@@ -230,7 +230,7 @@ pub fn de_08_eventbridge_rule_disabled(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.001".to_string(),
@@ -246,7 +246,7 @@ pub fn de_09_waf_acl_deleted(store: &Store) -> Vec<Alert> {
 
     for name in &event_names {
         if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend_from_slice(ids);
+            matching.extend(ids);
         }
     }
 
@@ -281,7 +281,7 @@ pub fn de_10_cloudfront_logging_disabled(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             // Look for logging being disabled (Enabled: false in Logging config)
@@ -322,7 +322,7 @@ pub fn de_11_sqs_encryption_removed(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             // Flag if KmsMasterKeyId is being set to empty or removed
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
@@ -367,7 +367,7 @@ pub fn de_12_sns_encryption_removed(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in ids {
+    for id in ids {
         if store.get_record(id).is_some() {
             let params_str = store.get_request_parameters_str(id).unwrap_or_default();
             if params_str.contains("KmsMasterKeyId") {
@@ -424,7 +424,7 @@ pub fn de_13_route53_zone_deleted(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1485".to_string(),

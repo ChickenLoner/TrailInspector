@@ -193,7 +193,7 @@ pub async fn list_ips(
         } else {
             store.idx_source_ip
                 .iter()
-                .map(|(ip, ids)| (ip.to_string(), ids.len()))
+                .map(|(ip, ids)| (ip.to_string(), ids.len() as usize))
                 .collect::<std::collections::HashMap<String, usize>>()
         }
     };

@@ -11,7 +11,7 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
 
     // Group by identity (ARN or userName)
     let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
-    for &id in ids {
+    for id in ids {
         if let Some(r) = store.get_record(id) {
             let identity = r.record.user_identity.arn.as_deref()
                 .or_else(|| r.record.user_identity.user_name.as_deref())
@@ -107,7 +107,7 @@ pub fn ca_04_password_policy_weakened(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1556".to_string(),
@@ -124,7 +124,7 @@ pub fn ca_05_root_console_login(store: &Store) -> Vec<Alert> {
     };
 
     let mut matching = vec![];
-    for &id in login_ids {
+    for id in login_ids {
         if let Some(r) = store.get_record(id) {
             let is_root = r.record.user_identity.identity_type
                 .as_deref()
@@ -185,7 +185,7 @@ pub fn ca_06_kms_key_deletion(store: &Store) -> Vec<Alert> {
             ids.len()
         ),
         matching_count: 0,
-        matching_record_ids: ids,
+        matching_record_ids: ids.iter().collect(),
         metadata: HashMap::new(),
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1485".to_string(),

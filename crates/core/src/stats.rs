@@ -216,7 +216,7 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
     // Sort IDs by timestamp, filtering by time range if provided
     let mut timed_ids: Vec<(i64, u32)> = ids
         .iter()
-        .filter_map(|&id| store.get_record(id).map(|r| (r.timestamp, id)))
+        .filter_map(|id| store.get_record(id).map(|r| (r.timestamp, id)))
         .filter(|(ts, _)| {
             if let Some((start_ms, end_ms)) = time_range {
                 *ts >= start_ms && *ts <= end_ms
