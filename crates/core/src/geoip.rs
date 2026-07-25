@@ -7,7 +7,7 @@
 //! **Recommended files (user-supplied, free, no registration):**
 //! - `dbip-city-lite.mmdb` or `dbip-country-lite.mmdb` — country / city geo
 //! - `dbip-asn-lite.mmdb` — autonomous system number / org
-//! Download from: https://db-ip.com/db/lite (CC BY 4.0)
+//! Download from: https://db-ip.com/db/lite.php (CC BY 4.0)
 
 use std::collections::HashMap;
 use std::net::IpAddr;
