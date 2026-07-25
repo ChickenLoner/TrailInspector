@@ -44,3 +44,5 @@ When something fails repeatedly, when user has to re-explain, or when a workarou
 - Rust SDK sends short `X-Amz-Target`; CLI sends `com.amazonaws.*` — emulators need qualified.
 - Rewrite signed headers in `modify_before_signing`, never after — signature covers them.
 - Compare against `aws <cmd> --debug` before assuming an endpoint lacks an operation.
+- Test S3 fetch offline: `uvx --from 'moto[server]' moto_server -p 5055`, creds `test`/`test`.
+- `crates/core/examples/` breaks `cargo test` if it uses feature-gated code — delete after probing.
