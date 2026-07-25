@@ -9,6 +9,25 @@ pub struct CloudTrailFile {
     pub records: Vec<CloudTrailRecord>,
 }
 
+/// Top-level wrapper produced by `aws cloudtrail lookup-events --output json`.
+///
+/// Unlike the S3 delivery format, each entry carries CloudTrail metadata at the
+/// top level and stows the actual event as an *escaped JSON string* under
+/// `CloudTrailEvent`. The sibling fields (EventId, EventName, Username, ...) are
+/// all duplicates of what the nested payload already contains, so only the
+/// nested string is kept.
+#[derive(Debug, Deserialize)]
+pub struct LookupEventsFile {
+    #[serde(rename = "Events")]
+    pub events: Vec<LookupEvent>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LookupEvent {
+    #[serde(rename = "CloudTrailEvent")]
+    pub cloud_trail_event: String,
+}
+
 /// Raw CloudTrail record — deserialize all known fields, ignore unknown fields.
 ///
 /// Memory layout choices:

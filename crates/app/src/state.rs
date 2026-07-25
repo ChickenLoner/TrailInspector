@@ -4,6 +4,7 @@ use trail_inspector_core::store::Store;
 use trail_inspector_core::session::SessionIndex;
 use trail_inspector_core::geoip::GeoIpEngine;
 use trail_inspector_core::detection::custom_rules::CustomRule;
+use trail_inspector_core::fetch::AwsCredentials;
 
 pub struct AppState {
     pub store: RwLock<Option<Store>>,
@@ -13,6 +14,22 @@ pub struct AppState {
     pub custom_rule_errors: RwLock<Vec<String>>,
     /// Resolved path to the user's rules.yaml in the app config directory.
     pub rules_path: PathBuf,
+    /// Credentials typed into the AWS fetch panel.
+    ///
+    /// **Memory only.** Never written to disk, never to `~/.aws`, never returned to
+    /// the frontend. Held so Check and the subsequent Pull share one entry; dropped
+    /// when the app exits or the user clears it.
+    pub aws_credentials: RwLock<Option<AwsCredentials>>,
+    /// A completed Check, waiting to be pulled into the store.
+    pub aws_staged: RwLock<Option<StagedFetch>>,
+}
+
+/// Logs already downloaded by a Check, staged on disk pending a Pull.
+///
+/// Check pages through the whole result set, so re-downloading at Pull time would
+/// pay the LookupEvents rate limit twice. Pull just ingests this directory.
+pub struct StagedFetch {
+    pub dir: PathBuf,
 }
 
 impl AppState {
@@ -24,6 +41,8 @@ impl AppState {
             custom_rules: RwLock::new(rules),
             custom_rule_errors: RwLock::new(errors),
             rules_path,
+            aws_credentials: RwLock::new(None),
+            aws_staged: RwLock::new(None),
         }
     }
 

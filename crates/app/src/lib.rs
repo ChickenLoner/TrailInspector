@@ -24,6 +24,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::ingest::load_directory,
+            commands::fetch::list_aws_profiles,
+            commands::fetch::check_aws,
+            commands::fetch::list_s3_buckets,
+            commands::fetch::pull_staged,
+            commands::fetch::clear_aws_cache,
+            commands::fetch::has_cached_aws_credentials,
             commands::query::get_record_by_id,
             commands::query::search,
             commands::query::get_field_values,

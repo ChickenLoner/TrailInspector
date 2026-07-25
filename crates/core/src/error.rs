@@ -31,6 +31,24 @@ pub enum CoreError {
 
     #[error("Query parse error: {0}")]
     Query(String),
+
+    /// AWS API / SDK failure during a fetch.
+    ///
+    /// Carries a formatted `String` rather than the SDK error type on purpose:
+    /// it keeps this enum byte-identical between `--features aws` and default
+    /// builds, so no SDK type leaks into the offline build.
+    #[error("AWS error during {context}: {message}")]
+    Aws { context: String, message: String },
+}
+
+impl CoreError {
+    /// Build an `Aws` variant from any SDK error.
+    ///
+    /// `context` should name the operation ("LookupEvents", "DescribeTrails") so a
+    /// failure is attributable without a stack trace.
+    pub fn aws(context: impl Into<String>, err: impl std::fmt::Display) -> Self {
+        CoreError::Aws { context: context.into(), message: err.to_string() }
+    }
 }
 
 /// A non-fatal warning emitted during ingestion when a file cannot be parsed.

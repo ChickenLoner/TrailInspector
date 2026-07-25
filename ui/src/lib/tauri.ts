@@ -18,6 +18,10 @@ import type {
   AbuseCheckResult,
   OnlineGeoResult,
   S3Summary,
+  ProfileInfo,
+  FetchSource,
+  FetchSummary,
+  AwsCredentialsInput,
 } from "../types/cloudtrail";
 
 export async function loadDirectory(
@@ -27,6 +31,88 @@ export async function loadDirectory(
   const channel = new Channel<IngestProgressEvent>();
   channel.onmessage = onProgress;
   return invoke<number>("load_directory", { path, onProgress: channel });
+}
+
+/** Named AWS profiles for the picker. Names and regions only — no secrets. */
+export async function listAwsProfiles(): Promise<ProfileInfo[]> {
+  return invoke<ProfileInfo[]>("list_aws_profiles");
+}
+
+export interface CheckAwsArgs {
+  profile?: string;
+  credentials?: AwsCredentialsInput;
+  region: string;
+  source: FetchSource;
+  /** Omit for no lower bound. */
+  startMs?: number;
+  /** Omit for no upper bound. */
+  endMs?: number;
+  /** Read this bucket directly instead of discovering it via DescribeTrails. */
+  bucket?: string;
+  /** Key prefix to narrow the listing. Only meaningful with `bucket`. */
+  prefix?: string;
+  /** `aws --endpoint-url` equivalent, for LocalStack / emulated AWS. */
+  endpointUrl?: string;
+}
+
+/** List S3 buckets the credentials can see. Needs no DescribeTrails permission. */
+export async function listS3Buckets(args: {
+  profile?: string;
+  credentials?: AwsCredentialsInput;
+  region: string;
+  endpointUrl?: string;
+}): Promise<string[]> {
+  return invoke<string[]>("list_s3_buckets", {
+    profile: args.profile ?? null,
+    credentials: args.credentials ?? null,
+    region: args.region,
+    endpointUrl: args.endpointUrl ?? null,
+  });
+}
+
+/**
+ * Download and count everything the credentials can see, without loading it.
+ *
+ * This pages through the full result set, so the returned count is exact. The
+ * bytes are staged on the backend, which makes the subsequent `pullStaged` free.
+ */
+export async function checkAws(
+  args: CheckAwsArgs,
+  onProgress: (event: IngestProgressEvent) => void
+): Promise<FetchSummary> {
+  const channel = new Channel<IngestProgressEvent>();
+  channel.onmessage = onProgress;
+  return invoke<FetchSummary>("check_aws", {
+    profile: args.profile ?? null,
+    credentials: args.credentials ?? null,
+    region: args.region,
+    source: args.source,
+    startMs: args.startMs ?? null,
+    endMs: args.endMs ?? null,
+    bucket: args.bucket ?? null,
+    prefix: args.prefix ?? null,
+    endpointUrl: args.endpointUrl ?? null,
+    onProgress: channel,
+  });
+}
+
+/** Load the staged download into the analysis views. No network access. */
+export async function pullStaged(
+  onProgress: (event: IngestProgressEvent) => void
+): Promise<number> {
+  const channel = new Channel<IngestProgressEvent>();
+  channel.onmessage = onProgress;
+  return invoke<number>("pull_staged", { onProgress: channel });
+}
+
+/** Forget cached credentials and delete any staged download. */
+export async function clearAwsCache(): Promise<void> {
+  return invoke<void>("clear_aws_cache");
+}
+
+/** Whether credentials are cached. Returns a bool, never the values. */
+export async function hasCachedAwsCredentials(): Promise<boolean> {
+  return invoke<boolean>("has_cached_aws_credentials");
 }
 
 export async function getRecordById(id: number): Promise<RecordDetail | null> {

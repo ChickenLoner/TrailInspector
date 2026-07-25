@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.5.0] — 2026-07-26
+
+### Added
+
+- **Import from Live AWS** — pull CloudTrail logs directly from an AWS account, no AWS CLI required. Credentials entered in-app (access key / secret / session token) or picked from a named `~/.aws` profile
+- **Two live sources** — `cloudtrail:LookupEvents` (last 90 days, no S3 access needed) or the trail's S3 bucket (full history, full fidelity)
+- **Check before pull** — Check downloads and counts everything, reporting exact event count, time range, trails, and bucket before anything replaces the loaded dataset. Pull reuses the staged download, so the transfer is never paid for twice
+- **Explicit bucket override** — name the bucket to skip `DescribeTrails`, for roles that can read a bucket but not enumerate trails
+- **Endpoint URL override** — the `aws --endpoint-url` equivalent, for LocalStack, moto, and emulated AWS. S3 switches to path-style addressing automatically
+- **`aws cloudtrail lookup-events` exports** — the `{"Events":[{"CloudTrailEvent":"…"}]}` shape now loads natively, no manual conversion
+- **Single-file import** — "Open Single File" alongside the existing folder picker; an explicitly chosen file bypasses the extension filter
+- **`aws` cargo feature** — the AWS SDK is gated so `cargo test -p trail-inspector-core` stays offline and SDK-free
+
+### Fixed
+
+- **Gzip detected by magic bytes, not filename** — files such as `audit.log.gz` were previously invisible to the directory walker and, if reached, returned raw compressed bytes to the parser. Affected the existing file-import path, not just live import
+- **Fully-qualified `X-Amz-Target`** — the CloudTrail target header is now sent in the `com.amazonaws.cloudtrail.v20131101.…` form the AWS CLI uses. Some emulators only register that form and answer the short form with `UnknownOperationException`
+
+### Security
+
+- Typed AWS credentials are held in backend memory for the session only — never written to disk, browser storage, or `~/.aws`. "Clear cache" wipes them and any staged download
+- `AwsCredentials` has a hand-written `Debug` that redacts secret and session token; `FetchRequest` deliberately omits `Serialize` so secrets cannot round-trip to the frontend
+- Profile discovery reads INI section headers and the `region` key only — it never parses credential keys
+
+---
+
 ## [1.3.0] — 2026-04-24
 
 ### Added

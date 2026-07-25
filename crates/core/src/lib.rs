@@ -9,3 +9,6 @@ pub mod error;
 pub mod session;
 pub mod geoip;
 pub mod s3;
+/// Pull logs from AWS. Profile listing is always available; the SDK-backed
+/// fetchers require the `aws` feature.
+pub mod fetch;

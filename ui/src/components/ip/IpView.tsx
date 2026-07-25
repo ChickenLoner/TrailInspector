@@ -108,7 +108,7 @@ function GeoIpLoader({ onLoaded, onCancel }: LoaderProps) {
       <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.5, padding: "6px 8px", background: "var(--bg-tertiary)", borderRadius: 4, border: "1px solid var(--border)" }}>
         Basic geo data is already loaded automatically via ip-api.com.
         Load DB-IP Lite MMDB files for offline use or higher accuracy.
-        Free at <span style={{ fontFamily: "monospace", color: "#58a6ff" }}>db-ip.com/db/lite</span>
+        Free at <span style={{ fontFamily: "monospace", color: "#58a6ff" }}>db-ip.com/db/lite.php</span>
       </div>
 
       <FileRow
