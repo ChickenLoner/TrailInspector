@@ -26,6 +26,12 @@ jobs:
       - name: Run core tests
         run: cargo test -p trail-inspector-core
 
+      # The AWS SDK sits behind the `aws` feature, so the run above skips every
+      # test for the live-import module — including the credential-redaction
+      # ones. Still fully offline: these tests make no network calls.
+      - name: Run core tests (aws feature)
+        run: cargo test -p trail-inspector-core --features aws
+
   # ────────────────────────────────────────────────────────────
   # Cross-platform Tauri bundles
   # ────────────────────────────────────────────────────────────
