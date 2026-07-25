@@ -1,26 +1,31 @@
 use tauri::ipc::Channel;
 use tauri::State;
 use trail_inspector_core::store::{ProgressEvent, Store, IngestWarning};
+use trail_inspector_core::fetch::FetchProgress;
 use crate::state::AppState;
-use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum IngestProgress {
+    /// Download phase — only emitted by the AWS fetch commands.
+    Fetch(FetchProgress),
     Progress(ProgressEvent),
     Complete { records_total: usize, warnings: Vec<IngestWarning> },
     #[allow(dead_code)]
     Error { message: String },
 }
 
-#[tauri::command]
-pub async fn load_directory(
-    path: String,
+/// Load a directory (or single file) into the app state, streaming progress.
+///
+/// Shared by `load_directory` and the AWS fetch command so the store swap and the
+/// session-index invalidation below live in exactly one place — those two must
+/// always happen together, and a duplicated copy is the kind of thing that rots.
+pub(crate) async fn ingest_path_into_state(
+    root: PathBuf,
     on_progress: Channel<IngestProgress>,
-    state: State<'_, AppState>,
+    state: &AppState,
 ) -> Result<usize, String> {
-    let root = Path::new(&path).to_path_buf();
-
     // Run blocking IO in a spawn_blocking thread so we don't block the async runtime
     let result = tokio::task::spawn_blocking(move || {
         let mut store = Store::new();
@@ -52,4 +57,13 @@ pub async fn load_directory(
     });
 
     Ok(total)
+}
+
+#[tauri::command]
+pub async fn load_directory(
+    path: String,
+    on_progress: Channel<IngestProgress>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    ingest_path_into_state(PathBuf::from(&path), on_progress, &state).await
 }

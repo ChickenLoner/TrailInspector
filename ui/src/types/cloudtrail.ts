@@ -62,7 +62,54 @@ export interface IngestWarning {
   file?: string;
 }
 
+/** Which AWS source a fetch pulls from. Mirrors core's `FetchSource`. */
+export type FetchSource = "lookupEvents" | "trailBucket";
+
+/** Stage of an AWS fetch. Mirrors core's `FetchPhase`. */
+export type FetchPhase = "connecting" | "listing" | "downloading";
+
+/**
+ * Download progress. `itemsTotal` is null while unknown — LookupEvents is
+ * token-paginated with no up-front count, so the bar must stay indeterminate
+ * until the last page lands.
+ */
+export interface FetchProgress {
+  phase: FetchPhase;
+  itemsDone: number;
+  itemsTotal: number | null;
+  message: string;
+}
+
+/** A named AWS profile. Name and region only — never credential values. */
+export interface ProfileInfo {
+  name: string;
+  region?: string;
+}
+
+/**
+ * Credentials typed into the fetch panel, sent to the backend for one call.
+ *
+ * Deliberately never persisted on this side — the backend caches them in memory
+ * for the session, and they are never written to disk or to `~/.aws`.
+ */
+export interface AwsCredentialsInput {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+}
+
+/** What a Check found, before committing to load it. */
+export interface FetchSummary {
+  files: number;
+  events: number;
+  earliestMs: number | null;
+  latestMs: number | null;
+  trails: string[];
+  bucket: string | null;
+}
+
 export type IngestProgressEvent =
+  | { type: "fetch"; phase: FetchPhase; itemsDone: number; itemsTotal: number | null; message: string }
   | { type: "progress"; filesTotal: number; filesDone: number; recordsTotal: number }
   | { type: "complete"; recordsTotal: number; warnings: IngestWarning[] }
   | { type: "error"; message: string };

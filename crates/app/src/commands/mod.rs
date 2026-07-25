@@ -1,4 +1,5 @@
 pub mod ingest;
+pub mod fetch;
 pub mod query;
 pub mod stats;
 pub mod detection;

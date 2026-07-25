@@ -13,7 +13,10 @@ name = "trail_inspector_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-trail-inspector-core = { path = "../core" }
+# `aws` is enabled unconditionally here: the fetch feature ships in the product, so
+# the app always needs it. The feature gate exists so `cargo test -p
+# trail-inspector-core` stays offline and SDK-free, not to make the app optional.
+trail-inspector-core = { path = "../core", features = ["aws"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

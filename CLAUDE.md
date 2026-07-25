@@ -35,3 +35,12 @@ When something fails repeatedly, when user has to re-explain, or when a workarou
 - Field→index lookup: use `Store::index_for(field)` -> `&HashMap<Arc<str>, RoaringBitmap>`, don't re-match the 11 fields.
 - `RoaringBitmap::len()` is u64 — add `as usize` where a usize is expected.
 - simd-json can't deserialize `Box<serde_json::value::RawValue>` — don't swap parser.rs to it.
+- `IndexedRecord` has no `Debug`; use `match` not `unwrap_err()` in parser tests.
+- Parser accepts both `{"Records":[...]}` and `lookup-events` `{"Events":[{"CloudTrailEvent":"..."}]}`.
+- `crates/core/examples/*.rs` build on default features — feature-gated example code breaks `cargo test`.
+- AWS SDK sits behind core's `aws` feature; app enables it always, core default stays offline.
+- SDK errors: use `fetch::aws_message`, not `DisplayErrorContext` — latter dumps the raw response.
+- LocalStack/CTF: set `endpoint_url`; S3 auto-switches to path-style addressing.
+- Rust SDK sends short `X-Amz-Target`; CLI sends `com.amazonaws.*` — emulators need qualified.
+- Rewrite signed headers in `modify_before_signing`, never after — signature covers them.
+- Compare against `aws <cmd> --debug` before assuming an endpoint lacks an operation.

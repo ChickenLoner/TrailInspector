@@ -19,9 +19,31 @@ thiserror = "2"
 maxminddb = "0.24"
 serde_yaml = "0.9"
 roaring = "0.10"
+aws-config = { version = "1.10.1", optional = true }
+aws-sdk-cloudtrail = { version = "1.115.0", optional = true }
+aws-sdk-s3 = { version = "1.140.0", optional = true }
+tokio = { version = "1.53.1", features = ["rt", "macros", "time"], default-features = false, optional = true }
+aws-smithy-runtime-api = { version = "1.14.0", optional = true }
+aws-smithy-types = { version = "1.6.1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# Default build stays synchronous and offline: `cargo test -p trail-inspector-core`
+# pulls no AWS SDK, no tokio, and touches no network. The `aws` feature is what
+# turns on the fetch module.
+default = []
+aws = [
+    "dep:aws-config",
+    "dep:aws-sdk-cloudtrail",
+    "dep:aws-sdk-s3",
+    "dep:tokio",
+    # Needed to reach the interceptor traits that let us rewrite X-Amz-Target
+    # before signing.
+    "dep:aws-smithy-runtime-api",
+    "dep:aws-smithy-types",
+]
 
 [dependencies.tempfile]
 version = "3"

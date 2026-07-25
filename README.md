@@ -19,7 +19,7 @@
 
 ## Overview
 
-TrailInspector loads raw CloudTrail exports — `.json`, `.json.gz`, or ZIP archives — entirely in memory and lets you search, visualize, triage threats, and investigate sessions without sending data to any external service.
+TrailInspector loads raw CloudTrail exports — `.json`, `.json.gz`, or ZIP archives — entirely in memory and lets you search, visualize, triage threats, and investigate sessions without sending data to any external service. It can also pull logs straight from a live AWS account, so you never have to leave the tool to run the CLI.
 
 The investigation workflow is modeled after Splunk: a query bar with SPL-like syntax, a timeline histogram for scoping time windows, field statistics for pivoting on values, a detections panel that fires **60 MITRE ATT&CK-mapped rules** automatically plus any **custom YAML rules** you define, session grouping to cluster activity by identity and IP, and offline IP enrichment via DB-IP Lite.
 
@@ -66,7 +66,8 @@ Dedicated investigation surface for S3 data exfiltration analysis — total byte
 
 | Capability | Details |
 |---|---|
-| **Ingest** | `.json`, `.json.gz`, `.zip`, and nested directory trees; parallel decompression via Rayon |
+| **Ingest** | `.json`, `.json.gz`, `.zip`, and nested directory trees; folder or single-file import; `aws cloudtrail lookup-events` exports read natively; parallel decompression via Rayon |
+| **Live Import** | Pull logs from a live AWS account via `LookupEvents` or the trail's S3 bucket — no AWS CLI required |
 | **Search** | SPL-like query bar — `AND` / `OR` / `NOT`, field matching, wildcards, time presets |
 | **Visualize** | Timeline histogram, field statistics, identity activity timeline |
 | **Detect** | 60 built-in MITRE ATT&CK-mapped rules + custom YAML rules with AND/OR/NOT filters and sliding-window thresholds |
@@ -76,7 +77,7 @@ Dedicated investigation surface for S3 data exfiltration analysis — total byte
 | **Investigate** | One-click "View Evidence" jumps from alert → filtered event table |
 | **Correlate** | Session ↔ alert cross-linking; AssumeRole chain detection across accounts |
 | **Export** | Save filtered results as CSV or JSON |
-| **Offline** | No telemetry, no cloud dependency — all processing happens locally |
+| **Offline by default** | No telemetry. All parsing, indexing, and analysis happen locally — the only outbound traffic is what you explicitly trigger (live import, online IP lookup, AbuseIPDB) |
 
 ---
 
@@ -116,8 +117,11 @@ cargo tauri dev
 ### Run Tests
 
 ```bash
-cargo test -p trail-inspector-core
+cargo test -p trail-inspector-core              # default: offline, no AWS SDK
+cargo test -p trail-inspector-core --features aws   # includes the live-import module
 ```
+
+The AWS SDK sits behind the `aws` cargo feature so the default `crates/core` build stays synchronous, offline, and quick to test. The desktop app enables it unconditionally.
 
 ### Production Build
 
@@ -129,12 +133,46 @@ Installers are written to `crates/app/target/release/bundle/`.
 
 ---
 
+## Importing from Live AWS
+
+Click **Import from Live AWS** on the start screen to pull logs without touching a terminal.
+
+### Credentials
+
+Two ways in, whichever suits you:
+
+- **Enter keys directly** — access key, secret key, and (for temporary `ASIA…` keys) a session token. No AWS CLI installation or configuration needed.
+- **Named profile** — pick any profile already in `~/.aws/config` or `~/.aws/credentials`.
+
+Typed keys are held **in memory for the session only**. They are never written to disk, never stored in browser storage, and never written to `~/.aws` — your existing CLI setup is left untouched. **Clear cache** wipes them immediately, along with any downloaded files. Only your region, endpoint, and profile *name* are remembered between launches.
+
+### Sources
+
+| Source | Needs | Covers |
+|---|---|---|
+| **LookupEvents API** | `cloudtrail:LookupEvents` | Last 90 days. No S3 access required — often the only permission an audit role has |
+| **S3 trail bucket** | `s3:ListBucket`, `s3:GetObject`, and `cloudtrail:DescribeTrails` *(unless you name the bucket)* | Full trail history, full fidelity |
+
+Naming the bucket explicitly skips `DescribeTrails` entirely — useful when your role can read the bucket but can't enumerate trails.
+
+### Check before you pull
+
+**Check** downloads and counts everything first, then reports the exact event count, time range, and any trails or buckets found. Nothing replaces your loaded dataset until you press **Pull** — and Pull reuses what Check already downloaded, so you don't pay for the transfer twice.
+
+Leave both time fields empty to take everything available. `LookupEvents` is rate limited to roughly 2 requests/second, so a wide window genuinely takes a while.
+
+### Emulated AWS (LocalStack, moto, CTF ranges)
+
+Set **AWS URL** to your endpoint (the `aws --endpoint-url` equivalent). S3 automatically switches to path-style addressing, and the CloudTrail target header is sent in the fully-qualified form the AWS CLI uses, which some emulators require.
+
+---
+
 ## GeoIP Setup (Optional)
 
-To enable IP enrichment and geo anomaly rules, download the free **DB-IP Lite** databases from [db-ip.com/db/lite](https://db-ip.com/db/lite) (no registration required, CC BY 4.0) and load them via the IP tab:
+To enable IP enrichment and geo anomaly rules, download the free **DB-IP Lite** databases from [db-ip.com/db/lite.php](https://db-ip.com/db/lite.php) (no registration required, CC BY 4.0) and load them via the IP tab:
 
-- `dbip-city-lite.mmdb` — country, city, and coordinates
-- `dbip-asn-lite.mmdb` — ASN and organisation
+- [`dbip-city-lite.mmdb`](https://db-ip.com/db/download/ip-to-city-lite) — country, city, and coordinates
+- [`dbip-asn-lite.mmdb`](https://db-ip.com/db/download/ip-to-asn-lite) — ASN and organisation
 
 Without the databases the tool still works fully — IP enrichment and geo anomaly rules (`GEO-01`, `GEO-02`) are simply disabled.
 
@@ -145,7 +183,7 @@ Without the databases the tool still works fully — IP enrichment and geo anoma
 ```
 TrailInspector/
 ├── crates/
-│   ├── core/          # Pure Rust library — parse, index, query, detect, session, geoip (no Tauri)
+│   ├── core/          # Pure Rust library — parse, index, query, detect, session, geoip, fetch (no Tauri)
 │   └── app/           # Tauri v2 IPC glue — thin command wrappers only
 └── ui/                # React + TypeScript + Vite + TailwindCSS frontend
 ```
