@@ -5612,7 +5612,7 @@ dependencies = [
 
 [[package]]
 name = "trail-inspector-app"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "open",
@@ -5629,7 +5629,7 @@ dependencies = [
 
 [[package]]
 name = "trail-inspector-core"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "aws-config",
  "aws-sdk-cloudtrail",

@@ -116,7 +116,11 @@ pub struct FetchRequest {
 
 impl FetchRequest {
     /// How to describe the identity in progress messages, without naming secrets.
-    pub(crate) fn identity_label(&self) -> String {
+    ///
+    /// `pub`, not `pub(crate)`: the only callers are the feature-gated fetchers, so
+    /// a crate-private version reads as dead code in the default build — and the
+    /// redaction tests below should run in both feature configurations.
+    pub fn identity_label(&self) -> String {
         if self.credentials.is_some() {
             // Never the key id itself — this string reaches the UI.
             "supplied credentials".to_string()
