@@ -5,6 +5,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.6.0] — 2026-07-27
+
+### Fixed
+
+- **Filters survived tab switches invisibly** — excluding a value then leaving the Search tab left the filter applied but unreachable: the value vanished from the sidebar, and the Clear button hid itself. `FilterPanel` held its active filters in local state while `App` held the fragment derived from them, and switching tabs unmounts the search view, destroying the child's copy. Filters now live in `App`
+- **Filtering a value emptied its own section** — including a value scoped that field's own counts to itself, so every other value dropped to zero and disappeared. Each field is now counted with its own clause removed, the standard faceted-search scoping, so an excluded value keeps a true count and you can switch between values without clearing first
+- **Alerts silently lost their evidence when time-filtered** — the 100-id transport cap was applied before time filtering, so an alert whose first 100 ids fell outside the selected window vanished entirely. Capping now happens last, at the IPC boundary
+- **Custom-rule alerts shipped unbounded id lists over IPC** — only built-in rules were capped
+- **Session correlation matched against a truncated sample** — `get_session_alerts` and `get_alert_sessions` saw only each alert's first 100 records
+- **"View evidence" showed fewer events than the alert counted** — DI-02 matched 7 event names and advertised 5; PE-04 matched 6 and advertised 4; LM-02 matched 2 and advertised 1; RDS-02 matched 3 and advertised 2. Queries are now derived from the names the rule matches on
+- **Severity colours disagreed between panels** — the same Critical alert rendered `#d41f1f` in the alert list and `#f85149` in the detail panel. Both now read the `--sev-*` design tokens
+
+### Changed
+
+- **Alert record ids are deterministic** — burst rules collected ids in `HashMap` iteration order, so the capped 100-id preview varied between runs on identical data. Ids now come out ascending
+- **AlertDetail severity colours** now match the rest of the app (see above)
+- **Redundant `count` metadata removed** from DE-01, DI-02, IA-03 and PE-01 — it duplicated `matchingCount`, which the UI already displays
+
+### Performance
+
+- **Detection is ~8× faster** — 1.42s → 176ms on 100,000 records. IM-01 accounted for 91% of the time: it is the only rule that collects every qualifying window rather than stopping at the first, and it re-inserted the whole window on each step (~3M redundant inserts for ~7k events)
+- **Detection rules run in parallel** — worth ~13% while IM-01 dominated, 2.4× once it no longer did
+- **Filter sidebar counts use bitmap intersections** — each of the nine per-click queries previously executed the query, materialised every matching id, sorted it by timestamp, then walked every record. Cost now scales with distinct values in the field rather than matching records. `bucketName` stops parsing a blob per record and uses its index
+- **Quadratic dedup removed from seven burst rules** — `Vec::contains` inside the sliding window became `RoaringBitmap`
+- **Release profile** — fat LTO, one codegen unit, stripped
+- **Dependencies optimised in dev builds** — the core test suite went from 5.66s to 0.43s
+
+### Internal
+
+- Rule identity (id, title, severity, MITRE, service) lives only in the registry; rules return a `Finding` and the registry stamps the rest. Previously both declared it and nothing checked they agreed
+- 31 rules that were pure index lookups are now declarative `Eval::Match` specs rather than hand-written functions
+- Shared `window_burst` replaces seven copies of the sliding-window loop; `UserIdentity::identity_key` replaces eight copies of the arn→userName fallback
+- `crates/app` no longer reimplements query logic — field counting moved to core
+- Tests: 176, up from 161
+
+**Breaking (library):** `crates/core`'s `DetectionRule.name` is now `title`, `evaluate` is an `Eval` enum, rule functions return `Option<Finding>`, and 31 rule functions were removed. The desktop app is unaffected.
+
+---
+
 ## [1.5.0] — 2026-07-26
 
 ### Added
