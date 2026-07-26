@@ -340,6 +340,11 @@ export default function App() {
   const activeQuery = buildQuery(queryText, filterFragment, globalTimeRange);
   const queryActive = activeQuery.trim().length > 0;
 
+  // Same query without the filter-panel fragment. The panel scopes each field's
+  // value counts itself, re-adding every filter except that field's own, so it
+  // must not be handed a query that already contains them.
+  const filterBaseQuery = buildQuery(queryText, "", globalTimeRange);
+
   if (!loaded) {
     return (
       <div style={{ height: "100vh", background: "var(--bg-primary)" }}>
@@ -438,7 +443,7 @@ export default function App() {
 
       {/* Main area: filter panel + table + detail */}
       <div className="flex flex-1 overflow-hidden">
-        <FilterPanel onFilterChange={handleFilterChange} onUserSelect={handleUserSelect} query={activeQuery} />
+        <FilterPanel onFilterChange={handleFilterChange} onUserSelect={handleUserSelect} baseQuery={filterBaseQuery} />
 
         <div className="flex flex-col flex-1 overflow-hidden">
           {results && (
