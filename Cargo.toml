@@ -5,3 +5,16 @@ resolver = "2"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["raw_value"] }
+
+# Shipped binary. Cross-crate inlining matters here: the hot loops are core
+# functions called through the app crate, and rustc will not inline across the
+# crate boundary without LTO.
+#
+# `panic` is deliberately left at "unwind": a panic inside one detection rule
+# should surface as a failed command, not kill the whole app mid-investigation.
+# Fat LTO + one codegen unit makes `cargo tauri build` noticeably slower —
+# that cost is on release builds only, `cargo tauri dev` is unaffected.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
