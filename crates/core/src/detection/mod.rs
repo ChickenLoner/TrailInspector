@@ -1005,8 +1005,22 @@ const MAX_ALERT_IDS: usize = 100;
 /// correlation, time filtering) need the full set to be correct. Call
 /// [`cap_alert_ids`] last, at the IPC boundary.
 pub fn run_all_rules(store: &Store) -> Vec<Alert> {
+    use rayon::prelude::*;
+
+    // Rules are pure `fn(&Store)` with no shared state, and roughly half of them
+    // read request-parameter blobs. Those reads are a lock-free slice into the
+    // sealed mmap, so they scale across threads rather than serialising.
+    //
+    // `par_iter().collect()` preserves registry order, and the severity sort
+    // below is stable, so the alert order stays deterministic.
+    //
+    // Measured on the 100K-record benchmark: ~1.37s vs ~1.42s best-case, ~1.45s
+    // vs ~1.67s median. Modest, not linear — the runtime is concentrated in a
+    // couple of heavy rules (IM-02 groups every Delete*/Terminate* event), so
+    // spreading 70 mostly-trivial rules across cores cannot do much. Speeding up
+    // those individual rules is where the remaining time is.
     let mut alerts: Vec<Alert> = all_rules()
-        .iter()
+        .par_iter()
         .filter_map(|rule| match rule.evaluate {
             // Geo rules are run separately by `run_geo_rules`, which has the engine.
             Eval::Geo(_) => None,
