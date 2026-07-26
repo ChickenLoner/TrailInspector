@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use roaring::RoaringBitmap;
 use crate::store::Store;
 use crate::geoip::GeoIpEngine;
 
@@ -82,8 +83,56 @@ impl Finding {
 /// optional at runtime, so they are a distinct variant rather than a second
 /// registry — one table stays the single source of rule identity.
 pub enum Eval {
+    /// "Alert if any record matches one of these values on an indexed field."
+    ///
+    /// 31 rules had this as their entire body — look up posting lists, union
+    /// them, bail if empty, format a count into a sentence. Stating it as data
+    /// removes that boilerplate and two classes of bug with it: a rule can no
+    /// longer forget the empty check, and the query can no longer disagree with
+    /// what the rule actually matched, because it is derived from the same
+    /// `field`/`values`.
+    ///
+    /// `description` is a template; `{n}` is replaced with the match count.
+    Match {
+        /// Canonical field name, resolved through [`Store::index_for`].
+        field: &'static str,
+        values: &'static [&'static str],
+        description: &'static str,
+    },
     Store(fn(&Store) -> Option<Finding>),
     Geo(fn(&Store, &GeoIpEngine) -> Option<Finding>),
+}
+
+/// Evaluate an [`Eval::Match`] spec.
+fn eval_match(
+    store: &Store,
+    field: &str,
+    values: &[&str],
+    description: &str,
+) -> Option<Finding> {
+    let idx = store.index_for(field)?;
+
+    let mut ids = RoaringBitmap::new();
+    for value in values {
+        if let Some(posting) = idx.get(*value) {
+            ids |= posting;
+        }
+    }
+    if ids.is_empty() {
+        return None;
+    }
+
+    let query = values
+        .iter()
+        .map(|v| format!("{field}={v}"))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+
+    Some(Finding::new(
+        description.replace("{n}", &ids.len().to_string()),
+        ids.iter().collect(),
+        query,
+    ))
 }
 
 pub struct DetectionRule {
@@ -149,7 +198,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Initial Access",
             mitre_technique: "T1078.004",
             service: "IAM",
-            evaluate: Eval::Store(rules::initial_access::ia_03_root_usage),
+            evaluate: Eval::Match {
+                field: "identityType",
+                values: &["Root"],
+                description: "The root account performed {n} API call(s). Root usage is a high-risk indicator as \
+                     root has unrestricted access to all AWS resources.",
+            },
         },
         DetectionRule {
             id: "IA-04",
@@ -168,7 +222,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Persistence",
             mitre_technique: "T1136.003",
             service: "IAM",
-            evaluate: Eval::Store(rules::persistence::pe_01_iam_user_created),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["CreateUser"],
+                description: "{n} IAM user(s) were created. Review whether these accounts are expected and \
+                     authorized.",
+            },
         },
         DetectionRule {
             id: "PE-02",
@@ -186,7 +245,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Persistence",
             mitre_technique: "T1098",
             service: "IAM",
-            evaluate: Eval::Store(rules::persistence::pe_03_login_profile_created),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["CreateLoginProfile"],
+                description: "{n} IAM user(s) had console access (login profiles) created. This grants \
+                     password-based console access to previously API-only accounts.",
+            },
         },
         DetectionRule {
             id: "PE-04",
@@ -204,7 +268,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Persistence",
             mitre_technique: "T1556.006",
             service: "IAM",
-            evaluate: Eval::Store(rules::persistence_ext::pe_05_mfa_deactivated),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeactivateMFADevice", "DeleteVirtualMFADevice"],
+                description: "{n} MFA device(s) were deactivated or deleted. Removing MFA weakens account security \
+                     and may allow attackers to maintain persistent access via stolen credentials.",
+            },
         },
         DetectionRule {
             id: "PE-06",
@@ -232,7 +301,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.008",
             service: "CloudTrail",
-            evaluate: Eval::Store(rules::defense_evasion::de_01_cloudtrail_stopped),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["StopLogging", "DeleteTrail", "UpdateTrail"],
+                description: "{n} event(s) stopped, deleted, or modified CloudTrail logging. Attackers disable \
+                     logging to avoid detection of subsequent actions.",
+            },
         },
         DetectionRule {
             id: "DE-02",
@@ -241,7 +315,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.001",
             service: "GuardDuty",
-            evaluate: Eval::Store(rules::defense_evasion::de_02_guardduty_disabled),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteDetector", "StopMonitoringMembers", "DisassociateMembers"],
+                description: "{n} event(s) disabled or disrupted GuardDuty threat detection. This removes active \
+                     threat monitoring from the account.",
+            },
         },
         DetectionRule {
             id: "DE-04",
@@ -250,7 +329,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.001",
             service: "Config",
-            evaluate: Eval::Store(rules::defense_evasion::de_04_config_recorder_stopped),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["StopConfigurationRecorder", "DeleteConfigurationRecorder"],
+                description: "{n} event(s) stopped or deleted the AWS Config configuration recorder. This disables \
+                     resource configuration tracking.",
+            },
         },
         DetectionRule {
             id: "DE-05",
@@ -259,7 +343,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.008",
             service: "VPC",
-            evaluate: Eval::Store(rules::defense_evasion::de_05_flow_log_deleted),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteFlowLogs"],
+                description: "{n} VPC flow log(s) were deleted. Flow logs capture network traffic metadata; \
+                     deleting them blinds network-level investigation.",
+            },
         },
         DetectionRule {
             id: "DE-06",
@@ -268,7 +357,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.008",
             service: "CloudWatch",
-            evaluate: Eval::Store(rules::defense_evasion::de_06_log_group_deleted),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteLogGroup"],
+                description: "{n} CloudWatch log group(s) were deleted. Removing log groups destroys audit \
+                     evidence and may hide attacker activity.",
+            },
         },
         DetectionRule {
             id: "DE-07",
@@ -286,7 +380,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.001",
             service: "EventBridge",
-            evaluate: Eval::Store(rules::defense_evasion::de_08_eventbridge_rule_disabled),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DisableRule"],
+                description: "{n} EventBridge rule(s) were disabled. Disabling event rules can suppress automated \
+                     security responses and alerting.",
+            },
         },
         DetectionRule {
             id: "DE-09",
@@ -295,7 +394,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.001",
             service: "WAF",
-            evaluate: Eval::Store(rules::defense_evasion::de_09_waf_acl_deleted),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteWebACL", "DeleteWebAclV2"],
+                description: "{n} WAF Web ACL(s) were deleted. Removing WAF rules eliminates protection against \
+                     web-based attacks.",
+            },
         },
         DetectionRule {
             id: "DE-10",
@@ -331,7 +435,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1485",
             service: "Route53",
-            evaluate: Eval::Store(rules::defense_evasion::de_13_route53_zone_deleted),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteHostedZone"],
+                description: "{n} Route53 hosted zone(s) were deleted. This can cause DNS resolution failures and \
+                     may be used to disrupt services.",
+            },
         },
         // ── Credential Access ────────────────────────────────────────────
         DetectionRule {
@@ -350,7 +459,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Credential Access",
             mitre_technique: "T1556",
             service: "IAM",
-            evaluate: Eval::Store(rules::credential_access::ca_04_password_policy_weakened),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["UpdateAccountPasswordPolicy"],
+                description: "{n} modification(s) to the account password policy were detected. Weakening password \
+                     policies enables credential-based attacks.",
+            },
         },
         DetectionRule {
             id: "CA-05",
@@ -368,7 +482,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Credential Access",
             mitre_technique: "T1485",
             service: "KMS",
-            evaluate: Eval::Store(rules::credential_access::ca_06_kms_key_deletion),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["ScheduleKeyDeletion"],
+                description: "{n} KMS key(s) scheduled for deletion. Deleting encryption keys can render encrypted \
+                     data permanently inaccessible, causing data loss.",
+            },
         },
         // ── Discovery ────────────────────────────────────────────────────
         DetectionRule {
@@ -378,7 +497,20 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Discovery",
             mitre_technique: "T1087.004",
             service: "IAM",
-            evaluate: Eval::Store(rules::discovery::di_02_iam_enumeration),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &[
+                    "ListUsers",
+                    "ListRoles",
+                    "ListPolicies",
+                    "ListGroups",
+                    "GetAccountAuthorizationDetails",
+                    "ListAttachedUserPolicies",
+                    "ListAttachedRolePolicies",
+                ],
+                description: "{n} IAM enumeration event(s) detected (ListUsers, ListRoles, ListPolicies, etc.). \
+                     Reconnaissance of IAM resources is a common precursor to privilege escalation.",
+            },
         },
         DetectionRule {
             id: "DI-03",
@@ -406,7 +538,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Exfiltration",
             mitre_technique: "T1485",
             service: "S3",
-            evaluate: Eval::Store(rules::exfiltration::ex_02_s3_bucket_deleted),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteBucket"],
+                description: "{n} S3 bucket(s) were deleted. Bucket deletion can indicate data destruction or \
+                     cleanup of evidence after exfiltration.",
+            },
         },
         DetectionRule {
             id: "EX-03",
@@ -433,7 +570,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Exfiltration",
             mitre_technique: "T1537",
             service: "S3",
-            evaluate: Eval::Store(rules::exfiltration::ex_05_s3_encryption_removed),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteBucketEncryption"],
+                description: "{n} S3 bucket(s) had server-side encryption removed. Unencrypted buckets expose data \
+                     at rest.",
+            },
         },
         // ── Impact ───────────────────────────────────────────────────────
         DetectionRule {
@@ -461,7 +603,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Impact",
             mitre_technique: "T1534",
             service: "SES",
-            evaluate: Eval::Store(rules::impact::im_03_ses_email_verified),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["VerifyEmailIdentity", "CreateEmailIdentity", "VerifyDomainIdentity"],
+                description: "{n} SES email/domain identit(ies) verified. Attackers may verify email identities to \
+                     send phishing emails using the compromised account.",
+            },
         },
         DetectionRule {
             id: "IM-04",
@@ -516,7 +663,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.007",
             service: "VPC",
-            evaluate: Eval::Store(rules::network::nw_03_igw_created),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["CreateInternetGateway", "AttachInternetGateway"],
+                description: "{n} internet gateway event(s) detected. New internet gateways may indicate \
+                     unauthorized VPC exposure to the internet.",
+            },
         },
         DetectionRule {
             id: "NW-04",
@@ -534,7 +686,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Lateral Movement",
             mitre_technique: "T1021",
             service: "VPC",
-            evaluate: Eval::Store(rules::network::nw_05_vpc_peering_created),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["CreateVpcPeeringConnection"],
+                description: "{n} VPC peering connection(s) created. VPC peering can extend network access between \
+                     previously isolated environments.",
+            },
         },
         DetectionRule {
             id: "NW-06",
@@ -543,7 +700,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1562.007",
             service: "VPC",
-            evaluate: Eval::Store(rules::network::nw_06_sg_deleted),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteSecurityGroup"],
+                description: "{n} security group(s) deleted. Security group deletion can expose instances that \
+                     relied on those rules for protection.",
+            },
         },
         DetectionRule {
             id: "NW-07",
@@ -561,7 +723,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Impact",
             mitre_technique: "T1485",
             service: "VPC",
-            evaluate: Eval::Store(rules::network::nw_08_nat_deleted),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteNatGateway"],
+                description: "{n} NAT gateway(s) deleted. Removing NAT gateways can disrupt outbound internet \
+                     access for private subnets.",
+            },
         },
         // ── RDS ──────────────────────────────────────────────────────────
         DetectionRule {
@@ -599,7 +766,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1486",
             service: "EBS",
-            evaluate: Eval::Store(rules::ebs::ebs_01_encryption_disabled),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DisableEbsEncryptionByDefault"],
+                description: "{n} event(s) disabled EBS default encryption. New EBS volumes in this region will be \
+                     created unencrypted, exposing data at rest.",
+            },
         },
         DetectionRule {
             id: "EBS-02",
@@ -617,7 +789,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Exfiltration",
             mitre_technique: "T1537",
             service: "EBS",
-            evaluate: Eval::Store(rules::ebs::ebs_03_volume_detached),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DetachVolume"],
+                description: "{n} EBS volume(s) were detached from EC2 instances. Unexpected detachments may \
+                     indicate data staging prior to exfiltration.",
+            },
         },
         DetectionRule {
             id: "EBS-04",
@@ -626,7 +803,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Impact",
             mitre_technique: "T1485",
             service: "EBS",
-            evaluate: Eval::Store(rules::ebs::ebs_04_snapshot_deleted),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["DeleteSnapshot"],
+                description: "{n} EBS snapshot(s) were deleted. Snapshot deletion destroys backup copies and may \
+                     be used to eliminate forensic evidence.",
+            },
         },
         DetectionRule {
             id: "EBS-05",
@@ -635,7 +817,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Impact",
             mitre_technique: "T1486",
             service: "EBS",
-            evaluate: Eval::Store(rules::ebs::ebs_05_default_kms_changed),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["ModifyEbsDefaultKmsKeyId"],
+                description: "{n} event(s) changed the default KMS key used for EBS volume encryption. Changing to \
+                     an attacker-controlled key can prevent data recovery.",
+            },
         },
         // ── EC2 ──────────────────────────────────────────────────────────
         DetectionRule {
@@ -654,7 +841,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Persistence",
             mitre_technique: "T1098.004",
             service: "EC2",
-            evaluate: Eval::Store(rules::ec2::ec_02_keypair_created),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["CreateKeyPair"],
+                description: "{n} EC2 key pair(s) created. New key pairs establish persistent SSH access to any \
+                     instance configured to accept them.",
+            },
         },
         DetectionRule {
             id: "EC-03",
@@ -681,7 +873,12 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Credential Access",
             mitre_technique: "T1078.004",
             service: "EC2",
-            evaluate: Eval::Store(rules::ec2::ec_05_get_password_data),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["GetPasswordData"],
+                description: "{n} GetPasswordData call(s) retrieved the encrypted Windows administrator password. \
+                     An attacker with the instance key pair can decrypt this for full RDP access.",
+            },
         },
         DetectionRule {
             id: "EC-06",
@@ -690,7 +887,13 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Lateral Movement",
             mitre_technique: "T1098.004",
             service: "EC2",
-            evaluate: Eval::Store(rules::ec2::ec_06_instance_connect),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["SendSSHPublicKey", "SendSerialConsoleSSHPublicKey"],
+                description: "{n} ephemeral SSH public key(s) pushed to EC2 instances via Instance Connect. \
+                     Attackers use this to gain shell access without leaving persistent key pairs, making \
+                     it harder to detect in post-incident review.",
+            },
         },
         DetectionRule {
             id: "EC-07",
@@ -699,7 +902,13 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Execution",
             mitre_technique: "T1651",
             service: "SSM",
-            evaluate: Eval::Store(rules::ec2::ec_07_ssm_run_command),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["SendCommand"],
+                description: "{n} SSM SendCommand event(s) detected. SSM Run Command provides remote code \
+                     execution on managed EC2 instances without requiring SSH or open ports, and is \
+                     commonly abused for post-compromise execution.",
+            },
         },
         DetectionRule {
             id: "EC-08",
@@ -708,7 +917,13 @@ fn all_rules_inner() -> Vec<DetectionRule> {
             mitre_tactic: "Defense Evasion",
             mitre_technique: "T1078",
             service: "EC2",
-            evaluate: Eval::Store(rules::ec2::ec_08_serial_console_enabled),
+            evaluate: Eval::Match {
+                field: "eventName",
+                values: &["EnableSerialConsoleAccess"],
+                description: "{n} event(s) enabled EC2 serial console access for the account. Serial console \
+                     bypasses all SSH key and network security controls, providing direct low-level \
+                     access to instance terminals.",
+            },
         },
         // ── Lambda ───────────────────────────────────────────────────────
         DetectionRule {
@@ -796,6 +1011,9 @@ pub fn run_all_rules(store: &Store) -> Vec<Alert> {
             // Geo rules are run separately by `run_geo_rules`, which has the engine.
             Eval::Geo(_) => None,
             Eval::Store(f) => f(store).map(|finding| rule.to_alert(finding)),
+            Eval::Match { field, values, description } => {
+                eval_match(store, field, values, description).map(|f| rule.to_alert(f))
+            }
         })
         .collect();
 
@@ -837,7 +1055,7 @@ pub fn run_geo_rules(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
     let mut alerts: Vec<Alert> = all_rules()
         .iter()
         .filter_map(|rule| match rule.evaluate {
-            Eval::Store(_) => None,
+            Eval::Store(_) | Eval::Match { .. } => None,
             Eval::Geo(f) => f(store, geoip).map(|finding| rule.to_alert(finding)),
         })
         .collect();

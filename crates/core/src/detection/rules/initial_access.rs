@@ -45,28 +45,6 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Option<Finding> {
     ))
 }
 
-/// IA-03: Root Account Usage
-pub fn ia_03_root_usage(store: &Store) -> Option<Finding> {
-    let ids = store.idx_identity_type.get("Root")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    let count = ids.len();
-    Some(
-        Finding::new(
-            format!(
-                "The root account performed {count} API call(s). Root usage is a high-risk indicator \
-                 as root has unrestricted access to all AWS resources."
-            ),
-            ids.iter().collect(),
-            "identityType=Root",
-        )
-        .meta("count", count.to_string()),
-    )
-}
-
 /// IA-04: Failed Login Brute Force (≥5 failures within 10 min from same IP)
 pub fn ia_04_brute_force(store: &Store) -> Option<Finding> {
     let ids = store.idx_event_name.get("ConsoleLogin")?;

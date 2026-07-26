@@ -30,25 +30,6 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Option<Finding> {
     )
 }
 
-/// CA-04: Password Policy Weakened
-pub fn ca_04_password_policy_weakened(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("UpdateAccountPasswordPolicy")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} modification(s) to the account password policy were detected. \
-             Weakening password policies enables credential-based attacks.",
-            ids.len()
-        ),
-        ids.iter().collect(),
-        "eventName=UpdateAccountPasswordPolicy",
-    ))
-}
-
 /// CA-05: Root Console Login (specific ConsoleLogin event from Root identity)
 pub fn ca_05_root_console_login(store: &Store) -> Option<Finding> {
     let login_ids = store.idx_event_name.get("ConsoleLogin")?;
@@ -86,21 +67,3 @@ pub fn ca_05_root_console_login(store: &Store) -> Option<Finding> {
     ))
 }
 
-/// CA-06: KMS Key Scheduled for Deletion
-pub fn ca_06_kms_key_deletion(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("ScheduleKeyDeletion")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} KMS key(s) scheduled for deletion. Deleting encryption keys can render \
-             encrypted data permanently inaccessible, causing data loss.",
-            ids.len()
-        ),
-        ids.iter().collect(),
-        "eventName=ScheduleKeyDeletion",
-    ))
-}

@@ -66,25 +66,6 @@ fn is_public_grant(params: Option<serde_json::Value>) -> bool {
     false
 }
 
-/// EX-02: S3 Bucket Deleted
-pub fn ex_02_s3_bucket_deleted(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("DeleteBucket")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} S3 bucket(s) were deleted. Bucket deletion can indicate data destruction \
-             or cleanup of evidence after exfiltration.",
-            ids.len()
-        ),
-        ids.iter().collect(),
-        "eventName=DeleteBucket",
-    ))
-}
-
 /// EX-03: S3 Bulk Download (50+ GetObject in 5 min by same identity)
 pub fn ex_03_s3_bulk_download(store: &Store) -> Option<Finding> {
     let ids = store.idx_event_name.get("GetObject")?;
@@ -167,21 +148,3 @@ pub fn ex_04_s3_logging_disabled(store: &Store) -> Option<Finding> {
     ))
 }
 
-/// EX-05: S3 Bucket Encryption Removed
-pub fn ex_05_s3_encryption_removed(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("DeleteBucketEncryption")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} S3 bucket(s) had server-side encryption removed. \
-             Unencrypted buckets expose data at rest.",
-            ids.len()
-        ),
-        ids.iter().collect(),
-        "eventName=DeleteBucketEncryption",
-    ))
-}

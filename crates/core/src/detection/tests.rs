@@ -153,6 +153,15 @@ fn build_store(records: Vec<IndexedRecord>) -> Store {
     store
 }
 
+/// Run the registry and return the alert for `rule_id`, if it fired.
+///
+/// Rules expressed as `Eval::Match` specs have no function to call directly, so
+/// their tests go through the registry. This exercises the real path — spec
+/// lookup, id stamping and all — rather than a rule body in isolation.
+fn fire(store: &Store, rule_id: &str) -> Option<crate::detection::Alert> {
+    run_all_rules(store).into_iter().find(|a| a.rule_id == rule_id)
+}
+
 // ---------------------------------------------------------------------------
 // Infrastructure
 // ---------------------------------------------------------------------------
@@ -171,7 +180,7 @@ fn test_run_all_rules_empty_store() {
 #[test]
 fn test_de_05_fires_on_delete_flow_logs() {
     let store = build_store(vec![make_indexed(0, "DeleteFlowLogs", "ec2.amazonaws.com")]);
-    let alerts = rules::defense_evasion::de_05_flow_log_deleted(&store);
+    let alerts = fire(&store, "DE-05");
     assert!(alerts.is_some());
     assert_eq!(alerts.as_ref().unwrap().matching_record_ids, vec![0u32]);
 }
@@ -179,14 +188,14 @@ fn test_de_05_fires_on_delete_flow_logs() {
 #[test]
 fn test_de_05_no_fire_on_empty_store() {
     let store = Store::new();
-    let alerts = rules::defense_evasion::de_05_flow_log_deleted(&store);
+    let alerts = fire(&store, "DE-05");
     assert!(alerts.is_none());
 }
 
 #[test]
 fn test_de_06_fires_on_delete_log_group() {
     let store = build_store(vec![make_indexed(0, "DeleteLogGroup", "logs.amazonaws.com")]);
-    let alerts = rules::defense_evasion::de_06_log_group_deleted(&store);
+    let alerts = fire(&store, "DE-06");
     assert!(alerts.is_some());
 }
 
@@ -215,21 +224,21 @@ fn test_de_07_no_fire_without_s3_bucket_param() {
 #[test]
 fn test_de_08_fires_on_disable_rule() {
     let store = build_store(vec![make_indexed(0, "DisableRule", "events.amazonaws.com")]);
-    let alerts = rules::defense_evasion::de_08_eventbridge_rule_disabled(&store);
+    let alerts = fire(&store, "DE-08");
     assert!(alerts.is_some());
 }
 
 #[test]
 fn test_de_09_fires_on_delete_web_acl() {
     let store = build_store(vec![make_indexed(0, "DeleteWebACL", "waf.amazonaws.com")]);
-    let alerts = rules::defense_evasion::de_09_waf_acl_deleted(&store);
+    let alerts = fire(&store, "DE-09");
     assert!(alerts.is_some());
 }
 
 #[test]
 fn test_de_09_fires_on_delete_web_acl_v2() {
     let store = build_store(vec![make_indexed(0, "DeleteWebAclV2", "wafv2.amazonaws.com")]);
-    let alerts = rules::defense_evasion::de_09_waf_acl_deleted(&store);
+    let alerts = fire(&store, "DE-09");
     assert!(alerts.is_some());
 }
 
@@ -291,7 +300,7 @@ fn test_de_12_fires_on_sns_encryption_removed() {
 #[test]
 fn test_de_13_fires_on_route53_zone_deleted() {
     let store = build_store(vec![make_indexed(0, "DeleteHostedZone", "route53.amazonaws.com")]);
-    let alerts = rules::defense_evasion::de_13_route53_zone_deleted(&store);
+    let alerts = fire(&store, "DE-13");
     assert!(alerts.is_some());
 }
 
@@ -357,14 +366,14 @@ fn test_nw_02_no_fire_on_deny_rule() {
 #[test]
 fn test_nw_03_fires_on_igw_created() {
     let store = build_store(vec![make_indexed(0, "CreateInternetGateway", "ec2.amazonaws.com")]);
-    let alerts = rules::network::nw_03_igw_created(&store);
+    let alerts = fire(&store, "NW-03");
     assert!(alerts.is_some());
 }
 
 #[test]
 fn test_nw_03_fires_on_igw_attached() {
     let store = build_store(vec![make_indexed(0, "AttachInternetGateway", "ec2.amazonaws.com")]);
-    let alerts = rules::network::nw_03_igw_created(&store);
+    let alerts = fire(&store, "NW-03");
     assert!(alerts.is_some());
 }
 
@@ -393,14 +402,14 @@ fn test_nw_04_no_fire_on_private_route() {
 #[test]
 fn test_nw_05_fires_on_vpc_peering() {
     let store = build_store(vec![make_indexed(0, "CreateVpcPeeringConnection", "ec2.amazonaws.com")]);
-    let alerts = rules::network::nw_05_vpc_peering_created(&store);
+    let alerts = fire(&store, "NW-05");
     assert!(alerts.is_some());
 }
 
 #[test]
 fn test_nw_06_fires_on_sg_deleted() {
     let store = build_store(vec![make_indexed(0, "DeleteSecurityGroup", "ec2.amazonaws.com")]);
-    let alerts = rules::network::nw_06_sg_deleted(&store);
+    let alerts = fire(&store, "NW-06");
     assert!(alerts.is_some());
 }
 
@@ -429,7 +438,7 @@ fn test_nw_07_no_fire_without_public_ip_flag() {
 #[test]
 fn test_nw_08_fires_on_nat_deleted() {
     let store = build_store(vec![make_indexed(0, "DeleteNatGateway", "ec2.amazonaws.com")]);
-    let alerts = rules::network::nw_08_nat_deleted(&store);
+    let alerts = fire(&store, "NW-08");
     assert!(alerts.is_some());
 }
 
@@ -440,14 +449,14 @@ fn test_nw_08_fires_on_nat_deleted() {
 #[test]
 fn test_pe_05_fires_on_mfa_deactivated() {
     let store = build_store(vec![make_indexed(0, "DeactivateMFADevice", "iam.amazonaws.com")]);
-    let alerts = rules::persistence_ext::pe_05_mfa_deactivated(&store);
+    let alerts = fire(&store, "PE-05");
     assert!(alerts.is_some());
 }
 
 #[test]
 fn test_pe_05_fires_on_virtual_mfa_deleted() {
     let store = build_store(vec![make_indexed(0, "DeleteVirtualMFADevice", "iam.amazonaws.com")]);
-    let alerts = rules::persistence_ext::pe_05_mfa_deactivated(&store);
+    let alerts = fire(&store, "PE-05");
     assert!(alerts.is_some());
 }
 
@@ -537,7 +546,7 @@ fn test_ca_05_no_fire_on_root_login_failure() {
 #[test]
 fn test_ca_06_fires_on_kms_key_deletion_scheduled() {
     let store = build_store(vec![make_indexed(0, "ScheduleKeyDeletion", "kms.amazonaws.com")]);
-    let alerts = rules::credential_access::ca_06_kms_key_deletion(&store);
+    let alerts = fire(&store, "CA-06");
     assert!(alerts.is_some());
 }
 
@@ -609,7 +618,7 @@ fn test_ebs_01_fires_on_encryption_disabled() {
     let store = build_store(vec![
         make_indexed(0, "DisableEbsEncryptionByDefault", "ec2.amazonaws.com")
     ]);
-    let alerts = rules::ebs::ebs_01_encryption_disabled(&store);
+    let alerts = fire(&store, "EBS-01");
     assert!(alerts.is_some());
 }
 
@@ -641,14 +650,14 @@ fn test_ebs_02_no_fire_without_all_group() {
 #[test]
 fn test_ebs_03_fires_on_volume_detached() {
     let store = build_store(vec![make_indexed(0, "DetachVolume", "ec2.amazonaws.com")]);
-    let alerts = rules::ebs::ebs_03_volume_detached(&store);
+    let alerts = fire(&store, "EBS-03");
     assert!(alerts.is_some());
 }
 
 #[test]
 fn test_ebs_04_fires_on_snapshot_deleted() {
     let store = build_store(vec![make_indexed(0, "DeleteSnapshot", "ec2.amazonaws.com")]);
-    let alerts = rules::ebs::ebs_04_snapshot_deleted(&store);
+    let alerts = fire(&store, "EBS-04");
     assert!(alerts.is_some());
 }
 
@@ -657,7 +666,7 @@ fn test_ebs_05_fires_on_kms_key_changed() {
     let store = build_store(vec![
         make_indexed(0, "ModifyEbsDefaultKmsKeyId", "ec2.amazonaws.com")
     ]);
-    let alerts = rules::ebs::ebs_05_default_kms_changed(&store);
+    let alerts = fire(&store, "EBS-05");
     assert!(alerts.is_some());
 }
 
@@ -705,7 +714,7 @@ fn test_lm_02_fires_on_env_vars_updated() {
 #[test]
 fn test_ex_02_fires_on_bucket_deleted() {
     let store = build_store(vec![make_indexed(0, "DeleteBucket", "s3.amazonaws.com")]);
-    let alerts = rules::exfiltration::ex_02_s3_bucket_deleted(&store);
+    let alerts = fire(&store, "EX-02");
     assert!(alerts.is_some());
 }
 
@@ -802,7 +811,7 @@ fn test_ex_05_fires_on_bucket_encryption_removed() {
     let store = build_store(vec![
         make_indexed(0, "DeleteBucketEncryption", "s3.amazonaws.com")
     ]);
-    let alerts = rules::exfiltration::ex_05_s3_encryption_removed(&store);
+    let alerts = fire(&store, "EX-05");
     assert!(alerts.is_some());
 }
 
@@ -872,7 +881,7 @@ fn test_rs_03_fires_on_cluster_snapshot_public() {
 #[test]
 fn test_im_03_fires_on_ses_email_verified() {
     let store = build_store(vec![make_indexed(0, "VerifyEmailIdentity", "ses.amazonaws.com")]);
-    let alerts = rules::impact::im_03_ses_email_verified(&store);
+    let alerts = fire(&store, "IM-03");
     assert!(alerts.is_some());
 }
 
@@ -887,7 +896,7 @@ fn test_matching_record_count_is_accurate() {
         make_indexed(0, "DeleteFlowLogs", "ec2.amazonaws.com"),
         make_indexed(1, "DeleteFlowLogs", "ec2.amazonaws.com"),
     ]);
-    let alerts = rules::defense_evasion::de_05_flow_log_deleted(&store);
+    let alerts = fire(&store, "DE-05");
     assert!(alerts.is_some());
     assert_eq!(alerts.as_ref().unwrap().matching_record_ids.len(), 2);
 }
@@ -1019,4 +1028,59 @@ fn fired_alert_inherits_registry_identity() {
     // matching_count is derived from the id list, not left at the rule's 0.
     assert_eq!(alert.matching_count, alert.matching_record_ids.len());
     assert_eq!(alert.matching_count, 1);
+}
+
+#[test]
+fn match_specs_are_well_formed() {
+    // The declarative descriptions are wrapped with Rust line continuations,
+    // which eat the newline and the next line's indent. A missing trailing
+    // space silently glues two words together ("password- based"), and the
+    // count placeholder must survive rewrapping.
+    for rule in crate::detection::all_rules() {
+        let crate::detection::Eval::Match { field, values, description } = rule.evaluate else {
+            continue;
+        };
+        assert!(!values.is_empty(), "{} has no match values", rule.id);
+        assert_eq!(
+            description.matches("{n}").count(),
+            1,
+            "{} description needs exactly one {{n}} placeholder",
+            rule.id
+        );
+        assert!(
+            !description.contains("  "),
+            "{} description has a double space (bad line wrap): {description:?}",
+            rule.id
+        );
+        assert!(
+            !description.contains("- "),
+            "{} description has a hyphen followed by a space (bad line wrap): {description:?}",
+            rule.id
+        );
+        assert!(
+            crate::store::Store::new().index_for(field).is_some(),
+            "{} matches on unindexed field {field:?}",
+            rule.id
+        );
+    }
+}
+
+#[test]
+fn match_spec_query_covers_every_matched_value() {
+    // The query is derived from the same field/values the rule matches on, so
+    // "view evidence" can no longer show a narrower set than the alert counted.
+    // DI-02 previously listed 5 of its 7 event names.
+    let store = build_store(vec![
+        make_indexed(0, "ListUsers", "iam.amazonaws.com"),
+        make_indexed(1, "ListAttachedRolePolicies", "iam.amazonaws.com"),
+    ]);
+    let alert = fire(&store, "DI-02").expect("DI-02 should fire");
+    assert_eq!(alert.matching_count, 2);
+    for value in ["ListUsers", "ListRoles", "ListAttachedUserPolicies", "ListAttachedRolePolicies"] {
+        assert!(
+            alert.query.contains(value),
+            "DI-02 query omits {value}: {}",
+            alert.query
+        );
+    }
 }

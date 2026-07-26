@@ -1,28 +1,6 @@
 use crate::store::Store;
 use crate::detection::Finding;
 
-/// PE-01: IAM User Created
-pub fn pe_01_iam_user_created(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("CreateUser")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    let count = ids.len();
-    Some(
-        Finding::new(
-            format!(
-                "{count} IAM user(s) were created. Review whether these accounts are expected \
-                 and authorized."
-            ),
-            ids.iter().collect(),
-            "eventName=CreateUser",
-        )
-        .meta("count", count.to_string()),
-    )
-}
-
 /// PE-02: Access Key Created for Another User
 pub fn pe_02_access_key_for_other(store: &Store) -> Option<Finding> {
     let ids = store.idx_event_name.get("CreateAccessKey")?;
@@ -56,25 +34,6 @@ pub fn pe_02_access_key_for_other(store: &Store) -> Option<Finding> {
         ),
         matching,
         "eventName=CreateAccessKey",
-    ))
-}
-
-/// PE-03: Login Profile Created
-pub fn pe_03_login_profile_created(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("CreateLoginProfile")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} IAM user(s) had console access (login profiles) created. \
-             This grants password-based console access to previously API-only accounts.",
-            ids.len()
-        ),
-        ids.iter().collect(),
-        "eventName=CreateLoginProfile",
     ))
 }
 

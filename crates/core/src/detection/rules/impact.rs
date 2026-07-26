@@ -173,28 +173,3 @@ pub fn im_06_mass_instance_start(store: &Store) -> Option<Finding> {
     )
 }
 
-/// IM-03: SES Email Identity Verification (potential phishing setup)
-pub fn im_03_ses_email_verified(store: &Store) -> Option<Finding> {
-    let event_names = ["VerifyEmailIdentity", "CreateEmailIdentity", "VerifyDomainIdentity"];
-    let mut matching = vec![];
-
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
-
-    if matching.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} SES email/domain identit(ies) verified. Attackers may verify email \
-             identities to send phishing emails using the compromised account.",
-            matching.len()
-        ),
-        matching,
-        "eventName=VerifyEmailIdentity OR eventName=CreateEmailIdentity OR eventName=VerifyDomainIdentity",
-    ))
-}

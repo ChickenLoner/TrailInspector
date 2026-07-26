@@ -3,43 +3,6 @@ use crate::store::Store;
 use crate::detection::Finding;
 use super::window::{window_burst, Windows};
 
-/// DI-02: IAM Enumeration
-pub fn di_02_iam_enumeration(store: &Store) -> Option<Finding> {
-    let event_names = [
-        "ListUsers",
-        "ListRoles",
-        "ListPolicies",
-        "ListGroups",
-        "GetAccountAuthorizationDetails",
-        "ListAttachedUserPolicies",
-        "ListAttachedRolePolicies",
-    ];
-
-    let mut matching = vec![];
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
-
-    if matching.is_empty() {
-        return None;
-    }
-
-    let count = matching.len();
-    Some(
-        Finding::new(
-            format!(
-                "{count} IAM enumeration event(s) detected (ListUsers, ListRoles, ListPolicies, etc.). \
-                 Reconnaissance of IAM resources is a common precursor to privilege escalation."
-            ),
-            matching,
-            "eventName=ListUsers OR eventName=ListRoles OR eventName=ListPolicies OR eventName=GetAccountAuthorizationDetails OR eventName=ListGroups",
-        )
-        .meta("count", count.to_string()),
-    )
-}
-
 /// DI-03: AccessDenied Spike (≥10 AccessDenied in 10 min by same identity)
 pub fn di_03_access_denied_spike(store: &Store) -> Option<Finding> {
     let ids = store.idx_error_code.get("AccessDenied")?;

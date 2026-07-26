@@ -2,32 +2,6 @@
 use crate::store::Store;
 use crate::detection::Finding;
 
-/// PE-05: MFA Device Deactivated
-pub fn pe_05_mfa_deactivated(store: &Store) -> Option<Finding> {
-    let event_names = ["DeactivateMFADevice", "DeleteVirtualMFADevice"];
-    let mut matching = vec![];
-
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
-
-    if matching.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} MFA device(s) were deactivated or deleted. Removing MFA weakens account \
-             security and may allow attackers to maintain persistent access via stolen credentials.",
-            matching.len()
-        ),
-        matching,
-        "eventName=DeactivateMFADevice OR eventName=DeleteVirtualMFADevice",
-    ))
-}
-
 /// PE-06: IAM Policy Version Created and Set as Default
 pub fn pe_06_policy_version_created(store: &Store) -> Option<Finding> {
     let ids = store.idx_event_name.get("CreatePolicyVersion")?;

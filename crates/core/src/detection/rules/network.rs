@@ -73,32 +73,6 @@ pub fn nw_02_nacl_allows_all(store: &Store) -> Option<Finding> {
     ))
 }
 
-/// NW-03: Internet Gateway Created and Attached
-pub fn nw_03_igw_created(store: &Store) -> Option<Finding> {
-    let event_names = ["CreateInternetGateway", "AttachInternetGateway"];
-    let mut matching = vec![];
-
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
-
-    if matching.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} internet gateway event(s) detected. New internet gateways may indicate \
-             unauthorized VPC exposure to the internet.",
-            matching.len()
-        ),
-        matching,
-        "eventName=CreateInternetGateway OR eventName=AttachInternetGateway",
-    ))
-}
-
 /// NW-04: Route Table Modified with Default Route (0.0.0.0/0)
 pub fn nw_04_route_to_internet(store: &Store) -> Option<Finding> {
     let event_names = ["CreateRoute", "ReplaceRoute"];
@@ -132,44 +106,6 @@ pub fn nw_04_route_to_internet(store: &Store) -> Option<Finding> {
     ))
 }
 
-/// NW-05: VPC Peering Connection Created
-pub fn nw_05_vpc_peering_created(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("CreateVpcPeeringConnection")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} VPC peering connection(s) created. VPC peering can extend network \
-             access between previously isolated environments.",
-            ids.len()
-        ),
-        ids.iter().collect(),
-        "eventName=CreateVpcPeeringConnection",
-    ))
-}
-
-/// NW-06: Security Group Deleted
-pub fn nw_06_sg_deleted(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("DeleteSecurityGroup")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} security group(s) deleted. Security group deletion can expose \
-             instances that relied on those rules for protection.",
-            ids.len()
-        ),
-        ids.iter().collect(),
-        "eventName=DeleteSecurityGroup",
-    ))
-}
-
 /// NW-07: Subnet Made Public (MapPublicIpOnLaunch enabled)
 pub fn nw_07_subnet_public(store: &Store) -> Option<Finding> {
     let ids = store.idx_event_name.get("ModifySubnetAttribute")?;
@@ -197,21 +133,3 @@ pub fn nw_07_subnet_public(store: &Store) -> Option<Finding> {
     ))
 }
 
-/// NW-08: NAT Gateway Deleted
-pub fn nw_08_nat_deleted(store: &Store) -> Option<Finding> {
-    let ids = store.idx_event_name.get("DeleteNatGateway")?;
-
-    if ids.is_empty() {
-        return None;
-    }
-
-    Some(Finding::new(
-        format!(
-            "{} NAT gateway(s) deleted. Removing NAT gateways can disrupt outbound \
-             internet access for private subnets.",
-            ids.len()
-        ),
-        ids.iter().collect(),
-        "eventName=DeleteNatGateway",
-    ))
-}
