@@ -1,26 +1,9 @@
 import { useState, useEffect } from "react";
 import { getSessionDetail, getSessionAlerts, getRecordById } from "../../lib/tauri";
-import type { SessionDetail as SessionDetailType, SessionEvent, AlertStub, Severity, RecordDetail } from "../../types/cloudtrail";
+import type { SessionDetail as SessionDetailType, SessionEvent, AlertStub, RecordDetail } from "../../types/cloudtrail";
 import { EventDetail } from "../results/EventDetail";
-
-const SEV_COLOR: Record<Severity, string> = {
-  critical: "#d41f1f", high: "#c96d16", medium: "#f8be34", low: "#3c95d1", info: "#65a637",
-};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function fmtDuration(ms: number): string {
-  if (ms < 1000) return "<1s";
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
-  return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
-}
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 19);
-}
+import { SEVERITY_COLOR as SEV_COLOR } from "../../lib/severity";
+import { fmtDurationParts as fmtDuration, fmtTimestamp as fmtTime } from "../../lib/format";
 
 // ---------------------------------------------------------------------------
 // Event row in the timeline

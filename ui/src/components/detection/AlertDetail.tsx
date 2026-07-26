@@ -1,26 +1,8 @@
 import { useState, useEffect } from "react";
-import type { Alert, Severity, SessionSummary } from "../../types/cloudtrail";
+import type { Alert, SessionSummary } from "../../types/cloudtrail";
 import { getAlertSessions } from "../../lib/tauri";
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 16);
-}
-
-const SEVERITY_COLOR: Record<Severity, string> = {
-  critical: "#f85149",
-  high: "#e3a020",
-  medium: "#d29922",
-  low: "#58a6ff",
-  info: "#8b949e",
-};
-
-const SEVERITY_LABEL: Record<Severity, string> = {
-  critical: "CRITICAL",
-  high: "HIGH",
-  medium: "MEDIUM",
-  low: "LOW",
-  info: "INFO",
-};
+import { SEVERITY_COLOR, SEVERITY_LABEL } from "../../lib/severity";
+import { fmtTimestampMinutes as fmtTime } from "../../lib/format";
 
 interface Props {
   alert: Alert | null;
