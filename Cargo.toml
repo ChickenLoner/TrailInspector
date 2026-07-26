@@ -18,3 +18,14 @@ serde_json = { version = "1", features = ["raw_value"] }
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# Optimise dependencies in dev builds, but not our own crates.
+#
+# Ingest and query work runs through flate2/zlib-ng, serde_json and roaring;
+# unoptimised they dominate everything else (26k records took 71s to ingest in a
+# stock debug build). Our crates stay at opt-level 0 so edit-compile stays fast.
+#
+# Cost: changing this invalidates every dependency, so the next build after
+# adding or removing it is a full cold rebuild of the tree.
+[profile.dev.package."*"]
+opt-level = 2
