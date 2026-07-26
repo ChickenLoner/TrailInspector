@@ -1,46 +1,31 @@
-use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::Finding;
 
 /// PE-01: IAM User Created
-pub fn pe_01_iam_user_created(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreateUser") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+pub fn pe_01_iam_user_created(store: &Store) -> Option<Finding> {
+    let ids = store.idx_event_name.get("CreateUser")?;
 
     if ids.is_empty() {
-        return vec![];
+        return None;
     }
 
-    let mut meta = HashMap::new();
-    meta.insert("count".to_string(), ids.len().to_string());
-
-    vec![Alert {
-        rule_id: "PE-01".to_string(),
-        severity: Severity::Medium,
-        title: "IAM User Created".to_string(),
-        description: format!(
-            "{} IAM user(s) were created. Review whether these accounts are expected \
-             and authorized.",
-            ids.len()
-        ),
-        matching_count: 0,
-        matching_record_ids: ids.iter().collect(),
-        metadata: meta,
-        mitre_tactic: "Persistence".to_string(),
-        mitre_technique: "T1136.003".to_string(),
-        service: "IAM".to_string(),
-        query: "eventName=CreateUser".to_string(),
-    }]
+    let count = ids.len();
+    Some(
+        Finding::new(
+            format!(
+                "{count} IAM user(s) were created. Review whether these accounts are expected \
+                 and authorized."
+            ),
+            ids.iter().collect(),
+            "eventName=CreateUser",
+        )
+        .meta("count", count.to_string()),
+    )
 }
 
 /// PE-02: Access Key Created for Another User
-pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreateAccessKey") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+pub fn pe_02_access_key_for_other(store: &Store) -> Option<Finding> {
+    let ids = store.idx_event_name.get("CreateAccessKey")?;
 
     let mut matching = vec![];
     for id in ids {
@@ -60,61 +45,42 @@ pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
     }
 
     if matching.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "PE-02".to_string(),
-        severity: Severity::High,
-        title: "Access Key Created for Another User".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} access key(s) were created where the creator differs from the target user. \
              This pattern is used to establish covert persistence.",
             matching.len()
         ),
-        matching_count: 0,
-        matching_record_ids: matching,
-        metadata: HashMap::new(),
-        mitre_tactic: "Persistence".to_string(),
-        mitre_technique: "T1098.001".to_string(),
-        service: "IAM".to_string(),
-        query: "eventName=CreateAccessKey".to_string(),
-    }]
+        matching,
+        "eventName=CreateAccessKey",
+    ))
 }
 
 /// PE-03: Login Profile Created
-pub fn pe_03_login_profile_created(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreateLoginProfile") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+pub fn pe_03_login_profile_created(store: &Store) -> Option<Finding> {
+    let ids = store.idx_event_name.get("CreateLoginProfile")?;
 
     if ids.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "PE-03".to_string(),
-        severity: Severity::Medium,
-        title: "Login Profile Created (Console Access Added)".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} IAM user(s) had console access (login profiles) created. \
              This grants password-based console access to previously API-only accounts.",
             ids.len()
         ),
-        matching_count: 0,
-        matching_record_ids: ids.iter().collect(),
-        metadata: HashMap::new(),
-        mitre_tactic: "Persistence".to_string(),
-        mitre_technique: "T1098".to_string(),
-        service: "IAM".to_string(),
-        query: "eventName=CreateLoginProfile".to_string(),
-    }]
+        ids.iter().collect(),
+        "eventName=CreateLoginProfile",
+    ))
 }
 
 /// PE-04: Admin policy attached (AttachUserPolicy/AttachRolePolicy/PutUserPolicy/PutRolePolicy
 /// where policy name/ARN contains "AdministratorAccess" or a wildcard resource)
-pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
+pub fn pe_04_admin_policy_attached(store: &Store) -> Option<Finding> {
     let event_names = [
         "AttachUserPolicy",
         "AttachRolePolicy",
@@ -140,26 +106,18 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
     }
 
     if matching.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "PE-04".to_string(),
-        severity: Severity::Critical,
-        title: "Administrative Policy Attached".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} event(s) attached an administrative policy (AdministratorAccess or wildcard). \
              This grants unrestricted access and is a common backdoor technique.",
             matching.len()
         ),
-        matching_count: 0,
-        matching_record_ids: matching,
-        metadata: HashMap::new(),
-        mitre_tactic: "Persistence".to_string(),
-        mitre_technique: "T1098.003".to_string(),
-        service: "IAM".to_string(),
-        query: "eventName=AttachUserPolicy OR eventName=AttachRolePolicy OR eventName=PutUserPolicy OR eventName=PutRolePolicy".to_string(),
-    }]
+        matching,
+        "eventName=AttachUserPolicy OR eventName=AttachRolePolicy OR eventName=PutUserPolicy OR eventName=PutRolePolicy",
+    ))
 }
 
 fn check_admin_policy(params: Option<serde_json::Value>) -> bool {

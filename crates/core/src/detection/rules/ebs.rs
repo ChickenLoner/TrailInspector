@@ -1,39 +1,24 @@
-use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::Finding;
 
 /// EBS-01: EBS Default Encryption Disabled
-pub fn ebs_01_encryption_disabled(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DisableEbsEncryptionByDefault") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+pub fn ebs_01_encryption_disabled(store: &Store) -> Option<Finding> {
+    let ids = store.idx_event_name.get("DisableEbsEncryptionByDefault")?;
 
-    vec![Alert {
-        rule_id: "EBS-01".to_string(),
-        severity: Severity::High,
-        title: "EBS Default Encryption Disabled".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} event(s) disabled EBS default encryption. New EBS volumes in this region will \
              be created unencrypted, exposing data at rest.",
             ids.len()
         ),
-        matching_count: 0,
-        matching_record_ids: ids.iter().collect(),
-        metadata: HashMap::new(),
-        mitre_tactic: "Defense Evasion".to_string(),
-        mitre_technique: "T1486".to_string(),
-        service: "EBS".to_string(),
-        query: "eventName=DisableEbsEncryptionByDefault".to_string(),
-    }]
+        ids.iter().collect(),
+        "eventName=DisableEbsEncryptionByDefault",
+    ))
 }
 
 /// EBS-02: EBS Snapshot Made Public
-pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifySnapshotAttribute") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+pub fn ebs_02_snapshot_public(store: &Store) -> Option<Finding> {
+    let ids = store.idx_event_name.get("ModifySnapshotAttribute")?;
 
     let mut matching = vec![];
     for id in ids {
@@ -47,102 +32,61 @@ pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
     }
 
     if matching.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "EBS-02".to_string(),
-        severity: Severity::Critical,
-        title: "EBS Snapshot Made Public".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} EBS snapshot(s) were made publicly accessible. Public snapshots can be \
              accessed by any AWS account and may expose sensitive data.",
             matching.len()
         ),
-        matching_count: 0,
-        matching_record_ids: matching,
-        metadata: HashMap::new(),
-        mitre_tactic: "Exfiltration".to_string(),
-        mitre_technique: "T1537".to_string(),
-        service: "EBS".to_string(),
-        query: "eventName=ModifySnapshotAttribute".to_string(),
-    }]
+        matching,
+        "eventName=ModifySnapshotAttribute",
+    ))
 }
 
 /// EBS-03: EBS Volume Detached
-pub fn ebs_03_volume_detached(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DetachVolume") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+pub fn ebs_03_volume_detached(store: &Store) -> Option<Finding> {
+    let ids = store.idx_event_name.get("DetachVolume")?;
 
-    vec![Alert {
-        rule_id: "EBS-03".to_string(),
-        severity: Severity::Low,
-        title: "EBS Volume Detached".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} EBS volume(s) were detached from EC2 instances. Unexpected detachments may \
              indicate data staging prior to exfiltration.",
             ids.len()
         ),
-        matching_count: 0,
-        matching_record_ids: ids.iter().collect(),
-        metadata: HashMap::new(),
-        mitre_tactic: "Exfiltration".to_string(),
-        mitre_technique: "T1537".to_string(),
-        service: "EBS".to_string(),
-        query: "eventName=DetachVolume".to_string(),
-    }]
+        ids.iter().collect(),
+        "eventName=DetachVolume",
+    ))
 }
 
 /// EBS-04: EBS Snapshot Deleted
-pub fn ebs_04_snapshot_deleted(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteSnapshot") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+pub fn ebs_04_snapshot_deleted(store: &Store) -> Option<Finding> {
+    let ids = store.idx_event_name.get("DeleteSnapshot")?;
 
-    vec![Alert {
-        rule_id: "EBS-04".to_string(),
-        severity: Severity::Medium,
-        title: "EBS Snapshot Deleted".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} EBS snapshot(s) were deleted. Snapshot deletion destroys backup copies and \
              may be used to eliminate forensic evidence.",
             ids.len()
         ),
-        matching_count: 0,
-        matching_record_ids: ids.iter().collect(),
-        metadata: HashMap::new(),
-        mitre_tactic: "Impact".to_string(),
-        mitre_technique: "T1485".to_string(),
-        service: "EBS".to_string(),
-        query: "eventName=DeleteSnapshot".to_string(),
-    }]
+        ids.iter().collect(),
+        "eventName=DeleteSnapshot",
+    ))
 }
 
 /// EBS-05: EBS Default KMS Key Changed
-pub fn ebs_05_default_kms_changed(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifyEbsDefaultKmsKeyId") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+pub fn ebs_05_default_kms_changed(store: &Store) -> Option<Finding> {
+    let ids = store.idx_event_name.get("ModifyEbsDefaultKmsKeyId")?;
 
-    vec![Alert {
-        rule_id: "EBS-05".to_string(),
-        severity: Severity::Medium,
-        title: "EBS Default KMS Encryption Key Changed".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} event(s) changed the default KMS key used for EBS volume encryption. \
              Changing to an attacker-controlled key can prevent data recovery.",
             ids.len()
         ),
-        matching_count: 0,
-        matching_record_ids: ids.iter().collect(),
-        metadata: HashMap::new(),
-        mitre_tactic: "Impact".to_string(),
-        mitre_technique: "T1486".to_string(),
-        service: "EBS".to_string(),
-        query: "eventName=ModifyEbsDefaultKmsKeyId".to_string(),
-    }]
+        ids.iter().collect(),
+        "eventName=ModifyEbsDefaultKmsKeyId",
+    ))
 }

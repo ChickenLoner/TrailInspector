@@ -125,6 +125,28 @@ pub struct UserIdentity {
 }
 
 impl UserIdentity {
+    /// The identity's display name: ARN, else userName. `None` when the event
+    /// carries neither (common for service-linked and anonymous calls).
+    ///
+    /// Returns the `Arc` itself rather than a `&str` so callers grouping records
+    /// by identity clone a pointer instead of allocating a `String` per record.
+    /// The values are interned, so equal identities share one allocation and
+    /// hash/compare by content as usual.
+    pub fn identity_name(&self) -> Option<&Arc<str>> {
+        self.arn.as_ref().or(self.user_name.as_ref())
+    }
+
+    /// `identity_name` with the `"unknown"` bucket the per-identity detection
+    /// rules group under. Callers needing a different last resort (source IP,
+    /// principal ID) should use [`UserIdentity::identity_name`] and supply their
+    /// own — the fallback chain is part of a rule's semantics, so it is stated at
+    /// the call site rather than hidden here.
+    pub fn identity_key(&self) -> Arc<str> {
+        self.identity_name()
+            .cloned()
+            .unwrap_or_else(|| Arc::from("unknown"))
+    }
+
     pub(crate) fn intern(&mut self, pool: &mut crate::store::StringPool) {
         self.identity_type = self.identity_type.as_deref().map(|s| pool.intern(s));
         self.principal_id = self.principal_id.as_deref().map(|s| pool.intern(s));
