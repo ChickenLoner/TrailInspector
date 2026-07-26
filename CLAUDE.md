@@ -46,3 +46,13 @@ When something fails repeatedly, when user has to re-explain, or when a workarou
 - Compare against `aws <cmd> --debug` before assuming an endpoint lacks an operation.
 - Test S3 fetch offline: `uvx --from 'moto[server]' moto_server -p 5055`, creds `test`/`test`.
 - `crates/core/examples/` breaks `cargo test` if it uses feature-gated code — delete after probing.
+- Bash heredocs eat one backslash level; write regex scripts with the Write tool.
+- PowerShell here-strings `@'...'@` break in the Bash tool — use a heredoc.
+- Multi-line commit messages: `git commit -F -` with a heredoc, never `-m` with here-strings.
+- Force-killing the Tauri app locks WebView2; next launch has no window. Close gracefully.
+- `cargo check` artifacts are separate from `cargo build` — check cannot reuse a build cache.
+- `[profile.dev.package."*"] opt-level=2` costs one ~72min cold rebuild; keeps deps fast after.
+- Toggling any profile orphans every dep artifact; `cargo clean` or the disk fills.
+- `bench_detection_100k_records` is `#[ignore]`d — run it after touching detection perf.
+- Detection time concentrates in one or two rules; measure per-rule before optimizing.
+- Tab switches unmount the search view — state a parent derives from must not live in it.
