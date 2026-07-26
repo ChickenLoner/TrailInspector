@@ -75,7 +75,7 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Option<Finding> {
             matching.len()
         ),
         matching,
-        "eventName=AttachUserPolicy OR eventName=AttachRolePolicy OR eventName=PutUserPolicy OR eventName=PutRolePolicy",
+        crate::detection::field_query("eventName", &event_names),
     ))
 }
 

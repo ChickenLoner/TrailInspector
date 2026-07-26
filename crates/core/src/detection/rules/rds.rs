@@ -70,7 +70,7 @@ pub fn rds_02_public_snapshot_restore(store: &Store) -> Option<Finding> {
             matching.len()
         ),
         matching,
-        "eventName=RestoreDBInstanceFromDBSnapshot OR eventName=RestoreDBClusterFromSnapshot",
+        crate::detection::field_query("eventName", &event_names),
     ))
 }
 

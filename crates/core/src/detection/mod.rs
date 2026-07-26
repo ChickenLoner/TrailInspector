@@ -103,8 +103,23 @@ pub enum Eval {
     Geo(fn(&Store, &GeoIpEngine) -> Option<Finding>),
 }
 
+/// `field=a OR field=b …` — the search query for a set of matched values.
+///
+/// Always derive this rather than writing it out. Three hand-written rules had
+/// drifted apart from the names they actually matched (PE-04 matched 6 and
+/// advertised 4, LM-02 matched 2 and advertised 1, RDS-02 matched 3 and
+/// advertised 2), so "view evidence" showed strictly fewer events than the alert
+/// had counted.
+pub(crate) fn field_query(field: &str, values: &[&str]) -> String {
+    values
+        .iter()
+        .map(|v| format!("{field}={v}"))
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
 /// Evaluate an [`Eval::Match`] spec.
-fn eval_match(
+pub(crate) fn eval_match(
     store: &Store,
     field: &str,
     values: &[&str],
@@ -122,16 +137,10 @@ fn eval_match(
         return None;
     }
 
-    let query = values
-        .iter()
-        .map(|v| format!("{field}={v}"))
-        .collect::<Vec<_>>()
-        .join(" OR ");
-
     Some(Finding::new(
         description.replace("{n}", &ids.len().to_string()),
         ids.iter().collect(),
-        query,
+        field_query(field, values),
     ))
 }
 

@@ -92,14 +92,24 @@ where
 
         let mut qualified = false;
         let mut start = 0;
+        // Highest index already collected. Overlapping windows share almost all
+        // of their events, so without this every advance of `end` re-inserted
+        // the whole window: IM-01 (the one `Windows::All` rule) spent 91% of the
+        // detection benchmark doing ~3M redundant inserts for ~7k events.
+        // Collecting only the newly-covered tail makes each group linear.
+        //
+        // A gap is still excluded correctly: if a later window starts beyond
+        // `collected_upto`, the untouched events in between are never inserted.
+        let mut collected_upto = 0usize;
         for end in 0..events.len() {
             while events[end].0 - events[start].0 > window_ms {
                 start += 1;
             }
             if end - start + 1 >= min_count {
-                for (_, id) in &events[start..=end] {
+                for (_, id) in &events[start.max(collected_upto)..=end] {
                     matched.insert(*id);
                 }
+                collected_upto = end + 1;
                 qualified = true;
                 if windows == Windows::First {
                     break;

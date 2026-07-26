@@ -65,6 +65,6 @@ pub fn lm_02_lambda_env_updated(store: &Store) -> Option<Finding> {
             matching.len()
         ),
         matching,
-        "eventName=UpdateFunctionConfiguration20150331v2",
+        crate::detection::field_query("eventName", &event_names),
     ))
 }
