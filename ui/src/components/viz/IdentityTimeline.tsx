@@ -2,17 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { getIdentitySummary } from "../../lib/tauri";
 import type { IdentitySummary, TimelineEvent } from "../../types/cloudtrail";
 
-function formatTs(ms: number): string {
-  return new Date(ms).toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
+import { fmtLocalTimestamp as formatTs } from "../../lib/format";
 
 function durLabel(ms: number): string {
   const s = Math.round(ms / 1000);

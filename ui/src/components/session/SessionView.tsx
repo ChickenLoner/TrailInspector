@@ -3,20 +3,7 @@ import { listSessions } from "../../lib/tauri";
 import type { SessionSummary, SessionPage } from "../../types/cloudtrail";
 import { SessionDetail } from "./SessionDetail";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function fmtDuration(ms: number): string {
-  if (ms < 1000) return "<1s";
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
-  return `${(ms / 3_600_000).toFixed(1)}h`;
-}
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 19);
-}
+import { fmtDuration, fmtTimestamp as fmtTime } from "../../lib/format";
 
 // ---------------------------------------------------------------------------
 // Session card

@@ -14,6 +14,7 @@ import type {
   IngestProgressEvent,
   ProfileInfo,
 } from "../../types/cloudtrail";
+import { fmtLocalOrDash as fmt } from "../../lib/format";
 
 const REGIONS = [
   "us-east-1", "us-east-2", "us-west-1", "us-west-2",
@@ -36,10 +37,6 @@ function fromLocalInput(s: string): number | undefined {
   if (!s) return undefined;
   const ms = new Date(s).getTime();
   return Number.isNaN(ms) ? undefined : ms;
-}
-
-function fmt(ms: number | null): string {
-  return ms == null ? "—" : new Date(ms).toLocaleString();
 }
 
 interface Props {

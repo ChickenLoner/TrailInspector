@@ -26,6 +26,15 @@
   --sev-medium: #f8be34;
   --sev-low: #3c95d1;
   --sev-info: #65a637;
+
+  /* Translucent fills for severity badges and row highlights. Defined here so
+     the severity palette has exactly one home — `lib/severity.ts` references
+     these vars rather than carrying a second copy of the hex values. */
+  --sev-critical-bg: rgba(212, 31, 31, 0.18);
+  --sev-high-bg: rgba(201, 109, 22, 0.18);
+  --sev-medium-bg: rgba(248, 190, 52, 0.15);
+  --sev-low-bg: rgba(60, 149, 209, 0.15);
+  --sev-info-bg: rgba(101, 166, 55, 0.15);
 }
 
 * {

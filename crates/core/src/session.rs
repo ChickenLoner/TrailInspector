@@ -373,17 +373,16 @@ pub struct AlertStub {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Sessioning falls back to principal ID before "unknown": a session is a
+/// timeline for one actor, and collapsing every unnamed principal into a single
+/// bucket would splice unrelated activity into one session.
 fn identity_key_for(rec: &crate::model::IndexedRecord) -> Arc<str> {
-    if let Some(arn) = &rec.record.user_identity.arn {
-        return Arc::clone(arn);
-    }
-    if let Some(name) = &rec.record.user_identity.user_name {
-        return Arc::clone(name);
-    }
-    if let Some(pid) = &rec.record.user_identity.principal_id {
-        return Arc::clone(pid);
-    }
-    Arc::from("unknown")
+    rec.record
+        .user_identity
+        .identity_name()
+        .or(rec.record.user_identity.principal_id.as_ref())
+        .cloned()
+        .unwrap_or_else(|| Arc::from("unknown"))
 }
 
 fn session_to_summary(s: &Session) -> SessionSummary {

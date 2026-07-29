@@ -1,7 +1,7 @@
 use tauri::State;
 use trail_inspector_core::query::{execute, parse_query_opt};
 use trail_inspector_core::stats::{
-    build_timeline, get_identity_summary, top_field_values,
+    build_timeline, get_identity_summary, top_field_values_for_query,
     FieldValueCount, IdentitySummary, TimelineResult,
 };
 use crate::state::AppState;
@@ -44,23 +44,8 @@ pub async fn get_top_fields(
     state.with_store(|store| {
         let parsed = parse_query_opt(query.as_deref()).map_err(|e| format!("Query error: {e}"))?;
 
-        // Fast path for empty query: read counts directly from the inverted index —
-        // O(unique_values) instead of O(total_records), no Vec allocation
-        if parsed.is_empty() {
-            let idx = store
-                .index_for(field.as_str())
-                .ok_or_else(|| format!("Unknown field: {field}"))?;
-            let mut values: Vec<FieldValueCount> = idx
-                .iter()
-                .map(|(k, v)| FieldValueCount { value: k.to_string(), count: v.len() as usize })
-                .collect();
-            values.sort_unstable_by(|a, b| b.count.cmp(&a.count));
-            values.truncate(top_n);
-            return Ok(values);
-        }
-
-        let result = execute(store, &parsed, 0, usize::MAX);
-        Ok(top_field_values(store, &result.record_ids, &field, top_n))
+        top_field_values_for_query(store, &parsed, &field, top_n)
+            .ok_or_else(|| format!("Unknown field: {field}"))
     })
 }
 

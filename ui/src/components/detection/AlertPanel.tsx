@@ -1,35 +1,12 @@
 import { useState, useMemo } from "react";
 import type { Alert, Severity } from "../../types/cloudtrail";
-
-// ---------------------------------------------------------------------------
-// Severity helpers
-// ---------------------------------------------------------------------------
-
-const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
-
-const SEVERITY_COLOR: Record<Severity, string> = {
-  critical: "#d41f1f",
-  high:     "#c96d16",
-  medium:   "#f8be34",
-  low:      "#3c95d1",
-  info:     "#65a637",
-};
-
-const SEVERITY_BG: Record<Severity, string> = {
-  critical: "rgba(212,31,31,0.18)",
-  high:     "rgba(201,109,22,0.18)",
-  medium:   "rgba(248,190,52,0.15)",
-  low:      "rgba(60,149,209,0.15)",
-  info:     "rgba(101,166,55,0.15)",
-};
-
-const SEVERITY_LABEL: Record<Severity, string> = {
-  critical: "CRITICAL",
-  high:     "HIGH",
-  medium:   "MEDIUM",
-  low:      "LOW",
-  info:     "INFO",
-};
+import {
+  SEVERITY_ORDER,
+  SEVERITY_COLOR,
+  SEVERITY_BG,
+  SEVERITY_LABEL,
+  emptySeverityCounts,
+} from "../../lib/severity";
 
 type GroupBy = "severity" | "service" | "tactic";
 
@@ -91,7 +68,7 @@ interface SeverityFiltersProps {
 }
 
 function SeverityFilters({ alerts, active, onToggle }: SeverityFiltersProps) {
-  const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  const counts = emptySeverityCounts();
   for (const a of alerts) counts[a.severity]++;
 
   return (
