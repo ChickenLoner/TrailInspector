@@ -82,6 +82,17 @@ fn key_in_window(key: &str, start_ms: Option<i64>, end_ms: Option<i64>) -> bool 
         return false;
     }
 
+    // CloudTrail delivers digest files (`.../CloudTrail-Digest/...`) and Insights events
+    // (`.../CloudTrail-Insight/...`) under the same prefix as the logs. They are not event
+    // records: downloading them wastes bandwidth, inflates the file count, and each one then
+    // fails to parse and raises an ingest warning (one per region per hour for digests).
+    if key
+        .split('/')
+        .any(|seg| seg.eq_ignore_ascii_case("CloudTrail-Digest") || seg.eq_ignore_ascii_case("CloudTrail-Insight"))
+    {
+        return false;
+    }
+
     // No bounds at all means take everything; skip the date parse entirely.
     if start_ms.is_none() && end_ms.is_none() {
         return true;
@@ -404,6 +415,20 @@ mod tests {
     const DAY: i64 = 86_400_000;
     /// 2026-07-25T00:00:00Z
     const JUL25: i64 = 1_784_937_600_000;
+
+    #[test]
+    fn skips_digest_and_insight_objects() {
+        let digest = "AWSLogs/111122223333/CloudTrail-Digest/us-east-1/2026/07/25/111122223333_CloudTrail-Digest_us-east-1_trail_us-east-1_20260725T000000Z.json.gz";
+        let insight = "AWSLogs/111122223333/CloudTrail-Insight/us-east-1/2026/07/25/111122223333_CloudTrail-Insight_us-east-1_20260725T0000Z_abc.json.gz";
+        let log = "AWSLogs/111122223333/CloudTrail/us-east-1/2026/07/25/111122223333_CloudTrail_us-east-1_20260725T0000Z_abc.json.gz";
+        for bounds in [(None, None), (Some(JUL25), Some(JUL25 + DAY))] {
+            assert!(!key_in_window(digest, bounds.0, bounds.1), "digest must be skipped");
+            assert!(!key_in_window(insight, bounds.0, bounds.1), "insight must be skipped");
+            assert!(key_in_window(log, bounds.0, bounds.1), "real log must be kept");
+        }
+        // Only a whole path segment counts; a file merely named like it does not.
+        assert!(key_in_window("logs/2026/06/24/my-CloudTrail-Digest-notes.json.gz", None, None));
+    }
 
     #[test]
     fn rejects_non_log_extensions() {
