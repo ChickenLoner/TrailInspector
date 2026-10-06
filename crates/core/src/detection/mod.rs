@@ -833,9 +833,14 @@ fn all_rules() -> Vec<DetectionRule> {
 const MAX_ALERT_IDS: usize = 100;
 
 pub fn run_all_rules(store: &Store) -> Vec<Alert> {
+    use rayon::prelude::*;
+
+    // Rules only read the store and are independent of each other, so they run in parallel.
+    // `collect` into a Vec keeps registry order, so the output (before the stable severity
+    // sort) is identical to the sequential run.
     let mut alerts: Vec<Alert> = all_rules()
-        .iter()
-        .flat_map(|rule| (rule.evaluate)(store))
+        .par_iter()
+        .flat_map_iter(|rule| (rule.evaluate)(store))
         .collect();
 
     alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
