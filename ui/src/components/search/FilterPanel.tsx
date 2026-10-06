@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getTopFields } from "../../lib/tauri";
-import type { FieldValueCount } from "../../types/cloudtrail";
+import type { ActiveFilters, FieldValueCount, FilterMode } from "../../types/cloudtrail";
 
 interface FilterSection {
   field: string;
@@ -19,25 +19,19 @@ const FILTER_SECTIONS: FilterSection[] = [
   { field: "bucketName", label: "S3 Bucket" },
 ];
 
-type FilterMode = "include" | "exclude";
-
-interface ActiveFilter {
-  value: string;
-  mode: FilterMode;
-}
-
 interface Props {
-  /** Called whenever active filters change. Returns a partial query string fragment. */
-  onFilterChange: (fragment: string) => void;
+  /** Active facet filters. Owned by App so they survive tab switches (this view unmounts). */
+  filters: ActiveFilters;
+  /** Called with the complete next set of filters whenever the user changes one. */
+  onFiltersChange: (next: ActiveFilters) => void;
   /** Called when a user name is clicked — triggers Identity tab navigation. */
   onUserSelect?: (user: string) => void;
   /** Current active query from parent — used to scope field value counts. */
   query?: string;
 }
 
-export function FilterPanel({ onFilterChange, onUserSelect, query }: Props) {
+export function FilterPanel({ filters, onFiltersChange, onUserSelect, query }: Props) {
   const [sections, setSections] = useState<Record<string, FieldValueCount[]>>({});
-  const [filters, setFilters] = useState<Record<string, ActiveFilter | null>>({});
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -62,45 +56,22 @@ export function FilterPanel({ onFilterChange, onUserSelect, query }: Props) {
     };
   }, [query]);
 
-  const buildFragment = useCallback(
-    (newFilters: Record<string, ActiveFilter | null>) => {
-      const parts: string[] = [];
-      for (const { field } of FILTER_SECTIONS) {
-        const f = newFilters[field];
-        if (!f) continue;
-        const val = f.value.replace(/"/g, '\\"');
-        if (f.mode === "include") {
-          parts.push(`${field}="${val}"`);
-        } else {
-          parts.push(`${field}!="${val}"`);
-        }
-      }
-      return parts.join(" AND ");
-    },
-    []
-  );
-
   // Cycles: absent → include → exclude → absent
   const toggleValue = useCallback(
     (field: string, value: string) => {
-      setFilters((prev) => {
-        const newFilters = { ...prev };
-        const current = prev[field];
-
-        if (!current || current.value !== value) {
-          newFilters[field] = { value, mode: "include" };
-        } else if (current.mode === "include") {
-          newFilters[field] = { value, mode: "exclude" };
-        } else {
-          // exclude → off
-          newFilters[field] = null;
-        }
-
-        onFilterChange(buildFragment(newFilters));
-        return newFilters;
-      });
+      const current = filters[field];
+      const next: ActiveFilters = { ...filters };
+      if (!current || current.value !== value) {
+        next[field] = { value, mode: "include" };
+      } else if (current.mode === "include") {
+        next[field] = { value, mode: "exclude" };
+      } else {
+        // exclude → off
+        next[field] = null;
+      }
+      onFiltersChange(next);
     },
-    [buildFragment, onFilterChange]
+    [filters, onFiltersChange]
   );
 
   const toggleCollapse = useCallback((field: string) => {
@@ -108,9 +79,8 @@ export function FilterPanel({ onFilterChange, onUserSelect, query }: Props) {
   }, []);
 
   const clearAll = useCallback(() => {
-    setFilters({});
-    onFilterChange("");
-  }, [onFilterChange]);
+    onFiltersChange({});
+  }, [onFiltersChange]);
 
   const hasAnyActive = Object.values(filters).some((f) => f !== null);
 

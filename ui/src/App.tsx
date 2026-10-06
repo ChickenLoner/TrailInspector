@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { DropZone } from "./components/ingest/DropZone";
 import { EventTable } from "./components/results/EventTable";
@@ -10,7 +10,8 @@ import { TimelineChart } from "./components/viz/TimelineChart";
 import { AppShell } from "./components/layout/AppShell";
 import { GlobalTimeBar } from "./components/layout/GlobalTimeBar";
 import { search, getTimeline, exportCsv, exportJson } from "./lib/tauri";
-import type { RecordRow, SearchResult, TimeBucket, IngestWarning, GlobalTimeRange } from "./types/cloudtrail";
+import { buildFilterFragment } from "./lib/query";
+import type { RecordRow, SearchResult, TimeBucket, IngestWarning, GlobalTimeRange, ActiveFilters } from "./types/cloudtrail";
 import type { Tab } from "./components/layout/Sidebar";
 import "./styles/globals.css";
 
@@ -152,7 +153,10 @@ export default function App() {
   const [queryText, setQueryText] = useState(
     () => localStorage.getItem(LS_QUERY_KEY) ?? ""
   );
-  const [filterFragment, setFilterFragment] = useState("");
+  // Facet filters live here, not in FilterPanel: the search view unmounts on tab switch, and the
+  // filter they produce must not outlive the checkboxes that show it.
+  const [filters, setFilters] = useState<ActiveFilters>({});
+  const filterFragment = useMemo(() => buildFilterFragment(filters), [filters]);
   const [globalTimeRange, setGlobalTimeRange] = useState<GlobalTimeRange>(() => {
     try {
       const saved = localStorage.getItem("trailinspector_time_range");
@@ -259,10 +263,10 @@ export default function App() {
     [filterFragment, globalTimeRange, runQuery]
   );
 
-  const handleFilterChange = useCallback(
-    (fragment: string) => {
-      setFilterFragment(fragment);
-      runQuery(queryText, fragment, globalTimeRange);
+  const handleFiltersChange = useCallback(
+    (next: ActiveFilters) => {
+      setFilters(next);
+      runQuery(queryText, buildFilterFragment(next), globalTimeRange);
     },
     [queryText, globalTimeRange, runQuery]
   );
@@ -321,7 +325,7 @@ export default function App() {
   const handleViewEvidence = useCallback(
     (query: string) => {
       setQueryText(query);
-      setFilterFragment("");
+      setFilters({});
       runQuery(query, "", globalTimeRange);
       setActiveTab("search");
     },
@@ -464,7 +468,7 @@ export default function App() {
 
       {/* Main area: filter panel + table + detail */}
       <div className="flex flex-1 overflow-hidden">
-        <FilterPanel onFilterChange={handleFilterChange} onUserSelect={handleUserSelect} query={activeQuery} />
+        <FilterPanel filters={filters} onFiltersChange={handleFiltersChange} onUserSelect={handleUserSelect} query={activeQuery} />
 
         <div className="flex flex-col flex-1 overflow-hidden">
           {results && (
