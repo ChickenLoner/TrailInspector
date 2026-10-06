@@ -69,6 +69,19 @@ fn s3_client(cfg: &aws_config::SdkConfig, req: &FetchRequest) -> aws_sdk_s3::Cli
     aws_sdk_s3::Client::from_conf(builder.build())
 }
 
+/// The bucket's real region: from a successful `HeadBucket`, or from the
+/// `x-amz-bucket-region` header S3 attaches to the redirect/denial when the client is in the
+/// wrong region. `None` when it cannot be determined (the requested region is then kept).
+async fn discover_bucket_region(client: &aws_sdk_s3::Client, bucket: &str) -> Option<String> {
+    match client.head_bucket().bucket(bucket).send().await {
+        Ok(out) => out.bucket_region().map(str::to_string),
+        Err(e) => e
+            .raw_response()
+            .and_then(|r| r.headers().get("x-amz-bucket-region"))
+            .map(str::to_string),
+    }
+}
+
 /// Keep only objects that look like delivered CloudTrail logs and fall inside the
 /// requested window. The date filter reads the `/YYYY/MM/DD/` path segments that
 /// CloudTrail's key layout guarantees; keys that don't match that layout are kept
@@ -177,7 +190,24 @@ where
         None => describe_target(&cfg, &req.region).await?,
     };
 
-    let client = s3_client(&cfg, req);
+    let mut client = s3_client(&cfg, req);
+
+    // The S3 SDK does not follow bucket-region redirects. A trail homed in another region than
+    // the one the user picked would answer every request with PermanentRedirect, so find the
+    // bucket's real region first and rebuild the client for it if it differs.
+    if let Some(region) = discover_bucket_region(&client, &target.bucket)
+        .await
+        .filter(|r| r != &req.region)
+    {
+        on_progress(FetchProgress {
+            phase: FetchPhase::Listing,
+            items_done: 0,
+            items_total: None,
+            message: format!("Bucket is in {region}, not {}; using {region}", req.region),
+        });
+        let cfg = cfg.to_builder().region(aws_config::Region::new(region)).build();
+        client = s3_client(&cfg, req);
+    }
 
     on_progress(FetchProgress {
         phase: FetchPhase::Listing,
@@ -308,9 +338,28 @@ mod tests {
         keys: Vec<&'static str>,
         deny: Vec<&'static str>,
     ) -> String {
+        spawn_fake_s3_with(bucket, keys, deny, None).endpoint
+    }
+
+    pub(super) struct FakeS3 {
+        pub endpoint: String,
+        /// Raw request heads, in arrival order (method line + headers).
+        pub requests: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    /// As `spawn_fake_s3`, and `HEAD /bucket` answers with `x-amz-bucket-region` when
+    /// `head_region` is set. Every request head is recorded.
+    pub(super) fn spawn_fake_s3_with(
+        bucket: &'static str,
+        keys: Vec<&'static str>,
+        deny: Vec<&'static str>,
+        head_region: Option<&'static str>,
+    ) -> FakeS3 {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = std::sync::Arc::clone(&requests);
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
@@ -327,8 +376,21 @@ mod tests {
                     }
                 }
                 let head = String::from_utf8_lossy(&req).to_string();
+                log.lock().unwrap().push(head.clone());
+                let method = head.split_whitespace().next().unwrap_or("").to_string();
                 let target = head.lines().next().unwrap_or("").split_whitespace().nth(1).unwrap_or("/").to_string();
                 let path = target.split('?').next().unwrap_or("/");
+
+                if method == "HEAD" {
+                    let region_header = head_region
+                        .map(|r| format!("x-amz-bucket-region: {r}\r\n"))
+                        .unwrap_or_default();
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\n{region_header}Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                    continue;
+                }
 
                 let (status, body) = if path == format!("/{bucket}") || path == format!("/{bucket}/") {
                     let contents: String = keys
@@ -361,7 +423,7 @@ mod tests {
                 let _ = stream.write_all(resp.as_bytes());
             }
         });
-        format!("http://{addr}")
+        FakeS3 { endpoint: format!("http://{addr}"), requests }
     }
 
     pub(super) fn fake_request(endpoint: String) -> FetchRequest {
@@ -401,6 +463,40 @@ mod tests {
         assert!(dir.path().join(KEY_A).exists());
         assert!(!dir.path().join(KEY_B).exists());
         assert!(dir.path().join(KEY_C).exists());
+    }
+
+    /// A trail bucket homed in another region than the one picked: the client must be rebuilt
+    /// for the bucket's region (the SDK does not follow bucket-region redirects itself).
+    #[tokio::test]
+    async fn switches_to_the_buckets_region() {
+        let fake = spawn_fake_s3_with("bkt", vec![KEY_A], vec![], Some("eu-west-1"));
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = fetch_trail_bucket(&fake_request(fake.endpoint.clone()), dir.path(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(out.files_written, 1, "{:?}", out.skipped);
+
+        let reqs = fake.requests.lock().unwrap();
+        let head = reqs.iter().find(|r| r.starts_with("HEAD")).expect("a HeadBucket request");
+        assert!(head.contains("/us-east-1/s3/aws4_request"), "HeadBucket uses the requested region: {head}");
+        let gets: Vec<&String> = reqs.iter().filter(|r| r.starts_with("GET")).collect();
+        assert!(!gets.is_empty());
+        assert!(
+            gets.iter().all(|r| r.contains("/eu-west-1/s3/aws4_request")),
+            "list/get must be signed for the bucket's region: {gets:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_requested_region_when_bucket_region_is_unknown() {
+        let fake = spawn_fake_s3_with("bkt", vec![KEY_A], vec![], None);
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = fetch_trail_bucket(&fake_request(fake.endpoint.clone()), dir.path(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(out.files_written, 1);
+        let reqs = fake.requests.lock().unwrap();
+        assert!(reqs.iter().filter(|r| r.starts_with("GET")).all(|r| r.contains("/us-east-1/s3/aws4_request")));
     }
 
     #[tokio::test]
