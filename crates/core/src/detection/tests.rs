@@ -1141,6 +1141,72 @@ fn de_10_fires_on_lower_camel_logging_disabled() {
     assert_eq!(rules::defense_evasion::de_10_cloudfront_logging_disabled(&store).len(), 1);
 }
 
+fn put_bucket_policy(id: u32, policy: serde_json::Value) -> IndexedRecord {
+    with_params(
+        make_indexed(id, "PutBucketPolicy", "s3.amazonaws.com"),
+        json!({"bucketName": "b", "bucketPolicy": policy}),
+    )
+}
+
+#[test]
+fn ex_01_fires_on_all_users_acl_grant() {
+    let rec = with_params(
+        make_indexed(0, "PutBucketAcl", "s3.amazonaws.com"),
+        json!({"bucketName": "b", "AccessControlPolicy": {"AccessControlList": {"Grant": [
+            {"Grantee": {"xsi:type": "Group", "URI": "http://acs.amazonaws.com/groups/global/AllUsers"},
+             "Permission": "READ"}]}}}),
+    );
+    let store = build_store(vec![rec]);
+    assert_eq!(rules::exfiltration::ex_01_s3_bucket_public(&store).len(), 1);
+}
+
+#[test]
+fn ex_01_fires_on_public_canned_acl() {
+    let rec = with_params(
+        make_indexed(0, "PutBucketAcl", "s3.amazonaws.com"),
+        json!({"bucketName": "b", "x-amz-acl": "public-read"}),
+    );
+    let store = build_store(vec![rec]);
+    assert_eq!(rules::exfiltration::ex_01_s3_bucket_public(&store).len(), 1);
+}
+
+#[test]
+fn ex_01_fires_on_wildcard_principal_policy_object_or_string() {
+    let policy = json!({"Version": "2012-10-17", "Statement": [
+        {"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::b/*"}]});
+    let as_object = build_store(vec![put_bucket_policy(0, policy.clone())]);
+    assert_eq!(rules::exfiltration::ex_01_s3_bucket_public(&as_object).len(), 1);
+    let as_string = build_store(vec![put_bucket_policy(0, json!(policy.to_string()))]);
+    assert_eq!(rules::exfiltration::ex_01_s3_bucket_public(&as_string).len(), 1);
+    let aws_star = build_store(vec![put_bucket_policy(0, json!({"Statement": {
+        "Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "s3:*", "Resource": "*"}}))]);
+    assert_eq!(rules::exfiltration::ex_01_s3_bucket_public(&aws_star).len(), 1);
+}
+
+#[test]
+fn ex_01_ignores_specific_principal_policy() {
+    let store = build_store(vec![put_bucket_policy(0, json!({"Statement": [
+        {"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::111122223333:root"},
+         "Action": "s3:GetObject", "Resource": "*"}]}))]);
+    assert!(rules::exfiltration::ex_01_s3_bucket_public(&store).is_empty());
+}
+
+#[test]
+fn ex_01_does_not_flag_conditional_wildcard_but_reports_it() {
+    let conditional = json!({"Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject",
+        "Resource": "*", "Condition": {"StringEquals": {"aws:SourceVpce": "vpce-1"}}}]});
+    let public = json!({"Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "*"}]});
+    // Only the conditional one: no alert.
+    let only_cond = build_store(vec![put_bucket_policy(0, conditional.clone())]);
+    assert!(rules::exfiltration::ex_01_s3_bucket_public(&only_cond).is_empty());
+    // Both: alert for the public one, conditional count in metadata.
+    let both = build_store(vec![put_bucket_policy(0, conditional), put_bucket_policy(1, public)]);
+    let alerts = rules::exfiltration::ex_01_s3_bucket_public(&both);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].matching_record_ids, vec![1]);
+    assert_eq!(alerts[0].metadata.get("conditional_wildcard_count").map(String::as_str), Some("1"));
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------

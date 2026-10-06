@@ -1,21 +1,32 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids};
+use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str, json_contains_pair};
 
 /// EX-01: S3 Bucket Made Public (PutBucketPolicy or PutBucketAcl)
 pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
     let event_names = ["PutBucketPolicy", "PutBucketAcl"];
     let mut matching = vec![];
 
+    let mut conditional = 0usize;
+
     let ids = scoped_ids(store, &event_names, &["s3.amazonaws.com"], true);
     for id in ids {
-        if is_public_grant(store.parse_request_parameters(id)) {
-            matching.push(id);
+        let Some(p) = store.parse_request_parameters(id) else { continue };
+        match classify_exposure(&p) {
+            Exposure::Public => matching.push(id),
+            Exposure::Conditional => conditional += 1,
+            Exposure::None => {}
         }
     }
 
     if matching.is_empty() {
         return vec![];
+    }
+
+    let mut metadata = HashMap::new();
+    if conditional > 0 {
+        // Wildcard principals gated by a Condition are not flagged, but are worth a look.
+        metadata.insert("conditional_wildcard_count".to_string(), conditional.to_string());
     }
 
     vec![Alert {
@@ -29,7 +40,7 @@ pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
         ),
         matching_count: 0,
         matching_record_ids: matching,
-        metadata: HashMap::new(),
+        metadata,
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "S3".to_string(),
@@ -37,38 +48,73 @@ pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
     }]
 }
 
-fn is_public_grant(params: Option<serde_json::Value>) -> bool {
-    let params = match params {
-        Some(p) => p,
-        None => return false,
-    };
+enum Exposure {
+    /// Grants access to everyone, unconditionally.
+    Public,
+    /// Wildcard principal, but gated by a `Condition` (source IP, VPC endpoint, org id...).
+    Conditional,
+    None,
+}
 
-    // Check ACL grants for AllUsers / AuthenticatedUsers
-    let public_grantees = [
-        "http://acs.amazonaws.com/groups/global/AllUsers",
-        "http://acs.amazonaws.com/groups/global/AuthenticatedUsers",
-    ];
+const PUBLIC_GRANTEES: [&str; 2] = [
+    "http://acs.amazonaws.com/groups/global/AllUsers",
+    "http://acs.amazonaws.com/groups/global/AuthenticatedUsers",
+];
+const PUBLIC_CANNED_ACLS: [&str; 3] = ["public-read", "public-read-write", "authenticated-read"];
 
-    let params_str = params.to_string();
-    for grantee in &public_grantees {
-        if params_str.contains(grantee) {
-            return true;
+/// Does this statement's `Principal` include a wildcard? Accepts `"*"`, `{"AWS":"*"}`,
+/// `{"AWS":["*", ...]}`.
+fn principal_is_wildcard(principal: &serde_json::Value) -> bool {
+    match principal {
+        serde_json::Value::String(s) => s == "*",
+        serde_json::Value::Object(_) => jget(principal, "AWS").is_some_and(|a| json_has_str(a, "*")),
+        _ => false,
+    }
+}
+
+fn classify_exposure(params: &serde_json::Value) -> Exposure {
+    // PutBucketAcl: AllUsers / AuthenticatedUsers grantee, or a public canned ACL header.
+    for uri in PUBLIC_GRANTEES {
+        if json_contains_pair(params, "URI", uri) {
+            return Exposure::Public;
+        }
+    }
+    for key in ["x-amz-acl", "acl"] {
+        if let Some(v) = jget(params, key) {
+            if PUBLIC_CANNED_ACLS.iter().any(|a| json_has_str(v, a)) {
+                return Exposure::Public;
+            }
         }
     }
 
-    // Check bucket policy for Principal = "*"
-    if params_str.contains("\"Principal\":\"*\"")
-        || params_str.contains("\"Principal\": \"*\"")
-    {
-        return true;
-    }
+    // PutBucketPolicy: the policy arrives as an object or as a JSON string.
+    let policy: Option<serde_json::Value> = match jget(params, "bucketPolicy").or_else(|| jget(params, "policy")) {
+        Some(serde_json::Value::String(s)) => serde_json::from_str(s).ok(),
+        Some(v) => Some(v.clone()),
+        None => None,
+    };
+    let Some(policy) = policy else { return Exposure::None };
 
-    // If we can't determine, flag all PutBucketPolicy (has bucketPolicy field), always flag
-    if params.get("bucketPolicy").is_some() {
-        return true;
-    }
+    let statements: Vec<&serde_json::Value> = match jget(&policy, "Statement") {
+        Some(serde_json::Value::Array(a)) => a.iter().collect(),
+        Some(obj @ serde_json::Value::Object(_)) => vec![obj],
+        _ => vec![],
+    };
 
-    false
+    let mut result = Exposure::None;
+    for st in statements {
+        let allow = jget(st, "Effect").is_some_and(|e| json_has_str(e, "Allow"));
+        let wildcard = jget(st, "Principal").is_some_and(principal_is_wildcard);
+        if !(allow && wildcard) {
+            continue;
+        }
+        if jget(st, "Condition").is_some() {
+            result = Exposure::Conditional;
+        } else {
+            return Exposure::Public;
+        }
+    }
+    result
 }
 
 /// EX-02: S3 Bucket Deleted
