@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids};
+use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str, policy_statements};
 
 /// PE-01: IAM User Created
 pub fn pe_01_iam_user_created(store: &Store) -> Vec<Alert> {
@@ -147,8 +147,40 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098.003".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=AttachUserPolicy eventSource=iam.amazonaws.com OR eventName=AttachRolePolicy eventSource=iam.amazonaws.com OR eventName=PutUserPolicy eventSource=iam.amazonaws.com OR eventName=PutRolePolicy eventSource=iam.amazonaws.com".to_string(),
+        query: ["AttachUserPolicy", "AttachRolePolicy", "AttachGroupPolicy", "PutUserPolicy", "PutRolePolicy", "PutGroupPolicy"].iter().map(|n| format!("eventName={n} eventSource=iam.amazonaws.com")).collect::<Vec<_>>().join(" OR "),
     }]
+}
+
+/// Managed policies that are effectively admin.
+const ADMIN_MANAGED_POLICIES: [&str; 3] = ["AdministratorAccess", "PowerUserAccess", "IAMFullAccess"];
+
+/// Decode `%XX` escapes. CloudTrail often records inline `policyDocument` URL-encoded.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hi = (b[i + 1] as char).to_digit(16);
+            let lo = (b[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Does this statement `Allow` every action (or `iam:*`) on every resource?
+fn statement_is_admin(st: &serde_json::Value) -> bool {
+    let allow = jget(st, "Effect").is_some_and(|e| json_has_str(e, "Allow"));
+    let all_actions = jget(st, "Action").is_some_and(|a| json_has_str(a, "*") || json_has_str(a, "iam:*"));
+    let all_resources = jget(st, "Resource").is_some_and(|r| json_has_str(r, "*"));
+    allow && all_actions && all_resources
 }
 
 fn check_admin_policy(params: Option<serde_json::Value>) -> bool {
@@ -158,22 +190,21 @@ fn check_admin_policy(params: Option<serde_json::Value>) -> bool {
     };
 
     // Managed policy ARN (AttachUserPolicy etc.)
-    if let Some(arn) = params.get("policyArn").and_then(|v| v.as_str()) {
-        if arn.contains("AdministratorAccess") || arn == "*" {
+    if let Some(arn) = jget(&params, "policyArn").and_then(|v| v.as_str()) {
+        if ADMIN_MANAGED_POLICIES.iter().any(|name| arn.ends_with(&format!("policy/{name}"))) {
             return true;
         }
     }
 
-    // Inline policy document (PutUserPolicy etc.)
-    if let Some(doc) = params.get("policyDocument").and_then(|v| v.as_str()) {
-        // Quick string scan for admin wildcards
-        if doc.contains("\"*\"") && doc.contains("\"Effect\":\"Allow\"") {
-            return true;
+    // Inline policy document (PutUserPolicy etc.): a JSON string, possibly URL-encoded,
+    // or an already-parsed object.
+    let doc: Option<serde_json::Value> = match jget(&params, "policyDocument") {
+        Some(serde_json::Value::String(s)) => {
+            let text = if s.contains('%') { percent_decode(s) } else { s.clone() };
+            serde_json::from_str(&text).ok()
         }
-        if doc.contains("AdministratorAccess") {
-            return true;
-        }
-    }
-
-    false
+        Some(v @ serde_json::Value::Object(_)) => Some(v.clone()),
+        _ => None,
+    };
+    doc.is_some_and(|d| policy_statements(&d).into_iter().any(statement_is_admin))
 }

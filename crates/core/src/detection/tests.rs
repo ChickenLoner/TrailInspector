@@ -1207,6 +1207,59 @@ fn ex_01_does_not_flag_conditional_wildcard_but_reports_it() {
     assert_eq!(alerts[0].metadata.get("conditional_wildcard_count").map(String::as_str), Some("1"));
 }
 
+fn iam_policy_event(id: u32, event: &str, params: serde_json::Value) -> IndexedRecord {
+    with_params(make_indexed(id, event, "iam.amazonaws.com"), params)
+}
+
+#[test]
+fn pe_04_fires_on_pretty_printed_admin_inline_policy() {
+    let doc = "{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [{\n    \"Effect\": \"Allow\",\n    \"Action\": \"*\",\n    \"Resource\": \"*\"\n  }]\n}";
+    let store = build_store(vec![iam_policy_event(0, "PutUserPolicy", json!({"userName": "u", "policyName": "p", "policyDocument": doc}))]);
+    assert_eq!(rules::persistence::pe_04_admin_policy_attached(&store).len(), 1);
+}
+
+#[test]
+fn pe_04_fires_on_url_encoded_admin_policy_document() {
+    let doc = "%7B%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Action%22%3A%22%2A%22%2C%22Resource%22%3A%22%2A%22%7D%5D%7D";
+    let store = build_store(vec![iam_policy_event(0, "PutRolePolicy", json!({"roleName": "r", "policyDocument": doc}))]);
+    assert_eq!(rules::persistence::pe_04_admin_policy_attached(&store).len(), 1);
+}
+
+#[test]
+fn pe_04_ignores_read_only_policy_on_all_resources() {
+    let doc = r#"{"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}"#;
+    let store = build_store(vec![iam_policy_event(0, "PutUserPolicy", json!({"userName": "u", "policyDocument": doc}))]);
+    assert!(rules::persistence::pe_04_admin_policy_attached(&store).is_empty());
+}
+
+#[test]
+fn pe_04_ignores_deny_statement() {
+    let doc = r#"{"Statement":[{"Effect":"Deny","Action":"*","Resource":"*"}]}"#;
+    let store = build_store(vec![iam_policy_event(0, "PutUserPolicy", json!({"userName": "u", "policyDocument": doc}))]);
+    assert!(rules::persistence::pe_04_admin_policy_attached(&store).is_empty());
+}
+
+#[test]
+fn pe_04_fires_on_broad_managed_policies_and_group_events() {
+    for arn in ["AdministratorAccess", "PowerUserAccess", "IAMFullAccess"] {
+        let store = build_store(vec![iam_policy_event(
+            0, "AttachGroupPolicy",
+            json!({"groupName": "g", "policyArn": format!("arn:aws:iam::aws:policy/{arn}")}),
+        )]);
+        assert_eq!(rules::persistence::pe_04_admin_policy_attached(&store).len(), 1, "{arn}");
+    }
+    let group_inline = build_store(vec![iam_policy_event(
+        0, "PutGroupPolicy",
+        json!({"groupName": "g", "policyDocument": r#"{"Statement":{"Effect":"Allow","Action":["iam:*"],"Resource":["*"]}}"#}),
+    )]);
+    assert_eq!(rules::persistence::pe_04_admin_policy_attached(&group_inline).len(), 1);
+    let readonly = build_store(vec![iam_policy_event(
+        0, "AttachUserPolicy",
+        json!({"userName": "u", "policyArn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}),
+    )]);
+    assert!(rules::persistence::pe_04_admin_policy_attached(&readonly).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------

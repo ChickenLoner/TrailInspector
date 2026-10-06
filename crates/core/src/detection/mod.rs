@@ -171,6 +171,15 @@ pub(crate) fn adds_public_group(params: &serde_json::Value, permission_key: &str
     false
 }
 
+/// The `Statement` entries of an IAM/S3 policy document (array or single object).
+pub(crate) fn policy_statements(policy: &serde_json::Value) -> Vec<&serde_json::Value> {
+    match jget(policy, "Statement") {
+        Some(serde_json::Value::Array(a)) => a.iter().collect(),
+        Some(obj @ serde_json::Value::Object(_)) => vec![obj],
+        _ => vec![],
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Rule registry
 // ---------------------------------------------------------------------------

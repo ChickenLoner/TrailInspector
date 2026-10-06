@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str, json_contains_pair};
+use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str, json_contains_pair, policy_statements};
 
 /// EX-01: S3 Bucket Made Public (PutBucketPolicy or PutBucketAcl)
 pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
@@ -95,14 +95,8 @@ fn classify_exposure(params: &serde_json::Value) -> Exposure {
     };
     let Some(policy) = policy else { return Exposure::None };
 
-    let statements: Vec<&serde_json::Value> = match jget(&policy, "Statement") {
-        Some(serde_json::Value::Array(a)) => a.iter().collect(),
-        Some(obj @ serde_json::Value::Object(_)) => vec![obj],
-        _ => vec![],
-    };
-
     let mut result = Exposure::None;
-    for st in statements {
+    for st in policy_statements(&policy) {
         let allow = jget(st, "Effect").is_some_and(|e| json_has_str(e, "Allow"));
         let wildcard = jget(st, "Principal").is_some_and(principal_is_wildcard);
         if !(allow && wildcard) {
