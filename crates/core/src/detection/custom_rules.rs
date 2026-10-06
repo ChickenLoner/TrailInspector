@@ -1119,6 +1119,18 @@ rules:
         }
     }
 
+    #[test]
+    fn custom_rule_ids_capped() {
+        let store = build_store(
+            (0..150).map(|i| make_indexed(i, "DeleteBucket", "s3.amazonaws.com")).collect(),
+        );
+        let alerts = run_custom_rules(&[simple_rule("DeleteBucket")], &store);
+        let out = crate::detection::finalize_alerts(&store, alerts, None);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].matching_count, 150);
+        assert_eq!(out[0].matching_record_ids.len(), 100);
+    }
+
     // ── run_custom_rules ─────────────────────────────────────────────────────
 
     #[test]
