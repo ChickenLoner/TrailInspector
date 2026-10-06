@@ -8,6 +8,42 @@ pub struct ParsedFile {
     /// Records whose `eventTime` could not be parsed. They are dropped rather than stamped with
     /// epoch 0, which would put them in 1970 and stretch the timeline across 54 years.
     pub bad_time: usize,
+    /// Records that did not deserialize (a required field missing or mistyped). One bad record
+    /// no longer discards the rest of its file.
+    pub malformed: usize,
+}
+
+impl ParsedFile {
+    /// Ingest-warning text when anything was dropped, else `None`.
+    pub fn skip_note(&self) -> Option<String> {
+        let skipped = self.bad_time + self.malformed;
+        (skipped > 0).then(|| {
+            format!(
+                "{skipped} record(s) skipped: {} unparseable eventTime, {} malformed",
+                self.bad_time, self.malformed
+            )
+        })
+    }
+}
+
+/// Tolerant re-parse used only after the strict whole-file parse failed: deserialize each
+/// record on its own so a single bad one only costs itself.
+fn lenient_records(bytes: &[u8]) -> Option<(Vec<CloudTrailRecord>, usize)> {
+    #[derive(serde::Deserialize)]
+    struct LenientFile {
+        #[serde(rename = "Records")]
+        records: Vec<Box<serde_json::value::RawValue>>,
+    }
+    let file: LenientFile = serde_json::from_slice(bytes).ok()?;
+    let mut good = Vec::with_capacity(file.records.len());
+    let mut bad = 0usize;
+    for raw in file.records {
+        match serde_json::from_str::<CloudTrailRecord>(raw.get()) {
+            Ok(r) => good.push(r),
+            Err(_) => bad += 1,
+        }
+    }
+    Some((good, bad))
 }
 
 /// Parse an `eventTime` to epoch milliseconds. Accepts RFC 3339 first, then the shapes that
@@ -52,6 +88,7 @@ pub fn parse_records(
     // costs nothing extra when it succeeds. Only on failure do we consider the
     // lookup-events shape; if that fails too, report the original `Records` error
     // so a genuinely malformed S3 file doesn't get a misleading message.
+    let mut malformed = 0usize;
     let records: Vec<CloudTrailRecord> = match serde_json::from_slice::<CloudTrailFile>(bytes) {
         Ok(file) => file.records,
         Err(records_err) => match serde_json::from_slice::<LookupEventsFile>(bytes) {
@@ -60,7 +97,15 @@ pub fn parse_records(
                 .into_iter()
                 .map(|e| serde_json::from_str(&e.cloud_trail_event).map_err(json_err))
                 .collect::<Result<Vec<_>, _>>()?,
-            Err(_) => return Err(json_err(records_err)),
+            Err(_) => match lenient_records(bytes) {
+                // Some records survived: keep them. If none did, the whole file is bad and the
+                // original `Records` error is the useful one to report.
+                Some((good, bad)) if !good.is_empty() => {
+                    malformed = bad;
+                    good
+                }
+                _ => return Err(json_err(records_err)),
+            },
         },
     };
 
@@ -82,7 +127,7 @@ pub fn parse_records(
         });
     }
 
-    Ok(ParsedFile { records: out, bad_time })
+    Ok(ParsedFile { records: out, bad_time, malformed })
 }
 
 #[cfg(test)]
@@ -184,5 +229,29 @@ mod tests {
         assert_eq!(parsed.records[0].id, 5);
         assert_eq!(parsed.records[1].id, 6);
         assert!(parsed.records.iter().all(|r| r.timestamp > 0));
+    }
+
+    #[test]
+    fn test_one_bad_record_does_not_discard_the_file() {
+        let json = format!(
+            r#"{{"Records":[{},{{"eventName":"NoRegionOrSource"}},{}]}}"#,
+            record_json("2024-01-15T10:00:00Z"),
+            record_json("garbage"),
+        );
+        let parsed = parse_records(json.as_bytes(), &PathBuf::from("t.json"), 0, 0).unwrap();
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(parsed.malformed, 1);
+        assert_eq!(parsed.bad_time, 1);
+        assert_eq!(
+            parsed.skip_note().as_deref(),
+            Some("2 record(s) skipped: 1 unparseable eventTime, 1 malformed")
+        );
+    }
+
+    #[test]
+    fn test_clean_file_has_no_skip_note() {
+        let json = format!(r#"{{"Records":[{}]}}"#, record_json("2024-01-15T10:00:00Z"));
+        let parsed = parse_records(json.as_bytes(), &PathBuf::from("t.json"), 0, 0).unwrap();
+        assert!(parsed.skip_note().is_none());
     }
 }

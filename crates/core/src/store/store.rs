@@ -117,10 +117,10 @@ impl Store {
         // instead of collecting every parsed record — blobs and all — into one
         // giant Vec before the blob-draining ingest phase even begins.
         //
-        // Each message carries: (path_str, source_file_idx, records, records_dropped_for_bad_eventTime).
+        // Each message carries: (path_str, source_file_idx, records, optional "records skipped" note).
         // ZIP files produce multiple batches — one per inner entry — all
         // attributed to the same source file index so the path table stays compact.
-        type IngestMsg = Result<(String, u32, Vec<IndexedRecord>, usize), CoreError>;
+        type IngestMsg = Result<(String, u32, Vec<IndexedRecord>, Option<String>), CoreError>;
         let bound = (rayon::current_num_threads() * 4).max(8);
         let (tx, rx) = std::sync::mpsc::sync_channel::<IngestMsg>(bound);
 
@@ -148,7 +148,7 @@ impl Store {
                             Ok(entries) => {
                                 for bytes in entries {
                                     let msg = parse_records(&bytes, path, src_idx, 0)
-                                        .map(|p| (path_str.clone(), src_idx, p.records, p.bad_time));
+                                        .map(|p| { let note = p.skip_note(); (path_str.clone(), src_idx, p.records, note) });
                                     if tx.send(msg).is_err() {
                                         return;
                                     }
@@ -163,7 +163,7 @@ impl Store {
                             Ok(bytes) => {
                                 let _ = tx.send(
                                     parse_records(&bytes, path, src_idx, 0)
-                                        .map(|p| (path_str, src_idx, p.records, p.bad_time)),
+                                        .map(|p| { let note = p.skip_note(); (path_str, src_idx, p.records, note) }),
                                 );
                             }
                             Err(e) => {
@@ -178,7 +178,7 @@ impl Store {
             // Consumer (this thread): single-threaded ingest keeps ids monotonic,
             // so every posting list stays sorted ascending by id.
             for result in rx {
-            let (path_str, src_idx, mut batch, bad_time) = match result {
+            let (path_str, src_idx, mut batch, skip_note) = match result {
                 Ok(v) => v,
                 Err(e) => {
                     // Extract the file path from the error for the warning message
@@ -201,11 +201,8 @@ impl Store {
             while self.file_paths.len() <= file_idx {
                 self.file_paths.push(String::new());
             }
-            if bad_time > 0 {
-                warnings.push(IngestWarning {
-                    message: format!("{bad_time} record(s) with unparseable eventTime skipped"),
-                    file: Some(path_str.clone()),
-                });
+            if let Some(message) = skip_note {
+                warnings.push(IngestWarning { message, file: Some(path_str.clone()) });
             }
             self.file_paths[file_idx] = path_str;
 
