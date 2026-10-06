@@ -1109,6 +1109,16 @@ fn rs_02_ignores_document_names_containing_all() {
     assert!(rules::resource_sharing::rs_02_ssm_document_public(&store).is_empty());
 }
 
+#[test]
+fn rds_01_does_not_fire_when_enabling_protection() {
+    let rec = with_params(
+        make_indexed(0, "ModifyDBInstance", "rds.amazonaws.com"),
+        json!({"dBInstanceIdentifier": "db", "deletionProtection": true, "applyImmediately": false}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::rds::rds_01_deletion_protection_disabled(&store).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------

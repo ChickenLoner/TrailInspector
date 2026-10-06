@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids};
+use crate::detection::{Alert, Severity, scoped_ids, jget};
 
 /// RDS-01: RDS Deletion Protection Disabled
 pub fn rds_01_deletion_protection_disabled(store: &Store) -> Vec<Alert> {
@@ -9,11 +9,11 @@ pub fn rds_01_deletion_protection_disabled(store: &Store) -> Vec<Alert> {
 
     let ids = scoped_ids(store, &event_names, &["rds.amazonaws.com"], true);
     for id in ids {
-        if store.get_record(id).is_some() {
-            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-            if params_str.contains("deletionProtection") && params_str.contains("false") {
-                matching.push(id);
-            }
+        // Only an explicit `deletionProtection: false` disables it; `true` alongside an
+        // unrelated `applyImmediately: false` must not fire.
+        let Some(p) = store.parse_request_parameters(id) else { continue };
+        if jget(&p, "deletionProtection") == Some(&serde_json::Value::Bool(false)) {
+            matching.push(id);
         }
     }
 
