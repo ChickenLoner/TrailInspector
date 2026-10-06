@@ -982,3 +982,39 @@ fn bench_detection_100k_records() {
         elapsed
     );
 }
+
+// ---------------------------------------------------------------------------
+// Alert finalization: time filter must run before the IPC id cap
+// ---------------------------------------------------------------------------
+
+fn stop_logging_store(n: u32) -> Store {
+    build_store(
+        (0..n)
+            .map(|i| make_indexed_ts(i, "StopLogging", "cloudtrail.amazonaws.com", i as i64 * 60_000))
+            .collect(),
+    )
+}
+
+#[test]
+fn finalize_filters_before_cap() {
+    use crate::detection::finalize_alerts;
+    let store = stop_logging_store(150);
+    let alerts = run_all_rules(&store);
+    // Window covers only ids 120..=149 — none of them are in the first 100 ids.
+    let range = Some((120 * 60_000, 149 * 60_000));
+    let out = finalize_alerts(&store, alerts, range);
+    let a = out.iter().find(|a| a.rule_id == "DE-01").expect("DE-01 must survive the time filter");
+    assert_eq!(a.matching_count, 30);
+    assert_eq!(a.matching_record_ids.len(), 30);
+    assert!(a.matching_record_ids.iter().all(|&id| (120..=149).contains(&id)));
+}
+
+#[test]
+fn finalize_caps_at_100() {
+    use crate::detection::finalize_alerts;
+    let store = stop_logging_store(150);
+    let out = finalize_alerts(&store, run_all_rules(&store), None);
+    let a = out.iter().find(|a| a.rule_id == "DE-01").unwrap();
+    assert_eq!(a.matching_count, 150);
+    assert_eq!(a.matching_record_ids.len(), 100);
+}

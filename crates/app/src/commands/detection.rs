@@ -1,6 +1,6 @@
 use tauri::State;
 use trail_inspector_core::detection::{
-    run_all_rules, run_geo_rules, filter_alerts_by_time, Alert,
+    run_all_rules, run_geo_rules, finalize_alerts, Alert,
     custom_rules::run_custom_rules,
 };
 use crate::state::AppState;
@@ -31,11 +31,9 @@ pub async fn run_detections(
     let mut custom_alerts = run_custom_rules(&rules_guard, store);
     alerts.append(&mut custom_alerts);
 
-    alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
-
-    if let (Some(s), Some(e)) = (start_ms, end_ms) {
-        alerts = filter_alerts_by_time(store, alerts, s, e);
-    }
-
-    Ok(alerts)
+    let time_range = match (start_ms, end_ms) {
+        (Some(s), Some(e)) => Some((s, e)),
+        _ => None,
+    };
+    Ok(finalize_alerts(store, alerts, time_range))
 }

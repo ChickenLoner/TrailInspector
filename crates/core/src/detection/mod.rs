@@ -698,13 +698,15 @@ pub fn run_all_rules(store: &Store) -> Vec<Alert> {
         .flat_map(|rule| (rule.evaluate)(store))
         .collect();
 
-    cap_alert_ids(&mut alerts);
     alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
     alerts
 }
 
 /// Cap matching_record_ids to MAX_ALERT_IDS, storing the true count in matching_count.
-fn cap_alert_ids(alerts: &mut [Alert]) {
+///
+/// Runs **after** any time filtering (see `finalize_alerts`): capping first would make
+/// the time filter operate on a 100-id sample and drop real alerts.
+pub fn cap_alert_ids(alerts: &mut [Alert]) {
     for alert in alerts.iter_mut() {
         alert.matching_count = alert.matching_record_ids.len();
         alert.matching_record_ids.truncate(MAX_ALERT_IDS);
@@ -726,6 +728,19 @@ pub fn filter_alerts_by_time(store: &Store, mut alerts: Vec<Alert>, start_ms: i6
     alerts
 }
 
+/// Final pass before alerts leave the core crate: optional time filter first, then the
+/// IPC id cap, then a stable severity-descending order (rule id breaks ties).
+/// Every caller that returns alerts to the UI goes through here.
+pub fn finalize_alerts(store: &Store, alerts: Vec<Alert>, time_range: Option<(i64, i64)>) -> Vec<Alert> {
+    let mut alerts = match time_range {
+        Some((s, e)) => filter_alerts_by_time(store, alerts, s, e),
+        None => alerts,
+    };
+    cap_alert_ids(&mut alerts);
+    alerts.sort_by(|a, b| b.severity.cmp(&a.severity).then_with(|| a.rule_id.cmp(&b.rule_id)));
+    alerts
+}
+
 /// Run geo anomaly rules (requires a loaded GeoIpEngine).
 /// Results are appended to the alert list from run_all_rules.
 pub fn run_geo_rules(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
@@ -737,7 +752,6 @@ pub fn run_geo_rules(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
     .flatten()
     .collect::<Vec<_>>();
 
-    cap_alert_ids(&mut alerts);
     alerts.sort_by(|a, b| b.severity.cmp(&a.severity));
     alerts
 }

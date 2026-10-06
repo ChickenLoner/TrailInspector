@@ -1,6 +1,6 @@
 use tauri::State;
 use trail_inspector_core::session::{SessionPage, SessionDetail, AlertStub, SessionSummary};
-use trail_inspector_core::detection::{run_all_rules, run_geo_rules};
+use trail_inspector_core::detection::{run_all_rules, run_geo_rules, finalize_alerts};
 use crate::state::AppState;
 
 /// List sessions with optional filtering and sorting.
@@ -71,6 +71,7 @@ pub async fn get_session_alerts(
     if let Some(geoip) = geoip_guard.as_ref() {
         alerts.extend(run_geo_rules(store, geoip));
     }
+    let alerts = finalize_alerts(store, alerts, None);
 
     Ok(index.get_session_alerts(session_id, &alerts))
 }
@@ -91,6 +92,7 @@ pub async fn get_alert_sessions(
     if let Some(geoip) = geoip_guard.as_ref() {
         alerts.extend(run_geo_rules(store, geoip));
     }
+    let alerts = finalize_alerts(store, alerts, None);
 
     let alert = alerts.into_iter()
         .find(|a| a.rule_id == rule_id)
