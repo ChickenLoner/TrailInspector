@@ -111,7 +111,9 @@ fn known_field(name: &str) -> Result<FieldName, CoreError> {
 /// Returns `Ok(None)` for tokens that don't look like filters (skipped silently).
 fn parse_filter_token(token: &str) -> Result<Option<FieldFilter>, CoreError> {
     // Must check `!=` before `=` so we don't split on the `=` inside `!=`
-    if let Some(pos) = token.find("!=") {
+    // `!=` is the operator only when it is the first `=` in the token. A later `!=` belongs to
+    // the value (`userAgent=*a!=b*` is a contains-match on `a!=b`, not a negated `*a`).
+    if let Some(pos) = token.find("!=").filter(|&p| token.find('=') == Some(p + 1)) {
         let field_str = &token[..pos];
         let value_str = &token[pos + 2..];
         let field = known_field(field_str)?;
@@ -192,14 +194,18 @@ fn parse_time_value(value: &str) -> Result<i64, CoreError> {
         let n: i64 = num_str
             .parse()
             .map_err(|_| CoreError::Query(format!("Invalid number in time: {value}")))?;
-        let millis = match unit_char {
-            'm' => n * 60 * 1_000,
-            'h' => n * 3_600 * 1_000,
-            'd' => n * 86_400 * 1_000,
-            'w' => n * 7 * 86_400 * 1_000,
+        let unit_ms: i64 = match unit_char {
+            'm' => 60 * 1_000,
+            'h' => 3_600 * 1_000,
+            'd' => 86_400 * 1_000,
+            'w' => 7 * 86_400 * 1_000,
             _ => return Err(CoreError::Query(format!("Unknown time unit '{unit_char}' in: {value}"))),
         };
-        return Ok(Utc::now().timestamp_millis() - millis);
+        // User input: `earliest=-99999999999999w` must be an error, not a panic (debug) or a
+        // wrapped far-future timestamp that silently matches nothing (release).
+        let out_of_range = || CoreError::Query(format!("Relative time out of range: {value}"));
+        let millis = n.checked_mul(unit_ms).ok_or_else(out_of_range)?;
+        return Utc::now().timestamp_millis().checked_sub(millis).ok_or_else(out_of_range);
     }
 
     // Epoch milliseconds (plain integer — sent by the frontend)
@@ -284,6 +290,31 @@ mod tests {
         assert!(msg.contains("Unknown field 'unknownField'"), "{msg}");
         assert!(msg.contains("eventName"), "message should list known fields: {msg}");
         assert!(parse_query("unknownField!=value").is_err());
+    }
+
+    #[test]
+    fn test_relative_time_overflow_is_an_error() {
+        for bad in ["-99999999999999w", "-9999999999999d", "-99999999999999999h", "-9223372036854775807m"] {
+            let msg = match parse_query(&format!("earliest={bad}")) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("{bad} should be out of range"),
+            };
+            assert!(msg.contains("out of range"), "{bad}: {msg}");
+        }
+        // Big but representable still works.
+        assert!(parse_query("earliest=-100000d").is_ok());
+    }
+
+    #[test]
+    fn test_not_equals_inside_value_is_not_the_operator() {
+        let q = parse_query("userAgent=*a!=b*").unwrap();
+        let f = &q.filter_groups[0][0];
+        assert_eq!(f.field, FieldName::UserAgent);
+        assert!(!f.negated);
+        assert!(matches!(&f.mode, MatchMode::Contains(v) if v == "a!=b"), "{:?}", f.mode);
+        // A real negation still parses.
+        let neg = parse_query("errorCode!=AccessDenied").unwrap();
+        assert!(neg.filter_groups[0][0].negated);
     }
 
     #[test]
