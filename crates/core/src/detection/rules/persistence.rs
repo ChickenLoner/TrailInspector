@@ -31,6 +31,17 @@ pub fn pe_01_iam_user_created(store: &Store) -> Vec<Alert> {
     }]
 }
 
+/// The IAM user name behind an identity: the `userName` field, else the name parsed from a
+/// `...:user/[path/]NAME` ARN. `None` for assumed roles, root, services and federated callers.
+fn caller_user_name(identity: &crate::model::UserIdentity) -> Option<&str> {
+    if let Some(name) = identity.user_name.as_deref() {
+        return Some(name);
+    }
+    let arn = identity.arn.as_deref()?;
+    let rest = &arn[arn.find(":user/")? + ":user/".len()..];
+    rest.rsplit('/').next().filter(|n| !n.is_empty())
+}
+
 /// PE-02: Access Key Created for Another User
 pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
     let ids = scoped_ids(store, &["CreateAccessKey"], &["iam.amazonaws.com"], true);
@@ -41,15 +52,16 @@ pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
     let mut matching = vec![];
     for id in ids {
         if let Some(r) = store.get_record(id) {
-            let caller = r.record.user_identity.user_name.as_deref().unwrap_or("");
+            let caller = caller_user_name(&r.record.user_identity);
             let params = store.parse_request_parameters(id);
             let target = params.as_ref()
                 .and_then(|v| v.get("userName"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            // If target is set and differs from caller, flag it
-            if !target.is_empty() && !caller.is_empty() && target != caller {
+            // Flag when a target is named and the caller is not that same IAM user.
+            // Assumed roles and root have no IAM user name, so they always count as "other".
+            if !target.is_empty() && caller != Some(target) {
                 matching.push(id);
             }
         }

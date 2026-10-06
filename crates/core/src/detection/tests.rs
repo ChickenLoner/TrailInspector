@@ -1260,6 +1260,47 @@ fn pe_04_fires_on_broad_managed_policies_and_group_events() {
     assert!(rules::persistence::pe_04_admin_policy_attached(&readonly).is_empty());
 }
 
+fn create_access_key(id: u32, target: &str) -> IndexedRecord {
+    with_params(make_indexed(id, "CreateAccessKey", "iam.amazonaws.com"), json!({"userName": target}))
+}
+
+#[test]
+fn pe_02_does_not_fire_when_user_creates_own_key() {
+    let store = build_store(vec![create_access_key(0, "alice")]);
+    assert!(rules::persistence::pe_02_access_key_for_other(&store).is_empty());
+}
+
+#[test]
+fn pe_02_fires_when_user_creates_key_for_someone_else() {
+    let store = build_store(vec![create_access_key(0, "bob")]);
+    assert_eq!(rules::persistence::pe_02_access_key_for_other(&store).len(), 1);
+}
+
+#[test]
+fn pe_02_fires_for_assumed_role_caller() {
+    let rec = with_identity(
+        create_access_key(0, "admin"),
+        "AssumedRole",
+        Some("arn:aws:sts::123456789012:assumed-role/DevRole/session"),
+        None,
+    );
+    let store = build_store(vec![rec]);
+    assert_eq!(rules::persistence::pe_02_access_key_for_other(&store).len(), 1);
+}
+
+#[test]
+fn pe_02_derives_caller_from_arn_when_user_name_missing() {
+    // Same user, name only present in the ARN (with a path): must not fire.
+    let own = with_identity(
+        create_access_key(0, "alice"),
+        "IAMUser",
+        Some("arn:aws:iam::123456789012:user/engineering/alice"),
+        None,
+    );
+    let store = build_store(vec![own]);
+    assert!(rules::persistence::pe_02_access_key_for_other(&store).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------
