@@ -530,11 +530,12 @@ export function AlertPanel({ alerts, selectedAlert, onAlertSelect }: Props) {
                   severity={group.severity}
                 />
                 {!isCollapsed &&
-                  group.items.map((alert) => (
+                  group.items.map((alert, index) => (
                     <AlertRow
-                      key={`${alert.ruleId}-${alert.matchingRecordIds[0]}`}
+                      // matchingRecordIds can be empty (-> "X-undefined"), so the id is not a key.
+                      key={`${alert.ruleId}-${index}`}
                       alert={alert}
-                      isSelected={selectedAlert?.ruleId === alert.ruleId}
+                      isSelected={selectedAlert?.ruleId === alert.ruleId && selectedAlert?.title === alert.title}
                       onClick={() => onAlertSelect(alert)}
                       groupBy={groupBy}
                     />

@@ -70,11 +70,15 @@ function GeoIpLoader({ onLoaded, onCancel }: LoaderProps) {
   const [error, setError] = useState<string | null>(null);
 
   const pickFile = async (setter: (p: string) => void) => {
-    const path = await open({
-      filters: [{ name: "GeoIP DB", extensions: ["mmdb"] }],
-      multiple: false,
-    });
-    if (typeof path === "string") setter(path);
+    try {
+      const path = await open({
+        filters: [{ name: "GeoIP DB", extensions: ["mmdb"] }],
+        multiple: false,
+      });
+      if (typeof path === "string") setter(path);
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   const handleLoad = async () => {
