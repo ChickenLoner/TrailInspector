@@ -313,14 +313,14 @@ export default function App() {
   const handleFilterSelect = useCallback(
     (field: string, value: string) => {
       const fragment = `${field}="${value}"`;
-      setQueryText((prev) => {
-        const next = prev.trim() ? `${prev.trim()} AND ${fragment}` : fragment;
-        runQuery(next, filterFragment, globalTimeRange);
-        return next;
-      });
+      // Compute the next query from current state, then act. Running runQuery inside a
+      // setState updater would fire twice under StrictMode (two searches per click).
+      const next = queryText.trim() ? `${queryText.trim()} AND ${fragment}` : fragment;
+      setQueryText(next);
+      runQuery(next, filterFragment, globalTimeRange);
       setActiveTab("search");
     },
-    [filterFragment, globalTimeRange, runQuery]
+    [queryText, filterFragment, globalTimeRange, runQuery]
   );
 
   const handleViewEvidence = useCallback(
