@@ -55,13 +55,13 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 
 #### IA-01 — Console Login Without MFA
 
-**Trigger:** `ConsoleLogin` event where `additionalEventData.MFAUsed != "Yes"` and identity type is `IAMUser` (root logins are handled separately by IA-03 / CA-05).
+**Trigger:** Successful `ConsoleLogin` event where `additionalEventData.MFAUsed != "Yes"`, excluding federated logins.
 
 **Criteria:**
-- Event name: `ConsoleLogin`
+- Event name: `ConsoleLogin` from `signin.amazonaws.com`, no `errorCode`
 - Response: `ConsoleLogin = "Success"`
 - `additionalEventData.MFAUsed` is absent or not `"Yes"`
-- Identity type: `IAMUser` (not Root)
+- Skipped: identity type `AssumedRole` and any login whose `additionalEventData` has a `SamlProviderArn` (IAM Identity Center / SAML; MFA is enforced at the identity provider and CloudTrail always records `MFAUsed: "No"`)
 
 **Why it matters:** Console access without MFA means a stolen password alone grants full AWS Console access. Any IAM user with console access should have MFA enforced via an IAM policy.
 
@@ -133,8 +133,9 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 **Trigger:** `CreateAccessKey` where the target user differs from the calling identity.
 
 **Criteria:**
-- Event name: `CreateAccessKey`
-- `requestParameters.userName` is present and does not match `userIdentity.userName` of the caller
+- Event name: `CreateAccessKey` from `iam.amazonaws.com`, no `errorCode`
+- `requestParameters.userName` is present and is not the calling IAM user
+- The caller is the `userName`, or the name parsed from a `:user/` ARN. Assumed roles and root have no IAM user name, so they always count as "another user"
 
 **Why it matters:** Creating an access key for a different user grants programmatic access under that user's identity, enabling lateral movement or covert persistence.
 
@@ -158,11 +159,12 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 
 #### PE-04 — Backdoor Admin Policy Attached
 
-**Trigger:** `AttachUserPolicy`, `AttachGroupPolicy`, or `AttachRolePolicy` where the attached policy is `arn:aws:iam::aws:policy/AdministratorAccess`.
+**Trigger:** An attach or inline `Put` of an administrative policy on a user, group, or role.
 
 **Criteria:**
-- Event name: one of `AttachUserPolicy`, `AttachGroupPolicy`, `AttachRolePolicy`
-- `requestParameters.policyArn` = `arn:aws:iam::aws:policy/AdministratorAccess`
+- Event name: one of `AttachUserPolicy`, `AttachRolePolicy`, `AttachGroupPolicy`, `PutUserPolicy`, `PutRolePolicy`, `PutGroupPolicy`, from `iam.amazonaws.com`, no `errorCode`
+- Managed policy: `requestParameters.policyArn` ends in `policy/AdministratorAccess`, `policy/PowerUserAccess`, or `policy/IAMFullAccess`
+- Inline policy: the parsed `policyDocument` (JSON string, URL-encoded string, or object) has an `Allow` statement whose `Action` is `*` or `iam:*` and whose `Resource` is `*`
 
 **Why it matters:** Attaching the managed AdministratorAccess policy grants unrestricted access to all AWS services and resources. This is the fastest path to full account takeover after initial compromise.
 
@@ -332,11 +334,11 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 
 #### DE-10 — CloudFront Distribution Logging Disabled
 
-**Trigger:** `UpdateDistribution` where the logging configuration sets `Enabled = false`.
+**Trigger:** `UpdateDistribution` where the logging configuration is disabled.
 
 **Criteria:**
-- Event name: `UpdateDistribution`
-- `requestParameters` contains logging configuration with `Enabled = false`
+- Event name: `UpdateDistribution` from `cloudfront.amazonaws.com`, no `errorCode`
+- `requestParameters.distributionConfig.logging.enabled` is `false` (other `enabled: false` flags such as `trustedSigners` are ignored)
 
 **Why it matters:** CloudFront access logs are used to detect data exfiltration through CDN. Disabling them removes visibility into edge traffic.
 
@@ -496,8 +498,11 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 **Trigger:** `PutBucketPolicy` or `PutBucketAcl` that grants access to `Principal: "*"` or a public-access grantee (`AllUsers`, `AuthenticatedUsers`).
 
 **Criteria:**
-- Event name: `PutBucketPolicy` or `PutBucketAcl`
-- Policy/ACL grants access to the wildcard principal or AWS-managed public groups
+- Event name: `PutBucketPolicy` or `PutBucketAcl` from `s3.amazonaws.com`, no `errorCode`
+- ACL: a grantee URI of `AllUsers` or `AuthenticatedUsers`, or a canned ACL of `public-read`, `public-read-write`, or `authenticated-read`
+- Policy (object or JSON string): an `Allow` statement with `Principal` of `"*"` or `{"AWS": "*"}` and **no** `Condition`
+- A wildcard principal gated by a `Condition` does not fire; the count is reported in the alert metadata as `conditional_wildcard_count`
+- A policy naming specific principals does not fire
 
 **Why it matters:** Making an S3 bucket public exposes all its contents to the internet without authentication. This is a primary data exfiltration vector.
 
@@ -583,12 +588,13 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 
 #### IM-02 — Resource Deletion Spree
 
-**Trigger:** Multiple delete events across different AWS services within a short time window.
+**Trigger:** More than 10 management-plane destructive events by the same identity within 5 minutes.
 
 **Criteria:**
-- Event names matching `Delete*` across multiple services
-- Same identity
-- High frequency within the window
+- Event name in a fixed list of management-plane destructive calls (for example `TerminateInstances`, `DeleteBucket`, `DeleteDBInstance`, `DeleteVolume`, `DeleteUser`, `DeleteRole`, `ScheduleKeyDeletion`); any service
+- Excluded: S3 data events such as `DeleteObject`, tag removals, and ENI cleanup, which previously matched a `Delete*` prefix
+- Excluded: records with an `errorCode` and records marked read-only
+- Same identity (ARN, else user name), more than 10 events in a 5-minute window
 
 **Why it matters:** A coordinated series of deletions across services (EC2, RDS, S3, etc.) is a ransomware or sabotage pattern aimed at destroying the victim's infrastructure.
 
@@ -775,8 +781,8 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 **Trigger:** `ModifyDBInstance` or `ModifyDBCluster` where `deletionProtection` is set to `false`.
 
 **Criteria:**
-- Event name: `ModifyDBInstance` or `ModifyDBCluster`
-- `requestParameters.deletionProtection = false`
+- Event name: `ModifyDBInstance` or `ModifyDBCluster` from `rds.amazonaws.com`, no `errorCode`
+- `requestParameters.deletionProtection` is explicitly `false` (enabling it, or an unrelated `applyImmediately: false`, does not fire)
 
 **Why it matters:** Disabling deletion protection is a prerequisite for deleting a database. In an attack, this precedes `DeleteDBInstance` as part of a data destruction sequence.
 
@@ -835,8 +841,8 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 **Trigger:** `ModifySnapshotAttribute` granting access to the `all` group.
 
 **Criteria:**
-- Event name: `ModifySnapshotAttribute`
-- `requestParameters` grants `createVolumePermission` to group `all`
+- Event name: `ModifySnapshotAttribute` from `ec2.amazonaws.com`, no `errorCode`
+- `requestParameters` **adds** group `all` to `createVolumePermission`; a `remove` of `all` makes the snapshot private and does not fire
 
 **Why it matters:** A public EBS snapshot can be copied by any AWS account. If the snapshot contains OS volumes, databases, or application data, anyone can mount it and extract the contents.
 
@@ -1050,8 +1056,8 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 **Trigger:** `ModifyImageAttribute` granting `launchPermission` to the `all` group.
 
 **Criteria:**
-- Event name: `ModifyImageAttribute`
-- `requestParameters` adds `launchPermission` for group `all`
+- Event name: `ModifyImageAttribute` from `ec2.amazonaws.com`, no `errorCode`
+- `requestParameters` **adds** group `all` to `launchPermission`; a `remove` of `all` does not fire
 
 **Why it matters:** A public AMI can be launched by any AWS account. AMIs often contain application code, secrets baked into the image, or OS configurations that reveal internal architecture.
 
@@ -1062,8 +1068,8 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 **Trigger:** `ModifyDocumentPermission` adding `All` to the account list.
 
 **Criteria:**
-- Event name: `ModifyDocumentPermission`
-- `requestParameters.accountIdsToAdd` contains `All`
+- Event name: `ModifyDocumentPermission` from `ssm.amazonaws.com`, no `errorCode`
+- `requestParameters.accountIdsToAdd` contains `all` (case-insensitive); `accountIdsToRemove` and document names do not fire
 
 **Why it matters:** SSM Run Command documents made public can be executed against EC2 instances by any AWS account with SSM access and appropriate IAM permissions, enabling remote code execution on instances.
 
@@ -1074,8 +1080,8 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 **Trigger:** `ModifyDBSnapshotAttribute` or `ModifyDBClusterSnapshotAttribute` granting access to `all`.
 
 **Criteria:**
-- Event name: `ModifyDBSnapshotAttribute` or `ModifyDBClusterSnapshotAttribute`
-- `requestParameters.valuesToAdd` contains `all`
+- Event name: `ModifyDBSnapshotAttribute` or `ModifyDBClusterSnapshotAttribute` from `rds.amazonaws.com`, no `errorCode`
+- `requestParameters.attributeName` is `restore` **and** `requestParameters.valuesToAdd` contains `all`; `valuesToRemove` and sharing with specific accounts do not fire
 
 **Why it matters:** A public RDS snapshot can be restored into any AWS account, giving the attacker a full copy of the database without requiring access to the original RDS instance.
 
@@ -1097,8 +1103,10 @@ All rules run entirely in-memory against the loaded CloudTrail event set — no 
 **Trigger:** The same IAM identity is observed making API calls from source IPs in **two or more distinct countries** within the loaded dataset.
 
 **Criteria:**
-- Same `userIdentity.arn`
+- Same `userIdentity.arn` (or user name when there is no ARN)
 - Source IPs resolve to ≥ 2 distinct countries via GeoLite2
+- Calls with neither an ARN nor a user name (`AWSAccount`, `AWSService`, `Unknown`) are skipped, since unrelated callers cannot be told apart
+- The alert covers all of the identity's API calls, not only console logins
 
 **Why it matters:** A legitimate user rarely makes API calls from multiple countries simultaneously or in rapid succession. Multi-country activity often indicates credential theft and use by an attacker in a different geography.
 
