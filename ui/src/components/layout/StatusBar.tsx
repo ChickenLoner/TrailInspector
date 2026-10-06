@@ -50,7 +50,8 @@ export function StatusBar({ recordCount, loaded, filteredCount, queryActive, loa
         <span>No dataset loaded</span>
       )}
 
-      <span style={{ marginLeft: 'auto' }}>TrailInspector</span>
+      <span style={{ marginLeft: 'auto' }} title="All times in the app are shown in UTC">UTC</span>
+      <span>TrailInspector</span>
     </div>
   );
 }

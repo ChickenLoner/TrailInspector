@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { GlobalTimeRange } from "../../types/cloudtrail";
+import { formatTs, toDatetimeLocalUtc, parseLocalInputAsUtc } from "../../lib/time";
 
 // ---------------------------------------------------------------------------
 // Preset definitions
@@ -13,17 +14,6 @@ const PRESETS: { label: string; offsetMs: number | null }[] = [
   { label: "7d",   offsetMs: 7 * 24 * 60 * 60 * 1_000 },
 ];
 
-function msToDatetimeLocal(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
-}
-
-function datetimeLocalToMs(value: string): number {
-  // Treat datetime-local input as UTC (append "Z")
-  return new Date(value + "Z").getTime();
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -36,10 +26,10 @@ interface Props {
 export function GlobalTimeBar({ timeRange, onTimeRangeChange }: Props) {
   const [showCustom, setShowCustom] = useState(false);
   const [customStart, setCustomStart] = useState(() =>
-    timeRange.startMs ? msToDatetimeLocal(timeRange.startMs) : ""
+    timeRange.startMs ? toDatetimeLocalUtc(timeRange.startMs) : ""
   );
   const [customEnd, setCustomEnd] = useState(() =>
-    timeRange.endMs ? msToDatetimeLocal(timeRange.endMs) : ""
+    timeRange.endMs ? toDatetimeLocalUtc(timeRange.endMs) : ""
   );
 
   const applyPreset = (offsetMs: number | null, label: string) => {
@@ -55,8 +45,8 @@ export function GlobalTimeBar({ timeRange, onTimeRangeChange }: Props) {
 
   const applyCustom = () => {
     if (!customStart || !customEnd) return;
-    const startMs = datetimeLocalToMs(customStart);
-    const endMs = datetimeLocalToMs(customEnd);
+    const startMs = parseLocalInputAsUtc(customStart);
+    const endMs = parseLocalInputAsUtc(customEnd);
     if (isNaN(startMs) || isNaN(endMs) || startMs >= endMs) return;
     onTimeRangeChange({
       startMs,
@@ -133,9 +123,9 @@ export function GlobalTimeBar({ timeRange, onTimeRangeChange }: Props) {
       {/* Active range label */}
       {timeRange.startMs !== null && timeRange.endMs !== null && (
         <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4, fontFamily: "monospace" }}>
-          {new Date(timeRange.startMs).toISOString().slice(0, 16).replace("T", " ")} UTC
+          {formatTs(timeRange.startMs, { seconds: false, suffix: true })}
           {" — "}
-          {new Date(timeRange.endMs).toISOString().slice(0, 16).replace("T", " ")} UTC
+          {formatTs(timeRange.endMs, { seconds: false, suffix: true })}
         </span>
       )}
 

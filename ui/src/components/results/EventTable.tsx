@@ -1,5 +1,6 @@
-import { useCallback, useRef } from "react";
+import { useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { formatTs } from "../../lib/time";
 import type { RecordRow } from "../../types/cloudtrail";
 
 const COLUMNS = [
@@ -33,14 +34,6 @@ export function EventTable({ records, total, page, pageSize, onPageChange, selec
   });
 
   const totalPages = Math.ceil(total / pageSize);
-
-  const formatTime = useCallback((iso: string) => {
-    try {
-      return new Date(iso).toISOString().replace("T", " ").substring(0, 19);
-    } catch {
-      return iso;
-    }
-  }, []);
 
   return (
     <div className="flex flex-col h-full" style={{ background: 'var(--bg-primary)' }}>
@@ -95,7 +88,7 @@ export function EventTable({ records, total, page, pageSize, onPageChange, selec
                 }}
               >
                 <div className="px-2 text-xs" style={{ width: 160, minWidth: 160, color: 'var(--text-secondary)' }}>
-                  {formatTime(record.eventTime)}
+                  {formatTs(record.eventTime)}
                 </div>
                 <div className="px-2 text-xs font-medium" style={{ width: 200, minWidth: 200, color: 'var(--text-bright)' }}>
                   {record.eventName}

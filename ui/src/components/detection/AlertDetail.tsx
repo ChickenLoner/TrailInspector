@@ -1,10 +1,8 @@
 import { useState, useEffect } from "react";
 import type { Alert, Severity, SessionSummary } from "../../types/cloudtrail";
 import { getAlertSessions } from "../../lib/tauri";
+import { formatTs } from "../../lib/time";
 
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 16);
-}
 
 const SEVERITY_COLOR: Record<Severity, string> = {
   critical: "#f85149",
@@ -180,7 +178,7 @@ export function AlertDetail({ alert, onViewEvidence, onClose }: Props) {
                 </div>
                 <div style={{ display: "flex", gap: 8, fontSize: 10, color: "var(--text-secondary)" }}>
                   <span style={{ fontFamily: "monospace", color: "#58a6ff" }}>{s.sourceIp}</span>
-                  <span>{fmtTime(s.firstEventMs)}</span>
+                  <span>{formatTs(s.firstEventMs, { seconds: false })}</span>
                   <span>{s.eventCount} events</span>
                 </div>
               </div>

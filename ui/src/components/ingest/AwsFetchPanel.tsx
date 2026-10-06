@@ -14,6 +14,7 @@ import type {
   IngestProgressEvent,
   ProfileInfo,
 } from "../../types/cloudtrail";
+import { formatTs, parseLocalInputAsUtc } from "../../lib/time";
 
 const REGIONS = [
   "us-east-1", "us-east-2", "us-west-1", "us-west-2",
@@ -32,14 +33,14 @@ const LS_BUCKET = "trailinspector_aws_bucket";
 
 type CredMode = "profile" | "manual";
 
+/** `datetime-local` value (read as UTC, like every other time in the app) → epoch ms. */
 function fromLocalInput(s: string): number | undefined {
-  if (!s) return undefined;
-  const ms = new Date(s).getTime();
+  const ms = parseLocalInputAsUtc(s);
   return Number.isNaN(ms) ? undefined : ms;
 }
 
 function fmt(ms: number | null): string {
-  return ms == null ? "—" : new Date(ms).toLocaleString();
+  return ms == null ? "—" : formatTs(ms, { suffix: true });
 }
 
 interface Props {
@@ -399,7 +400,7 @@ export function AwsFetchPanel({ busy, onCheckStart, onCheckEnd, onProgress, onPu
       )}
 
       <div style={row}>
-        <span style={labelStyle}>From</span>
+        <span style={labelStyle}>From (UTC)</span>
         <input
           type="datetime-local"
           style={inputStyle}
@@ -409,7 +410,7 @@ export function AwsFetchPanel({ busy, onCheckStart, onCheckEnd, onProgress, onPu
         />
       </div>
       <div style={row}>
-        <span style={labelStyle}>To</span>
+        <span style={labelStyle}>To (UTC)</span>
         <input
           type="datetime-local"
           style={inputStyle}

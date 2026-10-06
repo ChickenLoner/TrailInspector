@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { listSessions } from "../../lib/tauri";
 import type { SessionSummary, SessionPage } from "../../types/cloudtrail";
 import { SessionDetail } from "./SessionDetail";
+import { formatTs } from "../../lib/time";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -14,9 +15,6 @@ function fmtDuration(ms: number): string {
   return `${(ms / 3_600_000).toFixed(1)}h`;
 }
 
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 19);
-}
 
 // ---------------------------------------------------------------------------
 // Session card
@@ -88,7 +86,7 @@ function SessionCard({ session, isSelected, onClick }: CardProps) {
           {session.sourceIp}
         </span>
         <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
-          {fmtTime(session.firstEventMs)}
+          {formatTs(session.firstEventMs)}
         </span>
       </div>
 

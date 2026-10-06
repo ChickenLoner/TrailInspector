@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { getSessionDetail, getSessionAlerts, getRecordById } from "../../lib/tauri";
 import type { SessionDetail as SessionDetailType, SessionEvent, AlertStub, Severity, RecordDetail } from "../../types/cloudtrail";
 import { EventDetail } from "../results/EventDetail";
+import { formatTs } from "../../lib/time";
 
 const SEV_COLOR: Record<Severity, string> = {
   critical: "#d41f1f", high: "#c96d16", medium: "#f8be34", low: "#3c95d1", info: "#65a637",
@@ -18,9 +19,6 @@ function fmtDuration(ms: number): string {
   return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
 }
 
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 19);
-}
 
 // ---------------------------------------------------------------------------
 // Event row in the timeline
@@ -166,7 +164,7 @@ export function SessionDetail({ sessionId, onClose }: Props) {
                 <span style={{ fontFamily: "monospace", color: "#58a6ff", background: "rgba(88,166,255,0.08)", padding: "1px 6px", borderRadius: 3, border: "1px solid rgba(88,166,255,0.2)" }}>
                   {detail.sourceIp}
                 </span>
-                <span>{fmtTime(detail.firstEventMs)} → {fmtTime(detail.lastEventMs)}</span>
+                <span>{formatTs(detail.firstEventMs)} → {formatTs(detail.lastEventMs)}</span>
                 <span>{fmtDuration(detail.durationMs)}</span>
                 <span>{detail.eventCount.toLocaleString()} events</span>
                 {detail.errorCount > 0 && <span style={{ color: "#f85149" }}>{detail.errorCount} errors</span>}
