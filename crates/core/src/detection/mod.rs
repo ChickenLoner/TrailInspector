@@ -109,6 +109,18 @@ pub fn scoped_ids(
     restrict(store, ids, sources, exclude_errors)
 }
 
+/// A bitmap's ids as a Vec in (timestamp, id) order. Record ids follow ingestion arrival order,
+/// which is arbitrary under parallel parsing; time order is what an analyst expects to read, and
+/// it makes the 100-id IPC cap keep the earliest evidence rather than an arbitrary slice.
+pub(crate) fn time_sorted(store: &Store, ids: &RoaringBitmap) -> Vec<u32> {
+    let mut v: Vec<(i64, u32)> = ids
+        .iter()
+        .map(|id| (store.get_record(id).map(|r| r.timestamp).unwrap_or(0), id))
+        .collect();
+    v.sort_unstable();
+    v.into_iter().map(|(_, id)| id).collect()
+}
+
 // ---------------------------------------------------------------------------
 // JSON navigation for requestParameters
 // ---------------------------------------------------------------------------

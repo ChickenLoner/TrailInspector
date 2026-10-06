@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use roaring::RoaringBitmap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids};
+use crate::detection::{Alert, Severity, scoped_ids, time_sorted};
 
 /// DI-02: IAM Enumeration
 pub fn di_02_iam_enumeration(store: &Store) -> Vec<Alert> {
@@ -66,7 +67,7 @@ pub fn di_03_access_denied_spike(store: &Store) -> Vec<Alert> {
 
     let window_ms = 10 * 60 * 1000;
     let threshold = 10;
-    let mut all_matching: Vec<u32> = vec![];
+    let mut all_matching = RoaringBitmap::new();
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
@@ -78,9 +79,7 @@ pub fn di_03_access_denied_spike(store: &Store) -> Vec<Alert> {
             }
             if end - start + 1 >= threshold {
                 for (_, wid) in &events[start..=end] {
-                    if !all_matching.contains(wid) {
-                        all_matching.push(*wid);
-                    }
+                    all_matching.insert(*wid);
                 }
                 if !offending_identities.contains(&identity) {
                     offending_identities.push(identity.clone());
@@ -120,7 +119,7 @@ pub fn di_03_access_denied_spike(store: &Store) -> Vec<Alert> {
             offending_identities.join(", ")
         ),
         matching_count: 0,
-        matching_record_ids: all_matching,
+        matching_record_ids: time_sorted(store, &all_matching),
         metadata: meta,
         mitre_tactic: "Discovery".to_string(),
         mitre_technique: "T1580".to_string(),

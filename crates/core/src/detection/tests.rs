@@ -1484,3 +1484,33 @@ fn event_name_only_rules_are_scoped_to_their_service() {
         assert!(f(&denied).is_empty(), "{rule}: denied {event} must not fire");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Performance — a burst: the quadratic case the 100k mixed bench never reaches
+// (run with: cargo test --release -- --ignored bench_detection_burst --nocapture)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn bench_detection_burst_20k_run_instances() {
+    use std::time::Instant;
+
+    // 20,000 launches in 10 minutes from a single identity: every sliding window is huge.
+    let records: Vec<IndexedRecord> = (0u32..20_000)
+        .map(|i| make_indexed_ts(i, "RunInstances", "ec2.amazonaws.com", i as i64 * 30))
+        .collect();
+    let store = build_store(records);
+
+    let start = Instant::now();
+    let alerts = rules::impact::im_01_ec2_bulk_launch(&store);
+    let im01 = start.elapsed();
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].matching_record_ids.len(), 20_000);
+
+    let start = Instant::now();
+    let all = run_all_rules(&store);
+    let everything = start.elapsed();
+
+    println!("Burst 20k RunInstances: IM-01 {im01:?}, all rules {everything:?}, {} alerts", all.len());
+    assert!(everything.as_secs() < 2, "burst took {everything:?}, expected < 2s");
+}

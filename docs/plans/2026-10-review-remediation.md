@@ -668,7 +668,7 @@ Phase 2: [x] P2.1  [x] P2.2  [x] P2.3  [x] P2.4  [x] P2.5  [x] P2.6  [x] P2.7  [
 Phase 3: [x] P3.1  [x] P3.2  [x] P3.3  [x] P3.4  [x] P3.5  [x] P3.6  [x] P3.7  [x] P3.8
 Phase 4: [x] P4.1  [x] P4.2  [x] P4.3  [x] P4.4  [x] P4.5  [x] P4.6  [x] P4.7  [x] P4.8  [x] P4.9
 Phase 5: [x] P5.1  [x] P5.2  [x] P5.3  [x] P5.4  [x] P5.5  [x] P5.6  [x] P5.7  [x] P5.8  [x] P5.9
-Phase 6: [x] P6.1  [x] P6.2  [ ] P6.3  [ ] P6.4  [ ] P6.5  [ ] P6.6  [ ] P6.7
+Phase 6: [x] P6.1  [x] P6.2  [x] P6.3  [ ] P6.4  [ ] P6.5  [ ] P6.6  [ ] P6.7
 Phase 7: [ ] P7.1  [ ] P7.2
 
 Ingest bench (200k records, release, `bench_ingest_200k_records`): baseline 958 ms (943/958/988); after P6.1 741 ms (736/741/745).
@@ -678,6 +678,7 @@ Notes / blockers (task id, what, why):
 - P1.2 deviation: IA-04 (failed-login brute force) uses `exclude_errors = false`, like DI-03, because failure is its subject.
 - P1.2 correction: EC-06 events come from `ec2-instance-connect.amazonaws.com`, not `ec2.amazonaws.com`; the plan table was wrong.
 - P1.2: evidence `query` strings gain `eventSource=` per OR clause (appending `AND` to an OR query would change its meaning in this parser). They do not exclude errored events, so evidence can show denied calls the rule skipped.
+- P6.3: burst bench (`bench_detection_burst_20k_run_instances`, ignored; 20,000 RunInstances in 10 minutes, one identity, release): old code 92.8 s / 95.9 s / 94.0 s for IM-01; new 1.0 ms / 1.0 ms / 1.5 ms. IM-01 deliberately has no early `break` (the plan asked for one): it collects every qualifying window, so a break would drop later bursts from the alert; the incremental union makes it linear instead. Alert ids are now returned in (timestamp, id) order via `time_sorted`.
 - P6.2: custom-rule bench (`bench_custom_rule_filters_300k_records`, ignored; 300k records, 90% one identity type, And/Not filter, 5 evaluations, release): 101 ms (97/103/103) before, 7 ms (7/7/8) after, identical 270,000 matches.
 - P6.1: kept the ingest benchmark as an `#[ignore]`d test in store.rs instead of a temporary example (matches the existing detection bench). The `bucketName` index now only covers `s3.amazonaws.com` events; no rule or query depended on it for other services.
 - P5.9: could not run `cargo tauri dev` (no display), so the CSP was verified by serving the built frontend with the exact production CSP in headless Chromium (zero violations; first screen and main search view identical to a no-CSP control). Added `devCsp` (not in the plan) so Vite's inline preamble and HMR websocket keep working under `cargo tauri dev`; that dev policy is unverified.

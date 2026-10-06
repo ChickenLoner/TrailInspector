@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use roaring::RoaringBitmap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids, restrict, jget};
+use crate::detection::{Alert, Severity, scoped_ids, restrict, jget, time_sorted};
 
 /// IA-01: Console Login Without MFA
 pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
@@ -121,7 +122,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
 
     let window_ms = 10 * 60 * 1000; // 10 minutes
     let threshold = 5;
-    let mut all_matching: Vec<u32> = vec![];
+    let mut all_matching = RoaringBitmap::new();
     let mut meta = HashMap::new();
     let mut offending_ips: Vec<String> = vec![];
 
@@ -141,9 +142,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
                     .map(|(_, id)| *id)
                     .collect();
                 for wid in &window_ids {
-                    if !all_matching.contains(wid) {
-                        all_matching.push(*wid);
-                    }
+                    all_matching.insert(*wid);
                 }
                 if !offending_ips.contains(&ip) {
                     offending_ips.push(ip.clone());
@@ -179,7 +178,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
             offending_ips.join(", ")
         ),
         matching_count: 0,
-        matching_record_ids: all_matching,
+        matching_record_ids: time_sorted(store, &all_matching),
         metadata: meta,
         mitre_tactic: "Initial Access".to_string(),
         mitre_technique: "T1110.001".to_string(),

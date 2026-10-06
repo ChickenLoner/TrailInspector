@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use roaring::RoaringBitmap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids};
+use crate::detection::{Alert, Severity, scoped_ids, time_sorted};
 
 /// CA-02: Secrets Manager Bulk Access (>5 GetSecretValue in 10 min by same identity)
 pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
@@ -23,7 +24,7 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
 
     let window_ms = 10 * 60 * 1000;
     let threshold = 5;
-    let mut all_matching: Vec<u32> = vec![];
+    let mut all_matching = RoaringBitmap::new();
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
@@ -35,9 +36,7 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
             }
             if end - start + 1 > threshold {
                 for (_, wid) in &events[start..=end] {
-                    if !all_matching.contains(wid) {
-                        all_matching.push(*wid);
-                    }
+                    all_matching.insert(*wid);
                 }
                 if !offending_identities.contains(&identity) {
                     offending_identities.push(identity.clone());
@@ -78,7 +77,7 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
             offending_identities.join(", ")
         ),
         matching_count: 0,
-        matching_record_ids: all_matching,
+        matching_record_ids: time_sorted(store, &all_matching),
         metadata: meta,
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1555".to_string(),

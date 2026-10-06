@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use roaring::RoaringBitmap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids};
+use crate::detection::{Alert, Severity, scoped_ids, time_sorted};
 
 fn mass_ec2_op_inner(
     store: &Store,
@@ -24,7 +25,7 @@ fn mass_ec2_op_inner(
         }
     }
 
-    let mut all_matching: Vec<u32> = vec![];
+    let mut all_matching = RoaringBitmap::new();
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
@@ -36,9 +37,7 @@ fn mass_ec2_op_inner(
             }
             if end - start + 1 > threshold {
                 for (_, wid) in &events[start..=end] {
-                    if !all_matching.contains(wid) {
-                        all_matching.push(*wid);
-                    }
+                    all_matching.insert(*wid);
                 }
                 if !offending_identities.contains(&identity) {
                     offending_identities.push(identity.clone());
@@ -48,7 +47,7 @@ fn mass_ec2_op_inner(
         }
     }
 
-    (all_matching, offending_identities)
+    (time_sorted(store, &all_matching), offending_identities)
 }
 
 /// IM-01: EC2 Instances Launched in Bulk (>5 RunInstances in 10 min, any identity)
@@ -68,19 +67,22 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
 
     let window_ms = 10 * 60 * 1000;
     let threshold = 5;
-    let mut all_matching: Vec<u32> = vec![];
+    let mut all_matching = RoaringBitmap::new();
 
+    // Every event inside any qualifying window. Window ends only move forward, so the union is
+    // built incrementally: each event is inserted once. (Re-inserting the whole window for every
+    // `end` was O(n * window) and made a 20,000-launch burst quadratic.)
+    let mut next_unseen = 0usize;
     let mut start = 0;
     for end in 0..events.len() {
         while events[end].0 - events[start].0 > window_ms {
             start += 1;
         }
         if end - start + 1 > threshold {
-            for (_, wid) in &events[start..=end] {
-                if !all_matching.contains(wid) {
-                    all_matching.push(*wid);
-                }
+            for (_, wid) in &events[start.max(next_unseen)..=end] {
+                all_matching.insert(*wid);
             }
+            next_unseen = end + 1;
         }
     }
 
@@ -101,7 +103,7 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
             threshold
         ),
         matching_count: 0,
-        matching_record_ids: all_matching,
+        matching_record_ids: time_sorted(store, &all_matching),
         metadata: meta,
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1496".to_string(),
@@ -155,7 +157,7 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
 
     let window_ms = 5 * 60 * 1000; // 5 minutes
     let threshold = 10;
-    let mut all_matching: Vec<u32> = vec![];
+    let mut all_matching = RoaringBitmap::new();
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
@@ -167,9 +169,7 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
             }
             if end - start + 1 > threshold {
                 for (_, wid) in &events[start..=end] {
-                    if !all_matching.contains(wid) {
-                        all_matching.push(*wid);
-                    }
+                    all_matching.insert(*wid);
                 }
                 if !offending_identities.contains(&identity) {
                     offending_identities.push(identity.clone());
@@ -209,7 +209,7 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
             offending_identities.join(", ")
         ),
         matching_count: 0,
-        matching_record_ids: all_matching,
+        matching_record_ids: time_sorted(store, &all_matching),
         metadata: meta,
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1485".to_string(),

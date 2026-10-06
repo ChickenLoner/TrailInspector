@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use roaring::RoaringBitmap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str, json_contains_pair, policy_statements};
+use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str, json_contains_pair, policy_statements, time_sorted};
 
 /// EX-01: S3 Bucket Made Public (PutBucketPolicy or PutBucketAcl)
 pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
@@ -157,7 +158,7 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
 
     let window_ms = 5 * 60 * 1000;
     let threshold = 50;
-    let mut all_matching: Vec<u32> = vec![];
+    let mut all_matching = RoaringBitmap::new();
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
@@ -169,9 +170,7 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
             }
             if end - start + 1 >= threshold {
                 for (_, wid) in &events[start..=end] {
-                    if !all_matching.contains(wid) {
-                        all_matching.push(*wid);
-                    }
+                    all_matching.insert(*wid);
                 }
                 if !offending_identities.contains(&identity) {
                     offending_identities.push(identity.clone());
@@ -188,7 +187,7 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
     // Sum bytes transferred from s3_event_index (zero blob reads)
     let total_bytes: u64 = all_matching
         .iter()
-        .filter_map(|&id| store.s3_event_index.get(&id))
+        .filter_map(|id| store.s3_event_index.get(&id))
         .map(|d| d.bytes_out)
         .sum();
 
@@ -221,7 +220,7 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
             offending_identities.join(", ")
         ),
         matching_count: 0,
-        matching_record_ids: all_matching,
+        matching_record_ids: time_sorted(store, &all_matching),
         metadata: meta,
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1530".to_string(),
