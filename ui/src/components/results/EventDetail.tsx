@@ -3,7 +3,7 @@ import type { RecordRow, RecordDetail, IpInfo } from "../../types/cloudtrail";
 import { lookupIp, getRecordById } from "../../lib/tauri";
 import { useLatestRequest } from "../../lib/useLatest";
 
-function countryFlag(code?: string): string {
+function countryFlag(code?: string | null): string {
   if (!code || code.length !== 2) return "";
   const base = 0x1F1E6 - 65;
   return String.fromCodePoint(base + code.toUpperCase().charCodeAt(0))

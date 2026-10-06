@@ -130,7 +130,7 @@ function EventRow({ ev }: { ev: TimelineEvent }) {
           whiteSpace: "nowrap",
           fontSize: 11,
         }}
-        title={ev.sourceIp}
+        title={ev.sourceIp ?? undefined}
       >
         {ev.sourceIp ?? "—"}
       </span>
@@ -143,7 +143,7 @@ function EventRow({ ev }: { ev: TimelineEvent }) {
           whiteSpace: "nowrap",
           fontSize: 11,
         }}
-        title={ev.errorCode}
+        title={ev.errorCode ?? undefined}
       >
         {ev.errorCode ?? ""}
       </span>

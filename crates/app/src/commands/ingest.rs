@@ -11,6 +11,9 @@ pub enum IngestProgress {
     /// Download phase — only emitted by the AWS fetch commands.
     Fetch(FetchProgress),
     Progress(ProgressEvent),
+    // The enum-level `rename_all` renames *variants* only; fields of a struct variant keep
+    // their Rust names unless the variant says otherwise.
+    #[serde(rename_all = "camelCase")]
     Complete { records_total: usize, warnings: Vec<IngestWarning> },
     #[allow(dead_code)]
     Error { message: String },
@@ -66,4 +69,20 @@ pub async fn load_directory(
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
     ingest_path_into_state(PathBuf::from(&path), on_progress, &state).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The UI reads `recordsTotal`; without the variant-level rename the wire key was
+    /// `records_total`.
+    #[test]
+    fn complete_serializes_camel_case_fields() {
+        let v = serde_json::to_value(IngestProgress::Complete { records_total: 3, warnings: vec![] }).unwrap();
+        assert_eq!(v["type"], "complete");
+        assert_eq!(v["recordsTotal"], 3);
+        assert!(v.get("records_total").is_none(), "{v}");
+        assert!(v["warnings"].is_array());
+    }
 }

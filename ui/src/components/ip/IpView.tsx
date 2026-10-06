@@ -28,7 +28,7 @@ interface MergedGeo {
   isp?: string;
 }
 
-function parseAsnNumber(asStr?: string): number | undefined {
+function parseAsnNumber(asStr?: string | null): number | undefined {
   if (!asStr) return undefined;
   const m = asStr.match(/^AS(\d+)/);
   return m ? parseInt(m[1], 10) : undefined;
