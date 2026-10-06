@@ -18,6 +18,8 @@ pub async fn reload_custom_rules(state: State<'_, Arc<AppState>>) -> Result<Vec<
     *state.custom_rules.write().map_err(|e| format!("Lock error: {e}"))? = result.rules;
     let errors = result.errors;
     *state.custom_rule_errors.write().map_err(|e| format!("Lock error: {e}"))? = errors.clone();
+    // Cached alerts were produced by the previous rule set.
+    state.invalidate_alerts();
     Ok(errors)
 }
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tauri::State;
 use trail_inspector_core::session::{SessionPage, SessionDetail, AlertStub, SessionSummary};
-use trail_inspector_core::detection::{run_all_rules, run_geo_rules, finalize_alerts};
+use trail_inspector_core::detection::finalize_alerts;
 use crate::state::AppState;
 
 /// List sessions with optional filtering and sorting.
@@ -65,21 +65,15 @@ pub async fn get_session_alerts(
     session_id: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<AlertStub>, String> {
-    // Full rule pass: keep it off the async workers (see run_detections).
+    // Alerts come from the shared cache (a full rule pass only on a miss), off the async workers.
+    // Custom-rule alerts are included now, so a session view agrees with the Detections tab.
     let state = Arc::clone(state.inner());
     tokio::task::spawn_blocking(move || {
+        let alerts = state.all_alerts()?;
+        let alerts = state.with_store(|store| Ok(finalize_alerts(store, alerts, None)))?;
+
         let sidx_guard = state.session_index_read()?;
         let index = sidx_guard.as_ref().ok_or("Session index not built")?;
-
-        let store_guard = state.store_read()?;
-        let store = store_guard.as_ref().ok_or("No dataset loaded")?;
-
-        let mut alerts = run_all_rules(store);
-        let geoip_guard = state.geoip_read()?;
-        if let Some(geoip) = geoip_guard.as_ref() {
-            alerts.extend(run_geo_rules(store, geoip));
-        }
-        let alerts = finalize_alerts(store, alerts, None);
 
         Ok(index.get_session_alerts(session_id, &alerts))
     })
@@ -98,15 +92,8 @@ pub async fn get_alert_sessions(
     tokio::task::spawn_blocking(move || {
         state.ensure_session_index()?;
 
-        let store_guard = state.store_read()?;
-        let store = store_guard.as_ref().ok_or("No dataset loaded")?;
-
-        let mut alerts = run_all_rules(store);
-        let geoip_guard = state.geoip_read()?;
-        if let Some(geoip) = geoip_guard.as_ref() {
-            alerts.extend(run_geo_rules(store, geoip));
-        }
-        let alerts = finalize_alerts(store, alerts, None);
+        let alerts = state.all_alerts()?;
+        let alerts = state.with_store(|store| Ok(finalize_alerts(store, alerts, None)))?;
 
         let alert = alerts.into_iter()
             .find(|a| a.rule_id == rule_id)

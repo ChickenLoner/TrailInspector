@@ -41,8 +41,12 @@ pub async fn load_geoip_db(
         (None, None) => "none".to_string(),
     };
 
-    let mut guard = state.geoip.write().map_err(|e| format!("Lock error: {e}"))?;
-    *guard = Some(engine);
+    {
+        let mut guard = state.geoip.write().map_err(|e| format!("Lock error: {e}"))?;
+        *guard = Some(engine);
+    }
+    // GEO-01 / GEO-02 only exist once a database is loaded, and results change with it.
+    state.invalidate_alerts();
     Ok(desc)
 }
 

@@ -60,6 +60,8 @@ pub(crate) async fn ingest_path_into_state(
             }
         }
     }
+    // Alerts belong to the dataset they were computed on.
+    state.invalidate_alerts();
 
     let _ = on_progress.send(IngestProgress::Complete {
         records_total: total,
