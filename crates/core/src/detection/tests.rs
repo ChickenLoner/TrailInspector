@@ -1301,6 +1301,36 @@ fn pe_02_derives_caller_from_arn_when_user_name_missing() {
     assert!(rules::persistence::pe_02_access_key_for_other(&store).is_empty());
 }
 
+fn console_login(id: u32, identity_type: &str) -> IndexedRecord {
+    let mut rec = with_resp(
+        make_indexed(id, "ConsoleLogin", "signin.amazonaws.com"),
+        json!({"ConsoleLogin": "Success"}),
+    );
+    rec.record.additional_event_data = Some(to_raw(json!({"MFAUsed": "No"})));
+    with_identity(rec, identity_type, Some("arn:aws:iam::123456789012:user/alice"), Some("alice"))
+}
+
+#[test]
+fn ia_01_fires_for_iam_user_without_mfa() {
+    let store = build_store(vec![console_login(0, "IAMUser")]);
+    assert_eq!(rules::initial_access::ia_01_console_login_no_mfa(&store).len(), 1);
+}
+
+#[test]
+fn ia_01_ignores_assumed_role_sso_login() {
+    let store = build_store(vec![console_login(0, "AssumedRole")]);
+    assert!(rules::initial_access::ia_01_console_login_no_mfa(&store).is_empty());
+}
+
+#[test]
+fn ia_01_ignores_saml_federated_login() {
+    let mut rec = console_login(0, "IAMUser");
+    rec.record.additional_event_data = Some(to_raw(json!({
+        "MFAUsed": "No", "SamlProviderArn": "arn:aws:iam::123456789012:saml-provider/Okta"})));
+    let store = build_store(vec![rec]);
+    assert!(rules::initial_access::ia_01_console_login_no_mfa(&store).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------

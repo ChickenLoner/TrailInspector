@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids, restrict};
+use crate::detection::{Alert, Severity, scoped_ids, restrict, jget};
 
 /// IA-01: Console Login Without MFA
 pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
@@ -11,24 +11,32 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for id in ids {
-        if store.get_record(id).is_some() {
-            // Check success
-            let is_success = store.parse_response_elements(id)
-                .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Success"))
-                .unwrap_or(false);
+        let Some(r) = store.get_record(id) else { continue };
 
-            if !is_success {
-                continue;
-            }
+        // IAM Identity Center / SAML federation: MFA is enforced at the identity provider and
+        // CloudTrail always records MFAUsed "No" for these logins.
+        if r.record.user_identity.identity_type.as_deref() == Some("AssumedRole") {
+            continue;
+        }
+        let additional = store.parse_additional_event_data(id);
+        if additional.as_ref().and_then(|v| jget(v, "SamlProviderArn")).is_some() {
+            continue;
+        }
 
-            // Check MFA not used
-            let mfa_used = store.parse_additional_event_data(id)
-                .and_then(|v| v.get("MFAUsed").and_then(|v| v.as_str()).map(|s| s.to_string()))
-                .unwrap_or_else(|| "No".to_string());
+        // Check success
+        let is_success = store.parse_response_elements(id)
+            .and_then(|v| v.get("ConsoleLogin").and_then(|v| v.as_str()).map(|s| s == "Success"))
+            .unwrap_or(false);
+        if !is_success {
+            continue;
+        }
 
-            if mfa_used != "Yes" {
-                matching.push(id);
-            }
+        // Check MFA not used
+        let mfa_used = additional
+            .and_then(|v| v.get("MFAUsed").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .unwrap_or_else(|| "No".to_string());
+        if mfa_used != "Yes" {
+            matching.push(id);
         }
     }
 
