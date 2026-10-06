@@ -87,6 +87,9 @@ struct IdentityAcc {
 // Query function
 // ---------------------------------------------------------------------------
 
+/// Row cap for the bucket and identity tables (CLAUDE.md: never send >500 records per IPC call).
+const MAX_SUMMARY_ROWS: usize = 500;
+
 /// Return an S3Summary aggregated over all GetObject events that match the
 /// optional time range, bucket, IP, and identity filters.
 pub fn get_s3_summary(
@@ -248,6 +251,7 @@ pub fn get_s3_summary(
         })
         .collect();
     buckets.sort_unstable_by(|a, b| b.bytes_out.cmp(&a.bytes_out));
+    buckets.truncate(MAX_SUMMARY_ROWS);
 
     // Build ObjectStat list, cap at 100
     let unique_objects = object_acc.len();
@@ -274,6 +278,7 @@ pub fn get_s3_summary(
         })
         .collect();
     identities.sort_unstable_by(|a, b| b.bytes_out.cmp(&a.bytes_out));
+    identities.truncate(MAX_SUMMARY_ROWS);
 
     S3Summary {
         total_bytes_out,

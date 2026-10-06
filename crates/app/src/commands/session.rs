@@ -16,6 +16,8 @@ pub async fn list_sessions(
     end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<SessionPage, String> {
+    // CLAUDE.md: never send >500 records per IPC call.
+    let page_size = page_size.clamp(1, 500);
     state.ensure_session_index()?;
 
     let sidx_guard = state.session_index_read()?;
@@ -44,6 +46,8 @@ pub async fn get_session_detail(
     events_page_size: usize,
     state: State<'_, AppState>,
 ) -> Result<SessionDetail, String> {
+    // CLAUDE.md: never send >500 records per IPC call.
+    let events_page_size = events_page_size.clamp(1, 500);
     let sidx_guard = state.session_index_read()?;
     let index = sidx_guard.as_ref().ok_or("Session index not built — call list_sessions first")?;
 

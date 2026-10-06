@@ -174,6 +174,8 @@ pub async fn list_ips(
     end_ms: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<IpPage, String> {
+    // CLAUDE.md: never send >500 records per IPC call.
+    let page_size = page_size.clamp(1, 500);
     // Build ip→count map from store (time-filtered if range provided)
     let ip_counts = state.with_store(|store| {
         if let (Some(s), Some(e)) = (start_ms, end_ms) {
