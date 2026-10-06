@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use roaring::RoaringBitmap;
-use crate::detection::{Alert, Severity, scoped_ids, restrict};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 fn mass_ec2_op_inner(
     store: &Store,
@@ -111,22 +110,32 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
     }]
 }
 
+/// Management-plane destructive events counted by IM-02.
+const DESTRUCTIVE_EVENTS: &[&str] = &[
+    "DeleteBucket", "DeleteDBInstance", "DeleteDBCluster", "DeleteDBSnapshot", "DeleteDBClusterSnapshot",
+    "TerminateInstances", "DeleteVolume", "DeleteSnapshot", "DeregisterImage", "DeleteVpc", "DeleteSubnet",
+    "DeleteSecurityGroup", "DeleteRouteTable", "DeleteInternetGateway", "DeleteNatGateway",
+    "DeleteLoadBalancer", "DeleteTargetGroup", "DeleteFunction20150331", "DeleteFunction", "DeleteTable",
+    "DeleteStack", "DeleteCluster", "DeleteService", "DeleteRepository", "DeleteKeyPair", "DeleteUser",
+    "DeleteRole", "DeleteGroup", "DeletePolicy", "DeleteTrail", "DeleteLogGroup", "DeleteAlarms",
+    "DeleteFileSystem", "DeleteBackupVault", "DeleteRecoveryPoint", "DeleteHostedZone", "DeleteDistribution",
+    "DeleteStream", "DeleteTopic", "DeleteQueue", "DeleteSecret", "ScheduleKeyDeletion", "DeleteDomain",
+    "DeleteElasticsearchDomain", "DeleteCacheCluster", "DeleteReplicationGroup", "DeleteWorkspaces",
+    "DeleteEnvironment", "DeleteApplication", "DeleteDeployment",
+];
+
 /// IM-02: Resource Deletion Spree (>10 Delete*/Terminate* events in 5 min by same identity)
 pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
     // Collect all Delete* and Terminate* events
-    let mut deletion = RoaringBitmap::new();
-
-    for (event_name, ids) in &store.idx_event_name {
-        if event_name.starts_with("Delete")
-            || event_name.starts_with("Terminate")
-            || event_name.starts_with("Destroy")
-            || event_name.starts_with("Remove")
-        {
-            deletion |= ids;
-        }
-    }
-    // Multi-service by design (any source), but failed calls are not deletions.
-    let deletion_ids: Vec<u32> = restrict(store, deletion, &[], true).iter().collect();
+    // Management-plane destructive calls only. A prefix match on Delete*/Remove* also caught
+    // S3 data events (DeleteObject), tag removals and ENI cleanup by service roles, so a
+    // lifecycle job could look like ransomware. Multi-service by design, so no source scope.
+    let deletion_ids: Vec<u32> = scoped_ids(store, DESTRUCTIVE_EVENTS, &[], true)
+        .iter()
+        .filter(|&id| {
+            store.get_record(id).is_some_and(|r| r.record.read_only != Some(true))
+        })
+        .collect();
 
     if deletion_ids.is_empty() {
         return vec![];

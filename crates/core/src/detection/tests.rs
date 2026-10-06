@@ -1331,6 +1331,33 @@ fn ia_01_ignores_saml_federated_login() {
     assert!(rules::initial_access::ia_01_console_login_no_mfa(&store).is_empty());
 }
 
+fn burst(event: &str, source: &str, n: u32) -> Vec<IndexedRecord> {
+    // n events, 10 s apart, same default identity
+    (0..n).map(|i| make_indexed_ts(i, event, source, i as i64 * 10_000)).collect()
+}
+
+#[test]
+fn im_02_does_not_fire_on_s3_data_event_deletes() {
+    let store = build_store(burst("DeleteObject", "s3.amazonaws.com", 11));
+    assert!(rules::impact::im_02_resource_deletion_spree(&store).is_empty());
+}
+
+#[test]
+fn im_02_fires_on_management_plane_deletion_spree() {
+    let store = build_store(burst("TerminateInstances", "ec2.amazonaws.com", 11));
+    assert_eq!(rules::impact::im_02_resource_deletion_spree(&store).len(), 1);
+}
+
+#[test]
+fn im_02_skips_read_only_records() {
+    let recs: Vec<IndexedRecord> = burst("DeleteVolume", "ec2.amazonaws.com", 11)
+        .into_iter()
+        .map(|mut r| { r.record.read_only = Some(true); r })
+        .collect();
+    let store = build_store(recs);
+    assert!(rules::impact::im_02_resource_deletion_spree(&store).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------
