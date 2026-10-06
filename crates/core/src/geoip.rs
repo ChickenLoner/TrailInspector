@@ -134,6 +134,12 @@ impl GeoIpEngine {
             }
         }
 
+        // Neither database knew this address. Returning an all-`None` record made it look like a
+        // resolved public IP with an unknown country; report "no data" instead.
+        if info.country_code.is_none() && info.asn.is_none() {
+            return None;
+        }
+
         Some(info)
     }
 
@@ -215,7 +221,17 @@ fn is_private(ip: IpAddr) -> bool {
             v4.is_private() || v4.is_loopback() || v4.is_link_local()
                 || v4.is_broadcast() || v4.is_unspecified()
         }
-        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        IpAddr::V6(v6) => {
+            // `::ffff:10.0.0.1` is the private IPv4 address in IPv6 clothing.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_private(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (first & 0xffc0) == 0xfe80 // fe80::/10 link-local
+                || (first & 0xfe00) == 0xfc00 // fc00::/7 unique local
+        }
     }
 }
 
@@ -274,6 +290,14 @@ mod tests {
             "0.0.0.0",
             "255.255.255.255",
             "::1",
+            "::",
+            "fe80::1",
+            "febf::1",
+            "fc00::1",
+            "fd12:3456:789a::1",
+            "::ffff:10.0.0.1",
+            "::ffff:192.168.1.1",
+            "::ffff:127.0.0.1",
         ];
         for ip_str in &private_cases {
             let ip = IpAddr::from_str(ip_str).unwrap();
@@ -290,7 +314,10 @@ mod tests {
         use std::net::IpAddr;
         use std::str::FromStr;
 
-        let public_cases = ["8.8.8.8", "1.1.1.1", "203.0.113.1", "2001:4860:4860::8888"];
+        let public_cases = [
+            "8.8.8.8", "1.1.1.1", "203.0.113.1", "2001:4860:4860::8888",
+            "2606:4700::1111", "::ffff:8.8.8.8", "fec0::1", "fbff::1",
+        ];
         for ip_str in &public_cases {
             let ip = IpAddr::from_str(ip_str).unwrap();
             assert!(
@@ -299,6 +326,16 @@ mod tests {
                 ip_str
             );
         }
+    }
+
+    /// With no database to answer, a lookup has nothing to report: it must be `None`, not an
+    /// all-`None` record that reads as "public IP, unknown country".
+    #[test]
+    fn test_lookup_without_any_match_is_none() {
+        let engine = GeoIpEngine { geo_reader: None, asn_reader: None };
+        assert!(engine.lookup("8.8.8.8").is_none());
+        assert!(engine.lookup("fe80::1").is_none());
+        assert!(engine.lookup("not an ip").is_none());
     }
 
     // -----------------------------------------------------------------------
