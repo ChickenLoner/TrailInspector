@@ -658,9 +658,9 @@ follow-up plan.
 ## 10. Progress log (executor updates this)
 
 Baseline (P0.1):
-- Verification block: [ ] green
-- Bench median (100k, release): ____ ms, ____ alerts
-- Rule count: ____
+- Verification block: [x] green (needed `apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf` for the app-crate check; core 161 tests, 169 with aws)
+- Bench median (100k, release): 753 ms (717/754/761), 11 alerts
+- Rule count: 68
 
 Phase 1: [ ] P1.1  [ ] P1.2  [ ] P1.3  [ ] P1.4  [ ] P1.5  [ ] P1.6
 Phase 2: [ ] P2.1  [ ] P2.2  [ ] P2.3  [ ] P2.4  [ ] P2.5  [ ] P2.6  [ ] P2.7  [ ] P2.8  [ ] P2.9  [ ] P2.10  [ ] P2.11  [ ] P2.12
