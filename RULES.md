@@ -1,6 +1,6 @@
 # TrailInspector Detection Rules
 
-TrailInspector ships **71 built-in detection rules** mapped to MITRE ATT&CK tactics and techniques, plus a **custom YAML rule engine** so you can write your own rules without touching Rust code.
+TrailInspector ships **70 built-in detection rules** mapped to MITRE ATT&CK tactics and techniques, plus a **custom YAML rule engine** so you can write your own rules without touching Rust code.
 
 All rules run entirely in-memory against the loaded CloudTrail event set — no network calls required.
 

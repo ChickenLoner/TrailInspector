@@ -1,6 +1,6 @@
 //! User-defined detection rules loaded from `rules.yaml` in the app config directory.
 //!
-//! Rules extend the 60 built-in detections. Each rule specifies:
+//! Rules extend the 70 built-in detections. Each rule specifies:
 //! - Metadata (id, name, severity, MITRE fields, service)
 //! - One or more `event_name` values to match (exact)
 //! - An optional boolean filter tree (AND / OR / NOT on indexed fields)
@@ -364,7 +364,7 @@ pub fn run_custom_rules(rules: &[CustomRule], store: &Store) -> Vec<Alert> {
 
 pub const DEFAULT_RULES_YAML: &str = r#"# TrailInspector Custom Detection Rules
 #
-# These rules extend the 60 built-in detections. They are evaluated every
+# These rules extend the 70 built-in detections. They are evaluated every
 # time you run detections. Edit this file and click "Reload Rules" in the
 # Detection tab to apply changes without restarting the app.
 #

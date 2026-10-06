@@ -965,7 +965,7 @@ fn test_run_all_rules_sorts_by_severity_descending() {
 }
 
 // ---------------------------------------------------------------------------
-// Performance — run all 58 rules over 100,000 synthetic records
+// Performance — run all 68 registry rules over 100,000 synthetic records
 // (skipped in normal CI; run with: cargo test -- --ignored bench)
 // ---------------------------------------------------------------------------
 

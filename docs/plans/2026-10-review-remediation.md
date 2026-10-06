@@ -662,7 +662,7 @@ Baseline (P0.1):
 - Bench median (100k, release): 753 ms (717/754/761), 11 alerts
 - Rule count: 68
 
-Phase 1: [x] P1.1  [x] P1.2  [x] P1.3  [x] P1.4  [x] P1.5  [ ] P1.6
+Phase 1: [x] P1.1  [x] P1.2  [x] P1.3  [x] P1.4  [x] P1.5  [x] P1.6
 Phase 2: [ ] P2.1  [ ] P2.2  [ ] P2.3  [ ] P2.4  [ ] P2.5  [ ] P2.6  [ ] P2.7  [ ] P2.8  [ ] P2.9  [ ] P2.10  [ ] P2.11  [ ] P2.12
 Phase 3: [ ] P3.1  [ ] P3.2  [ ] P3.3  [ ] P3.4  [ ] P3.5  [ ] P3.6  [ ] P3.7  [ ] P3.8
 Phase 4: [ ] P4.1  [ ] P4.2  [ ] P4.3  [ ] P4.4  [ ] P4.5  [ ] P4.6  [ ] P4.7  [ ] P4.8  [ ] P4.9
@@ -676,5 +676,6 @@ Notes / blockers (task id, what, why):
 - P1.2 deviation: IA-04 (failed-login brute force) uses `exclude_errors = false`, like DI-03, because failure is its subject.
 - P1.2 correction: EC-06 events come from `ec2-instance-connect.amazonaws.com`, not `ec2.amazonaws.com`; the plan table was wrong.
 - P1.2: evidence `query` strings gain `eventSource=` per OR clause (appending `AND` to an OR query would change its meaning in this parser). They do not exclude errored events, so evidence can show denied calls the rule skipped.
+- P1.6: used 70 (68 registry rules + GEO-01/02, matching the 70 rows in RULES.md) for user-facing prose and 68 for the bench comment. README.md (60), CHANGELOG.md (60) and RULES.md lines ~1147 and ~1403 (71/60) are still stale; out of scope.
 - P1.5: `available_buckets`/`available_ips`/`available_identities` dropdown lists in the S3 summary stay unbounded; capping them hides filter options and needs a UI typeahead (deferred).
 - P1.2: rule tests were sparse; added `event_name_only_rules_are_scoped_to_their_service` covering 27 (rule, event, source) cases.
