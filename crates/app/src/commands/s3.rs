@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tauri::State;
 use trail_inspector_core::s3;
 use crate::state::AppState;
@@ -9,7 +10,7 @@ pub async fn get_s3_summary(
     bucket: Option<String>,
     ip: Option<String>,
     identity: Option<String>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<s3::S3Summary, String> {
     state.with_store(|store| {
         Ok(s3::get_s3_summary(store, start_ms, end_ms, bucket.as_deref(), ip.as_deref(), identity.as_deref()))

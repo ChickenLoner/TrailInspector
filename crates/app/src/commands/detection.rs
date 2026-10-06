@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tauri::State;
 use trail_inspector_core::detection::{
     run_all_rules, run_geo_rules, finalize_alerts, Alert,
@@ -14,26 +15,34 @@ use crate::state::AppState;
 pub async fn run_detections(
     start_ms: Option<i64>,
     end_ms: Option<i64>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Alert>, String> {
-    let store_guard = state.store_read()?;
-    let store = store_guard.as_ref().ok_or("No dataset loaded")?;
+    // Running every rule over a large dataset takes seconds; doing it on an async worker would
+    // stall every other command (search, timeline) until it finished. The guards are taken
+    // inside the blocking task, so nothing is held across an await.
+    let state = Arc::clone(state.inner());
+    tokio::task::spawn_blocking(move || {
+        let store_guard = state.store_read()?;
+        let store = store_guard.as_ref().ok_or("No dataset loaded")?;
 
-    let mut alerts = run_all_rules(store);
+        let mut alerts = run_all_rules(store);
 
-    let geoip_guard = state.geoip_read()?;
-    if let Some(geoip) = geoip_guard.as_ref() {
-        let mut geo_alerts = run_geo_rules(store, geoip);
-        alerts.append(&mut geo_alerts);
-    }
+        let geoip_guard = state.geoip_read()?;
+        if let Some(geoip) = geoip_guard.as_ref() {
+            let mut geo_alerts = run_geo_rules(store, geoip);
+            alerts.append(&mut geo_alerts);
+        }
 
-    let rules_guard = state.custom_rules_read()?;
-    let mut custom_alerts = run_custom_rules(&rules_guard, store);
-    alerts.append(&mut custom_alerts);
+        let rules_guard = state.custom_rules_read()?;
+        let mut custom_alerts = run_custom_rules(&rules_guard, store);
+        alerts.append(&mut custom_alerts);
 
-    let time_range = match (start_ms, end_ms) {
-        (Some(s), Some(e)) => Some((s, e)),
-        _ => None,
-    };
-    Ok(finalize_alerts(store, alerts, time_range))
+        let time_range = match (start_ms, end_ms) {
+            (Some(s), Some(e)) => Some((s, e)),
+            _ => None,
+        };
+        Ok(finalize_alerts(store, alerts, time_range))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
 }

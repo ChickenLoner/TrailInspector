@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tauri::State;
 use trail_inspector_core::geoip::{GeoIpEngine, IpInfo, IpPage};
 use crate::state::AppState;
@@ -26,7 +27,7 @@ pub struct AbuseCheckResult {
 pub async fn load_geoip_db(
     geo_path: Option<String>,
     asn_path: Option<String>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
     let engine = GeoIpEngine::load(
         geo_path.as_deref(),
@@ -215,7 +216,7 @@ mod tests {
 #[tauri::command]
 pub async fn lookup_ip(
     ip: String,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Option<IpInfo>, String> {
     let guard = state.geoip_read()?;
     match guard.as_ref() {
@@ -235,7 +236,7 @@ pub async fn list_ips(
     filter_country: Option<String>,
     start_ms: Option<i64>,
     end_ms: Option<i64>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<IpPage, String> {
     // CLAUDE.md: never send >500 records per IPC call.
     let page_size = page_size.clamp(1, 500);

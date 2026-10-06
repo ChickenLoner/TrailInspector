@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::State;
 use trail_inspector_core::store::{ProgressEvent, Store, IngestWarning};
@@ -66,7 +67,7 @@ pub(crate) async fn ingest_path_into_state(
 pub async fn load_directory(
     path: String,
     on_progress: Channel<IngestProgress>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<usize, String> {
     ingest_path_into_state(PathBuf::from(&path), on_progress, &state).await
 }

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tauri::State;
 use trail_inspector_core::query::{execute, parse_query_opt};
 use trail_inspector_core::stats::{
@@ -14,7 +15,7 @@ use crate::state::AppState;
 pub async fn get_timeline(
     query: Option<String>,
     bucket_count: Option<usize>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<TimelineResult, String> {
     let bucket_count = bucket_count.unwrap_or(60).clamp(1, 100);
 
@@ -37,7 +38,7 @@ pub async fn get_top_fields(
     field: String,
     query: Option<String>,
     top_n: Option<usize>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<FieldValueCount>, String> {
     let top_n = top_n.unwrap_or(20).min(100);
 
@@ -73,7 +74,7 @@ pub async fn get_identity_summary_cmd(
     page_size: Option<usize>,
     start_ms: Option<i64>,
     end_ms: Option<i64>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<IdentitySummary, String> {
     let page = page.unwrap_or(0);
     let page_size = page_size.unwrap_or(500).min(500);

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tauri::State;
 use trail_inspector_core::model::{CloudTrailRecord, IndexedRecord};
 use trail_inspector_core::query::{execute, parse_query_opt};
@@ -63,7 +64,7 @@ pub struct RecordDetail {
 #[tauri::command]
 pub async fn get_record_by_id(
     id: u32,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Option<RecordDetail>, String> {
     state.with_store(|store| {
         Ok(store.get_record(id).map(|r| {
@@ -83,7 +84,7 @@ pub async fn search(
     query: Option<String>,
     page: Option<usize>,
     page_size: Option<usize>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<SearchResult, String> {
     let page = page.unwrap_or(0);
     let page_size = page_size.unwrap_or(100).min(500);
@@ -119,7 +120,7 @@ pub struct FieldValue {
 pub async fn get_field_values(
     field: String,
     top_n: Option<usize>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<FieldValue>, String> {
     let top_n = top_n.unwrap_or(20);
     state.with_store(|store| {

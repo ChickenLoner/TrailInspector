@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -32,7 +33,7 @@ pub async fn list_s3_buckets(
     credentials: Option<AwsCredentials>,
     region: String,
     endpoint_url: Option<String>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<String>, String> {
     let credentials = match credentials {
         Some(c) => Some(c),
@@ -99,7 +100,7 @@ pub async fn check_aws(
     endpoint_url: Option<String>,
     on_progress: Channel<IngestProgress>,
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<FetchSummary, String> {
     if let (Some(s), Some(e)) = (start_ms, end_ms) {
         if s >= e {
@@ -220,7 +221,7 @@ pub async fn check_aws(
 #[tauri::command]
 pub async fn pull_staged(
     on_progress: Channel<IngestProgress>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<usize, String> {
     let dir = {
         let guard = state.aws_staged.read().map_err(|e| format!("Lock error: {e}"))?;
@@ -235,7 +236,7 @@ pub async fn pull_staged(
 
 /// Forget cached credentials and delete any staged download.
 #[tauri::command]
-pub async fn clear_aws_cache(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn clear_aws_cache(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     *state
         .aws_credentials
         .write()
@@ -255,7 +256,7 @@ pub async fn clear_aws_cache(state: State<'_, AppState>) -> Result<(), String> {
 ///
 /// Returns a bool, never the values themselves.
 #[tauri::command]
-pub async fn has_cached_aws_credentials(state: State<'_, AppState>) -> Result<bool, String> {
+pub async fn has_cached_aws_credentials(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
     Ok(state
         .aws_credentials
         .read()
