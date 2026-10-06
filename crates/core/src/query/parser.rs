@@ -16,7 +16,8 @@ use super::filter::*;
 /// - `earliest=2024-01-01T00:00:00Z` — absolute time
 /// - `latest=...`            — same for upper bound
 ///
-/// Unknown field names are silently skipped to allow forward compatibility.
+/// Unknown field names are an error: silently dropping a misspelled filter (`eventname=` typo)
+/// would return the whole dataset and look like a real result.
 pub fn parse_query(input: &str) -> Result<Query, CoreError> {
     let mut query = Query::default();
     let input = input.trim();
@@ -96,6 +97,16 @@ fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
+/// Resolve a field name or fail with the list of valid ones.
+fn known_field(name: &str) -> Result<FieldName, CoreError> {
+    FieldName::from_str(name).ok_or_else(|| {
+        CoreError::Query(format!(
+            "Unknown field '{name}'. Known fields: eventName, eventSource, awsRegion, \
+             sourceIPAddress, userArn, userName, accountId, errorCode, identityType, userAgent, bucketName"
+        ))
+    })
+}
+
 /// Parse a token like `field=value` or `field!=value` into a FieldFilter.
 /// Returns `Ok(None)` for tokens that don't look like filters (skipped silently).
 fn parse_filter_token(token: &str) -> Result<Option<FieldFilter>, CoreError> {
@@ -103,10 +114,7 @@ fn parse_filter_token(token: &str) -> Result<Option<FieldFilter>, CoreError> {
     if let Some(pos) = token.find("!=") {
         let field_str = &token[..pos];
         let value_str = &token[pos + 2..];
-        let field = match FieldName::from_str(field_str) {
-            Some(f) => f,
-            None => return Ok(None), // unknown field — skip
-        };
+        let field = known_field(field_str)?;
         return Ok(Some(FieldFilter {
             field,
             mode: parse_match_mode(value_str),
@@ -117,10 +125,7 @@ fn parse_filter_token(token: &str) -> Result<Option<FieldFilter>, CoreError> {
     if let Some(pos) = token.find('=') {
         let field_str = &token[..pos];
         let value_str = &token[pos + 1..];
-        let field = match FieldName::from_str(field_str) {
-            Some(f) => f,
-            None => return Ok(None), // unknown field — skip
-        };
+        let field = known_field(field_str)?;
         return Ok(Some(FieldFilter {
             field,
             mode: parse_match_mode(value_str),
@@ -270,10 +275,22 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_field_skipped() {
-        let q = parse_query("unknownField=value eventName=CreateUser").unwrap();
-        assert_eq!(q.filter_groups.len(), 1);
-        assert_eq!(q.filter_groups[0].len(), 1);
+    fn test_unknown_field_is_an_error() {
+        // Not unwrap_err(): Query has no PartialEq/Debug requirements we want to add here.
+        let msg = match parse_query("unknownField=value eventName=CreateUser") {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("unknown field must be rejected, not silently dropped"),
+        };
+        assert!(msg.contains("Unknown field 'unknownField'"), "{msg}");
+        assert!(msg.contains("eventName"), "message should list known fields: {msg}");
+        assert!(parse_query("unknownField!=value").is_err());
+    }
+
+    #[test]
+    fn test_field_case_insensitive() {
+        let q = parse_query("eventname=StopLogging AND ERRORCODE!=AccessDenied").unwrap();
         assert_eq!(q.filter_groups[0][0].field, FieldName::EventName);
+        assert_eq!(q.filter_groups[0][1].field, FieldName::ErrorCode);
+        assert!(q.filter_groups[0][1].negated);
     }
 }

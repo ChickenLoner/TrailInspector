@@ -130,6 +130,13 @@ function ExportMenu({ query, disabled }: { query: string; disabled: boolean }) {
   );
 }
 
+/** Tauri rejects invoke() with the Rust `Err(String)` as a plain string. */
+function errorMessage(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
 // ── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [loaded, setLoaded] = useState(false);
@@ -138,6 +145,8 @@ export default function App() {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<RecordRow | null>(null);
   const [loading, setLoading] = useState(false);
+  // Last search failure (e.g. an unknown query field). Cleared by the next successful search.
+  const [queryError, setQueryError] = useState<string | null>(null);
 
   // Search state — restore from localStorage on first mount
   const [queryText, setQueryText] = useState(
@@ -220,10 +229,12 @@ export default function App() {
         if (reqId !== searchReqRef.current) return; // superseded by a newer query
         setResults(r);
         setPage(p);
+        setQueryError(null);
         setQueryTimeMs(Math.round(performance.now() - t0));
       } catch (e) {
         if (reqId !== searchReqRef.current) return;
         console.error("Search error:", e);
+        setQueryError(errorMessage(e));
       } finally {
         if (reqId === searchReqRef.current) setLoading(false);
       }
@@ -421,6 +432,21 @@ export default function App() {
           </span>
         )}
       </div>
+
+      {queryError && (
+        <div
+          role="alert"
+          className="px-3 text-xs flex-shrink-0"
+          style={{
+            background: "var(--bg-secondary)",
+            borderBottom: "1px solid var(--border)",
+            color: "var(--accent-red)",
+            padding: "4px 12px",
+          }}
+        >
+          {queryError}
+        </div>
+      )}
 
       {/* Timeline histogram */}
       <div

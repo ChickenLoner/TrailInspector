@@ -15,19 +15,20 @@ pub enum FieldName {
 }
 
 impl FieldName {
+    /// Parse a field name, ASCII case-insensitively (`eventname` works like `eventName`).
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "eventName" => Some(Self::EventName),
-            "eventSource" => Some(Self::EventSource),
-            "awsRegion" | "region" => Some(Self::AwsRegion),
-            "sourceIPAddress" | "sourceIp" => Some(Self::SourceIPAddress),
-            "userArn" | "arn" => Some(Self::UserArn),
-            "userName" => Some(Self::UserName),
-            "accountId" => Some(Self::AccountId),
-            "errorCode" => Some(Self::ErrorCode),
-            "identityType" | "userIdentity.type" => Some(Self::IdentityType),
-            "userAgent" => Some(Self::UserAgent),
-            "bucketName" => Some(Self::BucketName),
+        match s.to_ascii_lowercase().as_str() {
+            "eventname" => Some(Self::EventName),
+            "eventsource" => Some(Self::EventSource),
+            "awsregion" | "region" => Some(Self::AwsRegion),
+            "sourceipaddress" | "sourceip" => Some(Self::SourceIPAddress),
+            "userarn" | "arn" => Some(Self::UserArn),
+            "username" => Some(Self::UserName),
+            "accountid" => Some(Self::AccountId),
+            "errorcode" => Some(Self::ErrorCode),
+            "identitytype" | "useridentity.type" => Some(Self::IdentityType),
+            "useragent" => Some(Self::UserAgent),
+            "bucketname" => Some(Self::BucketName),
             _ => None,
         }
     }
