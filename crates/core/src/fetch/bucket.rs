@@ -69,6 +69,36 @@ fn s3_client(cfg: &aws_config::SdkConfig, req: &FetchRequest) -> aws_sdk_s3::Cli
     aws_sdk_s3::Client::from_conf(builder.build())
 }
 
+/// Turn an object key into a path that is safe to join onto the staging directory, or say why
+/// not. Empty segments (`a//b`) are dropped as before; the whole key is **rejected** when any
+/// segment could escape or alias a different path:
+///
+/// - contains `\` or `:`: on Windows a `\` separates components, so `..\..\evil` has no `/` and
+///   slips past a `/`-only check, and `C:evil` has a drive prefix that makes `PathBuf::push`
+///   discard the base entirely;
+/// - contains a NUL byte;
+/// - is nothing but dots and spaces (`.`, `..`, `...`, ` .. `): Windows strips trailing dots and
+///   spaces, so these all resolve to a parent or the directory itself.
+fn key_to_relative_path(key: &str) -> Result<PathBuf, String> {
+    let mut rel = PathBuf::new();
+    for seg in key.split('/') {
+        if seg.is_empty() {
+            continue;
+        }
+        if seg.contains(['\\', ':', '\0']) {
+            return Err("unsafe path segment (backslash, colon or NUL); refusing to write it".into());
+        }
+        if seg.trim_matches(|c| c == '.' || c == ' ').is_empty() {
+            return Err("unsafe path segment (dot or parent reference); refusing to write it".into());
+        }
+        rel.push(seg);
+    }
+    if rel.as_os_str().is_empty() {
+        return Err("empty object key".into());
+    }
+    Ok(rel)
+}
+
 /// The bucket's real region: from a successful `HeadBucket`, or from the
 /// `x-amz-bucket-region` header S3 attaches to the redirect/denial when the client is in the
 /// wrong region. `None` when it cannot be determined (the requested region is then kept).
@@ -260,6 +290,22 @@ where
     let mut skipped: Vec<String> = Vec::new();
 
     for (i, key) in keys.iter().enumerate() {
+        // `key` is server-supplied. Refuse anything that could land outside `dest` before
+        // spending a request on it.
+        let rel = match key_to_relative_path(key) {
+            Ok(r) => r,
+            Err(why) => {
+                skipped.push(format!("{key}: {why}"));
+                on_progress(FetchProgress {
+                    phase: FetchPhase::Downloading,
+                    items_done: i + 1,
+                    items_total: Some(total),
+                    message: format!("{}/{total} objects ({} skipped)", i + 1, skipped.len()),
+                });
+                continue;
+            }
+        };
+
         // A failed object is skipped and reported, not fatal: one AccessDenied (for instance an
         // SSE-KMS key this role cannot use) must not throw away the thousands already fetched.
         let fetched: Result<_, String> = async {
@@ -288,14 +334,7 @@ where
             }
         };
 
-        // Mirror the key path locally. `key` is server-supplied, so strip any
-        // absolute or parent components before joining — an object named
-        // `../../evil` must not escape `dest`.
-        let rel: PathBuf = key
-            .split('/')
-            .filter(|seg| !seg.is_empty() && *seg != "." && *seg != "..")
-            .collect();
-        let out_path = dest.join(rel);
+        let out_path = dest.join(&rel);
 
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| CoreError::Io {
@@ -511,6 +550,52 @@ mod tests {
     const DAY: i64 = 86_400_000;
     /// 2026-07-25T00:00:00Z
     const JUL25: i64 = 1_784_937_600_000;
+
+    #[test]
+    fn key_to_relative_path_accepts_normal_keys() {
+        let ok = key_to_relative_path("AWSLogs/111/CloudTrail/us-east-1/2026/07/25/a.json.gz").unwrap();
+        assert_eq!(ok, PathBuf::from("AWSLogs/111/CloudTrail/us-east-1/2026/07/25/a.json.gz"));
+        // A double slash is not a traversal; the empty segment is dropped.
+        assert_eq!(key_to_relative_path("logs//a.json.gz").unwrap(), PathBuf::from("logs/a.json.gz"));
+        // Dots inside a name are fine.
+        assert!(key_to_relative_path("a/b.c/..d/e.json.gz").is_ok());
+    }
+
+    #[test]
+    fn key_to_relative_path_rejects_escapes() {
+        for bad in [
+            "a/../b.json.gz",
+            "../evil.json.gz",
+            "a/./b.json.gz",
+            "a/..\\b.json.gz",
+            "..\\..\\evil.json.gz",
+            "C:evil/x.json.gz",
+            "C:\\Windows\\x.json.gz",
+            "a/ .. /b.json.gz",
+            "a/.../b.json.gz",
+            "a/b\0c.json.gz",
+            "///",
+            "",
+        ] {
+            assert!(key_to_relative_path(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[tokio::test]
+    async fn unsafe_keys_are_skipped_and_nothing_escapes_dest() {
+        let evil = "AWSLogs/111/CloudTrail/us-east-1/2026/07/25/..\\..\\evil.json.gz";
+        let fake = spawn_fake_s3_with("bkt", vec![KEY_A, evil], vec![], None);
+        let outer = tempfile::TempDir::new().unwrap();
+        let dest = outer.path().join("stage");
+        std::fs::create_dir_all(&dest).unwrap();
+        let out = fetch_trail_bucket(&fake_request(fake.endpoint.clone()), &dest, |_| {}).await.unwrap();
+        assert_eq!(out.files_written, 1);
+        assert_eq!(out.skipped.len(), 1);
+        assert!(out.skipped[0].contains("unsafe path segment"), "{:?}", out.skipped);
+        // Nothing was requested for the unsafe key, and nothing exists beside `stage`.
+        assert!(!fake.requests.lock().unwrap().iter().any(|r| r.contains("evil")));
+        assert_eq!(std::fs::read_dir(outer.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn skips_digest_and_insight_objects() {
