@@ -219,17 +219,9 @@ pub fn summarize_staged(dir: &std::path::Path) -> FetchSummary {
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
 
-        let batches = if is_zip {
-            decompress::read_zip_entries(&path).unwrap_or_default()
-        } else {
-            match decompress::read_log_file(&path) {
-                Ok(b) => vec![b],
-                Err(_) => continue,
-            }
-        };
-
-        for bytes in batches {
-            let Ok(parsed) = parser::parse_records(&bytes, &path, 0, 0) else { continue };
+        // Fold one file's bytes into the running totals.
+        let mut absorb = |bytes: &[u8]| {
+            let Ok(parsed) = parser::parse_records(bytes, &path, 0, 0) else { return };
             let records = parsed.records;
             summary.events += records.len();
             for r in &records {
@@ -237,6 +229,18 @@ pub fn summarize_staged(dir: &std::path::Path) -> FetchSummary {
                     Some(summary.earliest_ms.map_or(r.timestamp, |e: i64| e.min(r.timestamp)));
                 summary.latest_ms =
                     Some(summary.latest_ms.map_or(r.timestamp, |l: i64| l.max(r.timestamp)));
+            }
+        };
+
+        if is_zip {
+            let _ = decompress::for_each_zip_entry(&path, |bytes| {
+                absorb(&bytes);
+                std::ops::ControlFlow::Continue(())
+            });
+        } else {
+            match decompress::read_log_file(&path) {
+                Ok(b) => absorb(&b),
+                Err(_) => continue,
             }
         }
         summary.files += 1;

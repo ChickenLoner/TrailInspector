@@ -5,7 +5,7 @@ use crate::model::IndexedRecord;
 use crate::store::blob_store::BlobStore;
 use crate::s3::S3EventData;
 use rayon::prelude::*;
-use crate::ingest::{decompress::{read_log_file, read_zip_entries}, parser::parse_records};
+use crate::ingest::{decompress::{read_log_file, for_each_zip_entry}, parser::parse_records};
 use crate::error::{CoreError, IngestWarning};
 use std::path::Path;
 
@@ -144,19 +144,19 @@ impl Store {
                         .unwrap_or(false);
 
                     if is_zip {
-                        match read_zip_entries(path) {
-                            Ok(entries) => {
-                                for bytes in entries {
-                                    let msg = parse_records(&bytes, path, src_idx, 0)
-                                        .map(|p| { let note = p.skip_note(); (path_str.clone(), src_idx, p.records, note) });
-                                    if tx.send(msg).is_err() {
-                                        return;
-                                    }
-                                }
+                        // Entries are inflated and sent one at a time, so memory is bounded by
+                        // the largest entry and the bounded channel actually applies back-pressure.
+                        let visited = for_each_zip_entry(path, |bytes| {
+                            let msg = parse_records(&bytes, path, src_idx, 0)
+                                .map(|p| { let note = p.skip_note(); (path_str.clone(), src_idx, p.records, note) });
+                            if tx.send(msg).is_err() {
+                                std::ops::ControlFlow::Break(())
+                            } else {
+                                std::ops::ControlFlow::Continue(())
                             }
-                            Err(e) => {
-                                let _ = tx.send(Err(e));
-                            }
+                        });
+                        if let Err(e) = visited {
+                            let _ = tx.send(Err(e));
                         }
                     } else {
                         match read_log_file(path) {
