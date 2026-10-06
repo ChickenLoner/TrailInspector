@@ -5614,7 +5614,6 @@ dependencies = [
 name = "trail-inspector-app"
 version = "1.5.0"
 dependencies = [
- "anyhow",
  "open",
  "reqwest 0.12.28",
  "serde",

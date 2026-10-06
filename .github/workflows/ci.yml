@@ -23,3 +23,24 @@ jobs:
 
       - name: Run core tests
         run: cargo test -p trail-inspector-core
+
+      # The fetch module (AWS SDK) is behind the `aws` feature and the app always enables it;
+      # without these the feature and the Tauri crate were first compiled at tag time.
+      - name: Run core tests (aws feature)
+        run: cargo test -p trail-inspector-core --features aws
+
+      - name: Install Linux system dependencies (Tauri/WebKit)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      # tauri::generate_context! requires the frontendDist directory to exist.
+      - name: Check app crate
+        run: |
+          mkdir -p ui/dist
+          cargo check -p trail-inspector-app
