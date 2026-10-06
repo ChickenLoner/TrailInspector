@@ -77,6 +77,15 @@ fn scan_ini(text: &str, strip_profile_prefix: bool) -> BTreeMap<String, Option<S
 
         if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
             let name = inner.trim();
+            // `[sso-session x]` and `[services x]` are config sections, not profiles. Listing
+            // them offers a "profile" that fails at SDK load with an unhelpful message.
+            // (Only `~/.aws/config` has them; its bare `[default]` and `[profile x]` are untouched.)
+            if strip_profile_prefix
+                && matches!(name.split_whitespace().next(), Some("sso-session" | "services"))
+            {
+                current = None;
+                continue;
+            }
             let name = if strip_profile_prefix {
                 name.strip_prefix("profile ").map(str::trim).unwrap_or(name)
             } else {
@@ -173,6 +182,20 @@ mod tests {
         assert_eq!(got.get("default"), Some(&Some("us-east-1".to_string())));
         assert_eq!(got.get("ctf"), Some(&Some("eu-west-1".to_string())));
         assert!(!got.contains_key("profile ctf"));
+    }
+
+    #[test]
+    fn sso_session_and_services_sections_are_not_profiles() {
+        let text = "[default]\nregion = us-east-1\n\n\
+                    [sso-session my-sso]\nsso_region = eu-west-1\nregion = ap-south-1\n\n\
+                    [services local]\ns3 =\n  endpoint_url = http://localhost:4566\n\n\
+                    [profile dev]\nregion = eu-west-2\nsso_session = my-sso\n";
+        let got = scan_ini(text, true);
+        let names: Vec<&str> = got.keys().map(String::as_str).collect();
+        assert_eq!(names, vec!["default", "dev"]);
+        // A region inside a skipped section must not leak onto the previous profile.
+        assert_eq!(got.get("default"), Some(&Some("us-east-1".to_string())));
+        assert_eq!(got.get("dev"), Some(&Some("eu-west-2".to_string())));
     }
 
     #[test]
