@@ -1014,6 +1014,30 @@ fn bench_detection_100k_records() {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2 — rule logic navigates parsed JSON instead of substring matching
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rs_03_does_not_fire_on_remove_all() {
+    let rec = with_params(
+        make_indexed(0, "ModifyDBSnapshotAttribute", "rds.amazonaws.com"),
+        json!({"dBSnapshotIdentifier": "snap", "attributeName": "restore", "valuesToRemove": ["all"]}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::resource_sharing::rs_03_rds_snapshot_public(&store).is_empty());
+}
+
+#[test]
+fn rs_03_does_not_fire_on_add_specific_account() {
+    let rec = with_params(
+        make_indexed(0, "ModifyDBSnapshotAttribute", "rds.amazonaws.com"),
+        json!({"dBSnapshotIdentifier": "snap", "attributeName": "restore", "valuesToAdd": ["111122223333"]}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::resource_sharing::rs_03_rds_snapshot_public(&store).is_empty());
+}
+
+// ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------
 

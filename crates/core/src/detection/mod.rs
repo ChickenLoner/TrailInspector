@@ -110,6 +110,31 @@ pub fn scoped_ids(
 }
 
 // ---------------------------------------------------------------------------
+// JSON navigation for requestParameters
+// ---------------------------------------------------------------------------
+// Rules used to substring-match the raw JSON text, which misfires on remove/add
+// confusion, unrelated words ("install" contains "all") and defaults that are always
+// present. These helpers navigate the parsed value instead.
+
+/// Object key lookup, exact first then ASCII case-insensitive. CloudTrail normalises most
+/// services to lowerCamel keys but a few keep PascalCase.
+pub(crate) fn jget<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    let o = v.as_object()?;
+    o.get(key)
+        .or_else(|| o.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v))
+}
+
+/// True when `v` is a string equal to `needle` (ASCII case-insensitive), or an array
+/// containing such a string.
+pub(crate) fn json_has_str(v: &serde_json::Value, needle: &str) -> bool {
+    match v {
+        serde_json::Value::String(s) => s.eq_ignore_ascii_case(needle),
+        serde_json::Value::Array(a) => a.iter().any(|x| json_has_str(x, needle)),
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Rule registry
 // ---------------------------------------------------------------------------
 
