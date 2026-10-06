@@ -1,21 +1,18 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// NW-01: Security Group Ingress Open to 0.0.0.0/0 or ::/0
 pub fn nw_01_sg_ingress_all(store: &Store) -> Vec<Alert> {
     let event_names = ["AuthorizeSecurityGroupIngress"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if store.get_record(id).is_some() {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["ec2.amazonaws.com"], true);
+    for id in ids {
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
+                matching.push(id);
             }
         }
     }
@@ -39,7 +36,7 @@ pub fn nw_01_sg_ingress_all(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.007".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=AuthorizeSecurityGroupIngress".to_string(),
+        query: "eventName=AuthorizeSecurityGroupIngress eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
@@ -48,20 +45,17 @@ pub fn nw_02_nacl_allows_all(store: &Store) -> Vec<Alert> {
     let event_names = ["CreateNetworkAclEntry", "ReplaceNetworkAclEntry"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if store.get_record(id).is_some() {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    // Allow rule (not deny) with broad CIDR
-                    if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
-                        // Check it's an allow rule
-                        let is_allow = !params_str.contains("\"ruleAction\":\"deny\"")
-                            && !params_str.contains("\"ruleAction\": \"deny\"");
-                        if is_allow {
-                            matching.push(id);
-                        }
-                    }
+    let ids = scoped_ids(store, &event_names, &["ec2.amazonaws.com"], true);
+    for id in ids {
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            // Allow rule (not deny) with broad CIDR
+            if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
+                // Check it's an allow rule
+                let is_allow = !params_str.contains("\"ruleAction\":\"deny\"")
+                    && !params_str.contains("\"ruleAction\": \"deny\"");
+                if is_allow {
+                    matching.push(id);
                 }
             }
         }
@@ -86,7 +80,7 @@ pub fn nw_02_nacl_allows_all(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.007".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=CreateNetworkAclEntry OR eventName=ReplaceNetworkAclEntry".to_string(),
+        query: "eventName=CreateNetworkAclEntry eventSource=ec2.amazonaws.com OR eventName=ReplaceNetworkAclEntry eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
@@ -95,11 +89,8 @@ pub fn nw_03_igw_created(store: &Store) -> Vec<Alert> {
     let event_names = ["CreateInternetGateway", "AttachInternetGateway"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["ec2.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -120,7 +111,7 @@ pub fn nw_03_igw_created(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.007".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=CreateInternetGateway OR eventName=AttachInternetGateway".to_string(),
+        query: "eventName=CreateInternetGateway eventSource=ec2.amazonaws.com OR eventName=AttachInternetGateway eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
@@ -129,15 +120,12 @@ pub fn nw_04_route_to_internet(store: &Store) -> Vec<Alert> {
     let event_names = ["CreateRoute", "ReplaceRoute"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if store.get_record(id).is_some() {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["ec2.amazonaws.com"], true);
+    for id in ids {
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("0.0.0.0/0") || params_str.contains("::/0") {
+                matching.push(id);
             }
         }
     }
@@ -161,17 +149,13 @@ pub fn nw_04_route_to_internet(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.007".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=CreateRoute OR eventName=ReplaceRoute".to_string(),
+        query: "eventName=CreateRoute eventSource=ec2.amazonaws.com OR eventName=ReplaceRoute eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// NW-05: VPC Peering Connection Created
 pub fn nw_05_vpc_peering_created(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreateVpcPeeringConnection") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["CreateVpcPeeringConnection"], &["ec2.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -191,17 +175,13 @@ pub fn nw_05_vpc_peering_created(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Lateral Movement".to_string(),
         mitre_technique: "T1021".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=CreateVpcPeeringConnection".to_string(),
+        query: "eventName=CreateVpcPeeringConnection eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// NW-06: Security Group Deleted
 pub fn nw_06_sg_deleted(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteSecurityGroup") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["DeleteSecurityGroup"], &["ec2.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -221,16 +201,16 @@ pub fn nw_06_sg_deleted(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.007".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=DeleteSecurityGroup".to_string(),
+        query: "eventName=DeleteSecurityGroup eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// NW-07: Subnet Made Public (MapPublicIpOnLaunch enabled)
 pub fn nw_07_subnet_public(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifySubnetAttribute") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ModifySubnetAttribute"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -261,17 +241,13 @@ pub fn nw_07_subnet_public(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.007".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=ModifySubnetAttribute".to_string(),
+        query: "eventName=ModifySubnetAttribute eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// NW-08: NAT Gateway Deleted
 pub fn nw_08_nat_deleted(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteNatGateway") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["DeleteNatGateway"], &["ec2.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -291,6 +267,6 @@ pub fn nw_08_nat_deleted(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1485".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=DeleteNatGateway".to_string(),
+        query: "eventName=DeleteNatGateway eventSource=ec2.amazonaws.com".to_string(),
     }]
 }

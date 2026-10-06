@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use roaring::RoaringBitmap;
 use crate::store::Store;
 use crate::geoip::GeoIpEngine;
 
@@ -50,6 +51,62 @@ pub struct DetectionRule {
     pub mitre_technique: &'static str,
     pub service: &'static str,
     pub evaluate: fn(&Store) -> Vec<Alert>,
+}
+
+// ---------------------------------------------------------------------------
+// Candidate scoping shared by every rule
+// ---------------------------------------------------------------------------
+
+/// Records that carry any `errorCode` (union of the whole error index).
+fn errored_ids(store: &Store) -> RoaringBitmap {
+    let mut all = RoaringBitmap::new();
+    for ids in store.idx_error_code.values() {
+        all |= ids;
+    }
+    all
+}
+
+/// Narrow `ids` to the given event sources (empty = any) and, when `exclude_errors`
+/// is set, drop every record that carries an `errorCode`: a denied call is not a
+/// completed action and must not fire "X happened" alerts.
+pub fn restrict(
+    store: &Store,
+    mut ids: RoaringBitmap,
+    sources: &[&str],
+    exclude_errors: bool,
+) -> RoaringBitmap {
+    if !sources.is_empty() {
+        let mut allowed = RoaringBitmap::new();
+        for s in sources {
+            if let Some(b) = store.idx_event_source.get(*s) {
+                allowed |= b;
+            }
+        }
+        ids &= allowed;
+    }
+    if exclude_errors && !ids.is_empty() {
+        ids -= errored_ids(store);
+    }
+    ids
+}
+
+/// Candidate ids for a rule: the union of the named events, restricted to the given
+/// event sources and (optionally) minus records that carry an errorCode.
+/// Event names collide across services (`CreateUser` exists in Transfer, ElastiCache,
+/// Identity Store...), so every rule names the service it is about.
+pub fn scoped_ids(
+    store: &Store,
+    event_names: &[&str],
+    sources: &[&str],
+    exclude_errors: bool,
+) -> RoaringBitmap {
+    let mut ids = RoaringBitmap::new();
+    for n in event_names {
+        if let Some(b) = store.idx_event_name.get(*n) {
+            ids |= b;
+        }
+    }
+    restrict(store, ids, sources, exclude_errors)
 }
 
 // ---------------------------------------------------------------------------

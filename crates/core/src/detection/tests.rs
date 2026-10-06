@@ -90,6 +90,25 @@ fn with_resp(mut rec: IndexedRecord, resp: serde_json::Value) -> IndexedRecord {
     rec
 }
 
+/// Return a copy of `rec` carrying an `errorCode` (a failed / denied call).
+fn with_error(mut rec: IndexedRecord, code: &str) -> IndexedRecord {
+    rec.record.error_code = Some(Arc::from(code));
+    rec
+}
+
+/// Return a copy of `rec` with the caller identity replaced.
+fn with_identity(
+    mut rec: IndexedRecord,
+    identity_type: &str,
+    arn: Option<&str>,
+    user_name: Option<&str>,
+) -> IndexedRecord {
+    rec.record.user_identity.identity_type = Some(Arc::from(identity_type));
+    rec.record.user_identity.arn = arn.map(Arc::from);
+    rec.record.user_identity.user_name = user_name.map(Arc::from);
+    rec
+}
+
 /// Build a Store from a slice of IndexedRecords.
 ///
 /// Records **must** be ordered by `id` (0-based) because `Store::get_record(id)`
@@ -955,17 +974,28 @@ fn test_run_all_rules_sorts_by_severity_descending() {
 fn bench_detection_100k_records() {
     use std::time::Instant;
 
+    // (eventName, eventSource) — rules are scoped by source, so the bench must use real ones.
     let event_names = [
-        "ConsoleLogin", "StopLogging", "DeleteBucket", "CreateUser",
-        "AttachUserPolicy", "GetObject", "RunInstances", "DeleteFlowLogs",
-        "AuthorizeSecurityGroupIngress", "DeleteWebACL", "ScheduleKeyDeletion",
-        "ModifyDBInstance", "DisableEbsEncryptionByDefault", "DeleteSnapshot",
+        ("ConsoleLogin", "signin.amazonaws.com"),
+        ("StopLogging", "cloudtrail.amazonaws.com"),
+        ("DeleteBucket", "s3.amazonaws.com"),
+        ("CreateUser", "iam.amazonaws.com"),
+        ("AttachUserPolicy", "iam.amazonaws.com"),
+        ("GetObject", "s3.amazonaws.com"),
+        ("RunInstances", "ec2.amazonaws.com"),
+        ("DeleteFlowLogs", "ec2.amazonaws.com"),
+        ("AuthorizeSecurityGroupIngress", "ec2.amazonaws.com"),
+        ("DeleteWebACL", "wafv2.amazonaws.com"),
+        ("ScheduleKeyDeletion", "kms.amazonaws.com"),
+        ("ModifyDBInstance", "rds.amazonaws.com"),
+        ("DisableEbsEncryptionByDefault", "ec2.amazonaws.com"),
+        ("DeleteSnapshot", "ec2.amazonaws.com"),
     ];
 
     let records: Vec<IndexedRecord> = (0u32..100_000)
         .map(|i| {
-            let event = event_names[i as usize % event_names.len()];
-            make_indexed_ts(i, event, "ec2.amazonaws.com", i as i64 * 100)
+            let (event, source) = event_names[i as usize % event_names.len()];
+            make_indexed_ts(i, event, source, i as i64 * 100)
         })
         .collect();
 
@@ -1017,4 +1047,95 @@ fn finalize_caps_at_100() {
     let a = out.iter().find(|a| a.rule_id == "DE-01").unwrap();
     assert_eq!(a.matching_count, 150);
     assert_eq!(a.matching_record_ids.len(), 100);
+}
+
+// ---------------------------------------------------------------------------
+// Engine-wide scoping: eventSource and errorCode
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scoped_ids_excludes_errors() {
+    let store = build_store(vec![
+        make_indexed(0, "StopLogging", "cloudtrail.amazonaws.com"),
+        with_error(make_indexed(1, "StopLogging", "cloudtrail.amazonaws.com"), "AccessDenied"),
+    ]);
+    let alerts = rules::defense_evasion::de_01_cloudtrail_stopped(&store);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].matching_record_ids, vec![0]);
+}
+
+#[test]
+fn scoped_ids_filters_source() {
+    let colliding = build_store(vec![make_indexed(0, "CreateUser", "transfer.amazonaws.com")]);
+    assert!(rules::persistence::pe_01_iam_user_created(&colliding).is_empty());
+    let real = build_store(vec![make_indexed(0, "CreateUser", "iam.amazonaws.com")]);
+    assert_eq!(rules::persistence::pe_01_iam_user_created(&real).len(), 1);
+}
+
+#[test]
+fn di_03_still_counts_errors() {
+    let store = build_store(
+        (0..10)
+            .map(|i| with_error(make_indexed(i, "ListBuckets", "s3.amazonaws.com"), "AccessDenied"))
+            .collect(),
+    );
+    assert_eq!(rules::discovery::di_03_access_denied_spike(&store).len(), 1);
+}
+
+#[test]
+fn ia_03_ignores_denied_root_calls() {
+    let root = |id: u32| {
+        with_identity(make_indexed(id, "ListBuckets", "s3.amazonaws.com"), "Root", Some("arn:aws:iam::123456789012:root"), None)
+    };
+    let store = build_store(vec![root(0), with_error(root(1), "AccessDenied")]);
+    let alerts = rules::initial_access::ia_03_root_usage(&store);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].matching_record_ids, vec![0]);
+}
+
+/// Every event-name-only rule fires for its real CloudTrail source, and does not fire for a
+/// colliding service or for a denied call. Guards the source table in the remediation plan.
+#[test]
+fn event_name_only_rules_are_scoped_to_their_service() {
+    type RuleFn = fn(&Store) -> Vec<crate::detection::Alert>;
+    let cases: Vec<(&str, RuleFn, &str, &str)> = vec![
+        ("DE-01", rules::defense_evasion::de_01_cloudtrail_stopped, "StopLogging", "cloudtrail.amazonaws.com"),
+        ("DE-02", rules::defense_evasion::de_02_guardduty_disabled, "DeleteDetector", "guardduty.amazonaws.com"),
+        ("DE-04", rules::defense_evasion::de_04_config_recorder_stopped, "StopConfigurationRecorder", "config.amazonaws.com"),
+        ("DE-05", rules::defense_evasion::de_05_flow_log_deleted, "DeleteFlowLogs", "ec2.amazonaws.com"),
+        ("DE-06", rules::defense_evasion::de_06_log_group_deleted, "DeleteLogGroup", "logs.amazonaws.com"),
+        ("DE-08", rules::defense_evasion::de_08_eventbridge_rule_disabled, "DisableRule", "events.amazonaws.com"),
+        ("DE-09", rules::defense_evasion::de_09_waf_acl_deleted, "DeleteWebACL", "waf.amazonaws.com"),
+        ("DE-09", rules::defense_evasion::de_09_waf_acl_deleted, "DeleteWebAclV2", "wafv2.amazonaws.com"),
+        ("DE-13", rules::defense_evasion::de_13_route53_zone_deleted, "DeleteHostedZone", "route53.amazonaws.com"),
+        ("CA-04", rules::credential_access::ca_04_password_policy_weakened, "UpdateAccountPasswordPolicy", "iam.amazonaws.com"),
+        ("CA-06", rules::credential_access::ca_06_kms_key_deletion, "ScheduleKeyDeletion", "kms.amazonaws.com"),
+        ("PE-05", rules::persistence_ext::pe_05_mfa_deactivated, "DeactivateMFADevice", "iam.amazonaws.com"),
+        ("EC-02", rules::ec2::ec_02_keypair_created, "CreateKeyPair", "ec2.amazonaws.com"),
+        ("EC-05", rules::ec2::ec_05_get_password_data, "GetPasswordData", "ec2.amazonaws.com"),
+        ("EC-06", rules::ec2::ec_06_instance_connect, "SendSSHPublicKey", "ec2-instance-connect.amazonaws.com"),
+        ("EC-06", rules::ec2::ec_06_instance_connect, "SendSerialConsoleSSHPublicKey", "ec2-instance-connect.amazonaws.com"),
+        ("EC-07", rules::ec2::ec_07_ssm_run_command, "SendCommand", "ssm.amazonaws.com"),
+        ("EC-08", rules::ec2::ec_08_serial_console_enabled, "EnableSerialConsoleAccess", "ec2.amazonaws.com"),
+        ("EBS-01", rules::ebs::ebs_01_encryption_disabled, "DisableEbsEncryptionByDefault", "ec2.amazonaws.com"),
+        ("EBS-03", rules::ebs::ebs_03_volume_detached, "DetachVolume", "ec2.amazonaws.com"),
+        ("EBS-04", rules::ebs::ebs_04_snapshot_deleted, "DeleteSnapshot", "ec2.amazonaws.com"),
+        ("EBS-05", rules::ebs::ebs_05_default_kms_changed, "ModifyEbsDefaultKmsKeyId", "ec2.amazonaws.com"),
+        ("EX-02", rules::exfiltration::ex_02_s3_bucket_deleted, "DeleteBucket", "s3.amazonaws.com"),
+        ("EX-05", rules::exfiltration::ex_05_s3_encryption_removed, "DeleteBucketEncryption", "s3.amazonaws.com"),
+        ("NW-05", rules::network::nw_05_vpc_peering_created, "CreateVpcPeeringConnection", "ec2.amazonaws.com"),
+        ("NW-06", rules::network::nw_06_sg_deleted, "DeleteSecurityGroup", "ec2.amazonaws.com"),
+        ("NW-08", rules::network::nw_08_nat_deleted, "DeleteNatGateway", "ec2.amazonaws.com"),
+    ];
+
+    for (rule, f, event, source) in cases {
+        let ok = build_store(vec![make_indexed(0, event, source)]);
+        assert_eq!(f(&ok).len(), 1, "{rule}: {event} from {source} should fire");
+
+        let wrong_source = build_store(vec![make_indexed(0, event, "example-other.amazonaws.com")]);
+        assert!(f(&wrong_source).is_empty(), "{rule}: {event} from another service must not fire");
+
+        let denied = build_store(vec![with_error(make_indexed(0, event, source), "AccessDenied")]);
+        assert!(f(&denied).is_empty(), "{rule}: denied {event} must not fire");
+    }
 }

@@ -1,21 +1,18 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// RDS-01: RDS Deletion Protection Disabled
 pub fn rds_01_deletion_protection_disabled(store: &Store) -> Vec<Alert> {
     let event_names = ["ModifyDBInstance", "ModifyDBCluster"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if store.get_record(id).is_some() {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("deletionProtection") && params_str.contains("false") {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["rds.amazonaws.com"], true);
+    for id in ids {
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("deletionProtection") && params_str.contains("false") {
+                matching.push(id);
             }
         }
     }
@@ -40,7 +37,7 @@ pub fn rds_01_deletion_protection_disabled(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1485".to_string(),
         service: "RDS".to_string(),
-        query: "eventName=ModifyDBInstance OR eventName=ModifyDBCluster".to_string(),
+        query: "eventName=ModifyDBInstance eventSource=rds.amazonaws.com OR eventName=ModifyDBCluster eventSource=rds.amazonaws.com".to_string(),
     }]
 }
 
@@ -53,17 +50,14 @@ pub fn rds_02_public_snapshot_restore(store: &Store) -> Vec<Alert> {
     ];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if store.get_record(id).is_some() {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("\"publiclyAccessible\":true")
-                        || params_str.contains("\"publiclyAccessible\": true")
-                    {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["rds.amazonaws.com"], true);
+    for id in ids {
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("\"publiclyAccessible\":true")
+                || params_str.contains("\"publiclyAccessible\": true")
+            {
+                matching.push(id);
             }
         }
     }
@@ -87,7 +81,7 @@ pub fn rds_02_public_snapshot_restore(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "RDS".to_string(),
-        query: "eventName=RestoreDBInstanceFromDBSnapshot OR eventName=RestoreDBClusterFromSnapshot".to_string(),
+        query: "eventName=RestoreDBInstanceFromDBSnapshot eventSource=rds.amazonaws.com OR eventName=RestoreDBClusterFromSnapshot eventSource=rds.amazonaws.com".to_string(),
     }]
 }
 
@@ -96,17 +90,14 @@ pub fn rds_03_master_password_changed(store: &Store) -> Vec<Alert> {
     let event_names = ["ModifyDBInstance", "ModifyDBCluster"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if store.get_record(id).is_some() {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("masterUserPassword")
-                        || params_str.contains("MasterUserPassword")
-                    {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["rds.amazonaws.com"], true);
+    for id in ids {
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("masterUserPassword")
+                || params_str.contains("MasterUserPassword")
+            {
+                matching.push(id);
             }
         }
     }
@@ -130,6 +121,6 @@ pub fn rds_03_master_password_changed(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1098".to_string(),
         service: "RDS".to_string(),
-        query: "eventName=ModifyDBInstance OR eventName=ModifyDBCluster".to_string(),
+        query: "eventName=ModifyDBInstance eventSource=rds.amazonaws.com OR eventName=ModifyDBCluster eventSource=rds.amazonaws.com".to_string(),
     }]
 }

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// EC-01: EC2 User Data Modified on Existing Instance
 pub fn ec_01_userdata_modified(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifyInstanceAttribute") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ModifyInstanceAttribute"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -39,17 +39,13 @@ pub fn ec_01_userdata_modified(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Execution".to_string(),
         mitre_technique: "T1059".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=ModifyInstanceAttribute".to_string(),
+        query: "eventName=ModifyInstanceAttribute eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// EC-02: EC2 Key Pair Created
 pub fn ec_02_keypair_created(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreateKeyPair") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["CreateKeyPair"], &["ec2.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -69,7 +65,7 @@ pub fn ec_02_keypair_created(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098.004".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=CreateKeyPair".to_string(),
+        query: "eventName=CreateKeyPair eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
@@ -78,15 +74,12 @@ pub fn ec_03_launch_template_userdata(store: &Store) -> Vec<Alert> {
     let event_names = ["CreateLaunchTemplate", "CreateLaunchTemplateVersion"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if store.get_record(id).is_some() {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("userData") {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["ec2.amazonaws.com"], true);
+    for id in ids {
+        if store.get_record(id).is_some() {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("userData") {
+                matching.push(id);
             }
         }
     }
@@ -111,16 +104,16 @@ pub fn ec_03_launch_template_userdata(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1059".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=CreateLaunchTemplate OR eventName=CreateLaunchTemplateVersion".to_string(),
+        query: "eventName=CreateLaunchTemplate eventSource=ec2.amazonaws.com OR eventName=CreateLaunchTemplateVersion eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// EC-04: IMDSv2 Downgraded (httpTokens set to optional)
 pub fn ec_04_imds_v2_downgraded(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifyInstanceMetadataOptions") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ModifyInstanceMetadataOptions"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -152,17 +145,13 @@ pub fn ec_04_imds_v2_downgraded(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1552.005".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=ModifyInstanceMetadataOptions".to_string(),
+        query: "eventName=ModifyInstanceMetadataOptions eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// EC-05: Windows EC2 Instance Password Retrieved
 pub fn ec_05_get_password_data(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("GetPasswordData") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["GetPasswordData"], &["ec2.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -183,7 +172,7 @@ pub fn ec_05_get_password_data(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1078.004".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=GetPasswordData".to_string(),
+        query: "eventName=GetPasswordData eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
@@ -192,11 +181,8 @@ pub fn ec_06_instance_connect(store: &Store) -> Vec<Alert> {
     let event_names = ["SendSSHPublicKey", "SendSerialConsoleSSHPublicKey"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["ec2-instance-connect.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -218,17 +204,13 @@ pub fn ec_06_instance_connect(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Lateral Movement".to_string(),
         mitre_technique: "T1098.004".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=SendSSHPublicKey OR eventName=SendSerialConsoleSSHPublicKey".to_string(),
+        query: "eventName=SendSSHPublicKey eventSource=ec2-instance-connect.amazonaws.com OR eventName=SendSerialConsoleSSHPublicKey eventSource=ec2-instance-connect.amazonaws.com".to_string(),
     }]
 }
 
 /// EC-07: SSM Run Command Sent to EC2 Instances
 pub fn ec_07_ssm_run_command(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("SendCommand") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["SendCommand"], &["ssm.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -249,17 +231,13 @@ pub fn ec_07_ssm_run_command(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Execution".to_string(),
         mitre_technique: "T1651".to_string(),
         service: "SSM".to_string(),
-        query: "eventName=SendCommand".to_string(),
+        query: "eventName=SendCommand eventSource=ssm.amazonaws.com".to_string(),
     }]
 }
 
 /// EC-08: EC2 Serial Console Access Enabled Account-Wide
 pub fn ec_08_serial_console_enabled(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("EnableSerialConsoleAccess") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["EnableSerialConsoleAccess"], &["ec2.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -280,6 +258,6 @@ pub fn ec_08_serial_console_enabled(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1078".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=EnableSerialConsoleAccess".to_string(),
+        query: "eventName=EnableSerialConsoleAccess eventSource=ec2.amazonaws.com".to_string(),
     }]
 }

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// RS-01: EC2 AMI Made Public
 pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifyImageAttribute") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ModifyImageAttribute"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -41,16 +41,16 @@ pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=ModifyImageAttribute".to_string(),
+        query: "eventName=ModifyImageAttribute eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// RS-02: SSM Document Made Public
 pub fn rs_02_ssm_document_public(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifyDocumentPermission") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ModifyDocumentPermission"], &["ssm.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -81,7 +81,7 @@ pub fn rs_02_ssm_document_public(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "SSM".to_string(),
-        query: "eventName=ModifyDocumentPermission".to_string(),
+        query: "eventName=ModifyDocumentPermission eventSource=ssm.amazonaws.com".to_string(),
     }]
 }
 
@@ -93,15 +93,12 @@ pub fn rs_03_rds_snapshot_public(store: &Store) -> Vec<Alert> {
     ];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("all") || params_str.contains("\"restore\"") {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["rds.amazonaws.com"], true);
+    for id in ids {
+        {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("all") || params_str.contains("\"restore\"") {
+                matching.push(id);
             }
         }
     }
@@ -125,6 +122,6 @@ pub fn rs_03_rds_snapshot_public(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "RDS".to_string(),
-        query: "eventName=ModifyDBSnapshotAttribute OR eventName=ModifyDBClusterSnapshotAttribute".to_string(),
+        query: "eventName=ModifyDBSnapshotAttribute eventSource=rds.amazonaws.com OR eventName=ModifyDBClusterSnapshotAttribute eventSource=rds.amazonaws.com".to_string(),
     }]
 }

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// CA-02: Secrets Manager Bulk Access (>5 GetSecretValue in 10 min by same identity)
 pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("GetSecretValue") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["GetSecretValue"], &["secretsmanager.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     // Group by identity (ARN or userName)
     let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
@@ -65,6 +65,7 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
     } else {
         "eventName=GetSecretValue".to_string()
     };
+    let query = format!("{query} eventSource=secretsmanager.amazonaws.com");
 
     vec![Alert {
         rule_id: "CA-02".to_string(),
@@ -88,11 +89,7 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
 
 /// CA-04: Password Policy Weakened
 pub fn ca_04_password_policy_weakened(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("UpdateAccountPasswordPolicy") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["UpdateAccountPasswordPolicy"], &["iam.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -112,16 +109,16 @@ pub fn ca_04_password_policy_weakened(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1556".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=UpdateAccountPasswordPolicy".to_string(),
+        query: "eventName=UpdateAccountPasswordPolicy eventSource=iam.amazonaws.com".to_string(),
     }]
 }
 
 /// CA-05: Root Console Login (specific ConsoleLogin event from Root identity)
 pub fn ca_05_root_console_login(store: &Store) -> Vec<Alert> {
-    let login_ids = match store.idx_event_name.get("ConsoleLogin") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let login_ids = scoped_ids(store, &["ConsoleLogin"], &["signin.amazonaws.com"], true);
+    if login_ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in login_ids {
@@ -160,17 +157,13 @@ pub fn ca_05_root_console_login(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1078.004".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=ConsoleLogin identityType=Root".to_string(),
+        query: "eventName=ConsoleLogin identityType=Root eventSource=signin.amazonaws.com".to_string(),
     }]
 }
 
 /// CA-06: KMS Key Scheduled for Deletion
 pub fn ca_06_kms_key_deletion(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ScheduleKeyDeletion") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["ScheduleKeyDeletion"], &["kms.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -190,6 +183,6 @@ pub fn ca_06_kms_key_deletion(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Credential Access".to_string(),
         mitre_technique: "T1485".to_string(),
         service: "KMS".to_string(),
-        query: "eventName=ScheduleKeyDeletion".to_string(),
+        query: "eventName=ScheduleKeyDeletion eventSource=kms.amazonaws.com".to_string(),
     }]
 }

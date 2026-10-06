@@ -1,18 +1,15 @@
 // Additional persistence rules (PE-05, PE-06, PE-07)
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// PE-05: MFA Device Deactivated
 pub fn pe_05_mfa_deactivated(store: &Store) -> Vec<Alert> {
     let event_names = ["DeactivateMFADevice", "DeleteVirtualMFADevice"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["iam.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -33,16 +30,16 @@ pub fn pe_05_mfa_deactivated(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1556.006".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=DeactivateMFADevice OR eventName=DeleteVirtualMFADevice".to_string(),
+        query: "eventName=DeactivateMFADevice eventSource=iam.amazonaws.com OR eventName=DeleteVirtualMFADevice eventSource=iam.amazonaws.com".to_string(),
     }]
 }
 
 /// PE-06: IAM Policy Version Created and Set as Default
 pub fn pe_06_policy_version_created(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreatePolicyVersion") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["CreatePolicyVersion"], &["iam.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -75,16 +72,16 @@ pub fn pe_06_policy_version_created(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098.003".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=CreatePolicyVersion".to_string(),
+        query: "eventName=CreatePolicyVersion eventSource=iam.amazonaws.com".to_string(),
     }]
 }
 
 /// PE-07: Cross-Account AssumeRole
 pub fn pe_07_cross_account_assume_role(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("AssumeRole") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["AssumeRole"], &["sts.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -129,6 +126,6 @@ pub fn pe_07_cross_account_assume_role(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098.001".to_string(),
         service: "STS".to_string(),
-        query: "eventName=AssumeRole".to_string(),
+        query: "eventName=AssumeRole eventSource=sts.amazonaws.com".to_string(),
     }]
 }

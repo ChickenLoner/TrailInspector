@@ -1,17 +1,14 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// DE-01: CloudTrail Stopped or Deleted
 pub fn de_01_cloudtrail_stopped(store: &Store) -> Vec<Alert> {
     let event_names = ["StopLogging", "DeleteTrail", "UpdateTrail"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["cloudtrail.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -35,7 +32,7 @@ pub fn de_01_cloudtrail_stopped(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.008".to_string(),
         service: "CloudTrail".to_string(),
-        query: "eventName=StopLogging OR eventName=DeleteTrail OR eventName=UpdateTrail".to_string(),
+        query: "eventName=StopLogging eventSource=cloudtrail.amazonaws.com OR eventName=DeleteTrail eventSource=cloudtrail.amazonaws.com OR eventName=UpdateTrail eventSource=cloudtrail.amazonaws.com".to_string(),
     }]
 }
 
@@ -44,11 +41,8 @@ pub fn de_02_guardduty_disabled(store: &Store) -> Vec<Alert> {
     let event_names = ["DeleteDetector", "StopMonitoringMembers", "DisassociateMembers"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["guardduty.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -69,7 +63,7 @@ pub fn de_02_guardduty_disabled(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.001".to_string(),
         service: "GuardDuty".to_string(),
-        query: "eventName=DeleteDetector OR eventName=StopMonitoringMembers OR eventName=DisassociateMembers".to_string(),
+        query: "eventName=DeleteDetector eventSource=guardduty.amazonaws.com OR eventName=StopMonitoringMembers eventSource=guardduty.amazonaws.com OR eventName=DisassociateMembers eventSource=guardduty.amazonaws.com".to_string(),
     }]
 }
 
@@ -78,11 +72,8 @@ pub fn de_04_config_recorder_stopped(store: &Store) -> Vec<Alert> {
     let event_names = ["StopConfigurationRecorder", "DeleteConfigurationRecorder"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["config.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -103,17 +94,13 @@ pub fn de_04_config_recorder_stopped(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.001".to_string(),
         service: "Config".to_string(),
-        query: "eventName=StopConfigurationRecorder OR eventName=DeleteConfigurationRecorder".to_string(),
+        query: "eventName=StopConfigurationRecorder eventSource=config.amazonaws.com OR eventName=DeleteConfigurationRecorder eventSource=config.amazonaws.com".to_string(),
     }]
 }
 
 /// DE-05: VPC Flow Log Deletion
 pub fn de_05_flow_log_deleted(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteFlowLogs") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["DeleteFlowLogs"], &["ec2.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -133,17 +120,13 @@ pub fn de_05_flow_log_deleted(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.008".to_string(),
         service: "VPC".to_string(),
-        query: "eventName=DeleteFlowLogs".to_string(),
+        query: "eventName=DeleteFlowLogs eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// DE-06: CloudWatch Log Group Deletion
 pub fn de_06_log_group_deleted(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteLogGroup") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["DeleteLogGroup"], &["logs.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -163,16 +146,16 @@ pub fn de_06_log_group_deleted(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.008".to_string(),
         service: "CloudWatch".to_string(),
-        query: "eventName=DeleteLogGroup".to_string(),
+        query: "eventName=DeleteLogGroup eventSource=logs.amazonaws.com".to_string(),
     }]
 }
 
 /// DE-07: CloudTrail S3 Logging Bucket Changed (UpdateTrail with s3BucketName)
 pub fn de_07_cloudtrail_s3_changed(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("UpdateTrail") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["UpdateTrail"], &["cloudtrail.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -205,17 +188,13 @@ pub fn de_07_cloudtrail_s3_changed(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.008".to_string(),
         service: "CloudTrail".to_string(),
-        query: "eventName=UpdateTrail".to_string(),
+        query: "eventName=UpdateTrail eventSource=cloudtrail.amazonaws.com".to_string(),
     }]
 }
 
 /// DE-08: EventBridge Rule Disabled
 pub fn de_08_eventbridge_rule_disabled(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DisableRule") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["DisableRule"], &["events.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -235,7 +214,7 @@ pub fn de_08_eventbridge_rule_disabled(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.001".to_string(),
         service: "EventBridge".to_string(),
-        query: "eventName=DisableRule".to_string(),
+        query: "eventName=DisableRule eventSource=events.amazonaws.com".to_string(),
     }]
 }
 
@@ -244,11 +223,8 @@ pub fn de_09_waf_acl_deleted(store: &Store) -> Vec<Alert> {
     let event_names = ["DeleteWebACL", "DeleteWebAclV2"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["waf.amazonaws.com", "wafv2.amazonaws.com", "waf-regional.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -275,10 +251,10 @@ pub fn de_09_waf_acl_deleted(store: &Store) -> Vec<Alert> {
 
 /// DE-10: CloudFront Distribution Logging Disabled
 pub fn de_10_cloudfront_logging_disabled(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("UpdateDistribution") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["UpdateDistribution"], &["cloudfront.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -310,16 +286,16 @@ pub fn de_10_cloudfront_logging_disabled(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.008".to_string(),
         service: "CloudFront".to_string(),
-        query: "eventName=UpdateDistribution".to_string(),
+        query: "eventName=UpdateDistribution eventSource=cloudfront.amazonaws.com".to_string(),
     }]
 }
 
 /// DE-11: SQS Queue Encryption Removed
 pub fn de_11_sqs_encryption_removed(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("SetQueueAttributes") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["SetQueueAttributes"], &["sqs.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -355,16 +331,16 @@ pub fn de_11_sqs_encryption_removed(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.001".to_string(),
         service: "SQS".to_string(),
-        query: "eventName=SetQueueAttributes".to_string(),
+        query: "eventName=SetQueueAttributes eventSource=sqs.amazonaws.com".to_string(),
     }]
 }
 
 /// DE-12: SNS Topic Encryption Removed
 pub fn de_12_sns_encryption_removed(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("SetTopicAttributes") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["SetTopicAttributes"], &["sns.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -399,17 +375,13 @@ pub fn de_12_sns_encryption_removed(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1562.001".to_string(),
         service: "SNS".to_string(),
-        query: "eventName=SetTopicAttributes".to_string(),
+        query: "eventName=SetTopicAttributes eventSource=sns.amazonaws.com".to_string(),
     }]
 }
 
 /// DE-13: Route53 Hosted Zone Deleted
 pub fn de_13_route53_zone_deleted(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteHostedZone") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["DeleteHostedZone"], &["route53.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -429,6 +401,6 @@ pub fn de_13_route53_zone_deleted(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1485".to_string(),
         service: "Route53".to_string(),
-        query: "eventName=DeleteHostedZone".to_string(),
+        query: "eventName=DeleteHostedZone eventSource=route53.amazonaws.com".to_string(),
     }]
 }

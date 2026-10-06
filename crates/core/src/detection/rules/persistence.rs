@@ -1,14 +1,10 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// PE-01: IAM User Created
 pub fn pe_01_iam_user_created(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreateUser") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["CreateUser"], &["iam.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -31,16 +27,16 @@ pub fn pe_01_iam_user_created(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1136.003".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=CreateUser".to_string(),
+        query: "eventName=CreateUser eventSource=iam.amazonaws.com".to_string(),
     }]
 }
 
 /// PE-02: Access Key Created for Another User
 pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreateAccessKey") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["CreateAccessKey"], &["iam.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -78,17 +74,13 @@ pub fn pe_02_access_key_for_other(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098.001".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=CreateAccessKey".to_string(),
+        query: "eventName=CreateAccessKey eventSource=iam.amazonaws.com".to_string(),
     }]
 }
 
 /// PE-03: Login Profile Created
 pub fn pe_03_login_profile_created(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("CreateLoginProfile") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["CreateLoginProfile"], &["iam.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -108,7 +100,7 @@ pub fn pe_03_login_profile_created(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=CreateLoginProfile".to_string(),
+        query: "eventName=CreateLoginProfile eventSource=iam.amazonaws.com".to_string(),
     }]
 }
 
@@ -126,15 +118,12 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if store.get_record(id).is_some() {
-                    let is_admin = check_admin_policy(store.parse_request_parameters(id));
-                    if is_admin {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["iam.amazonaws.com"], true);
+    for id in ids {
+        if store.get_record(id).is_some() {
+            let is_admin = check_admin_policy(store.parse_request_parameters(id));
+            if is_admin {
+                matching.push(id);
             }
         }
     }
@@ -158,7 +147,7 @@ pub fn pe_04_admin_policy_attached(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098.003".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=AttachUserPolicy OR eventName=AttachRolePolicy OR eventName=PutUserPolicy OR eventName=PutRolePolicy".to_string(),
+        query: "eventName=AttachUserPolicy eventSource=iam.amazonaws.com OR eventName=AttachRolePolicy eventSource=iam.amazonaws.com OR eventName=PutUserPolicy eventSource=iam.amazonaws.com OR eventName=PutRolePolicy eventSource=iam.amazonaws.com".to_string(),
     }]
 }
 

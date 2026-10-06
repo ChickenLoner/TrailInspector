@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// LM-01: Lambda Function Public Access via Resource Policy
 pub fn lm_01_lambda_public_access(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("AddPermission20150331v2") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["AddPermission20150331v2"], &["lambda.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -42,7 +42,7 @@ pub fn lm_01_lambda_public_access(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1098".to_string(),
         service: "Lambda".to_string(),
-        query: "eventName=AddPermission20150331v2".to_string(),
+        query: "eventName=AddPermission20150331v2 eventSource=lambda.amazonaws.com".to_string(),
     }]
 }
 
@@ -55,15 +55,12 @@ pub fn lm_02_lambda_env_updated(store: &Store) -> Vec<Alert> {
     ];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("Environment") || params_str.contains("environment") {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["lambda.amazonaws.com"], true);
+    for id in ids {
+        {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("Environment") || params_str.contains("environment") {
+                matching.push(id);
             }
         }
     }
@@ -87,6 +84,6 @@ pub fn lm_02_lambda_env_updated(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Persistence".to_string(),
         mitre_technique: "T1525".to_string(),
         service: "Lambda".to_string(),
-        query: "eventName=UpdateFunctionConfiguration20150331v2".to_string(),
+        query: "eventName=UpdateFunctionConfiguration20150331v2 eventSource=lambda.amazonaws.com".to_string(),
     }]
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use roaring::RoaringBitmap;
+use crate::detection::{Alert, Severity, scoped_ids, restrict};
 
 fn mass_ec2_op_inner(
     store: &Store,
@@ -8,10 +9,10 @@ fn mass_ec2_op_inner(
     threshold: usize,
     window_ms: i64,
 ) -> (Vec<u32>, Vec<String>) {
-    let ids = match store.idx_event_name.get(event_name) {
-        Some(ids) => ids,
-        None => return (vec![], vec![]),
-    };
+    let ids = scoped_ids(store, &[event_name], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return (vec![], vec![]);
+    }
 
     let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
     for id in ids {
@@ -53,10 +54,10 @@ fn mass_ec2_op_inner(
 
 /// IM-01: EC2 Instances Launched in Bulk (>5 RunInstances in 10 min, any identity)
 pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("RunInstances") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["RunInstances"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     // Collect all RunInstances timestamps
     let mut events: Vec<(i64, u32)> = ids
@@ -106,14 +107,14 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1496".to_string(),
         service: "EC2".to_string(),
-        query: "eventName=RunInstances".to_string(),
+        query: "eventName=RunInstances eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// IM-02: Resource Deletion Spree (>10 Delete*/Terminate* events in 5 min by same identity)
 pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
     // Collect all Delete* and Terminate* events
-    let mut deletion_ids: Vec<u32> = vec![];
+    let mut deletion = RoaringBitmap::new();
 
     for (event_name, ids) in &store.idx_event_name {
         if event_name.starts_with("Delete")
@@ -121,9 +122,11 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
             || event_name.starts_with("Destroy")
             || event_name.starts_with("Remove")
         {
-            deletion_ids.extend(ids);
+            deletion |= ids;
         }
     }
+    // Multi-service by design (any source), but failed calls are not deletions.
+    let deletion_ids: Vec<u32> = restrict(store, deletion, &[], true).iter().collect();
 
     if deletion_ids.is_empty() {
         return vec![];
@@ -227,6 +230,7 @@ pub fn im_04_mass_instance_stop(store: &Store) -> Vec<Alert> {
     } else {
         "eventName=StopInstances".to_string()
     };
+    let query = format!("{query} eventSource=ec2.amazonaws.com");
 
     let mut meta = HashMap::new();
     meta.insert("identities".to_string(), offending_identities.join(", "));
@@ -273,6 +277,7 @@ pub fn im_05_mass_instance_terminate(store: &Store) -> Vec<Alert> {
     } else {
         "eventName=TerminateInstances".to_string()
     };
+    let query = format!("{query} eventSource=ec2.amazonaws.com");
 
     let mut meta = HashMap::new();
     meta.insert("identities".to_string(), offending_identities.join(", "));
@@ -319,6 +324,7 @@ pub fn im_06_mass_instance_start(store: &Store) -> Vec<Alert> {
     } else {
         "eventName=StartInstances".to_string()
     };
+    let query = format!("{query} eventSource=ec2.amazonaws.com");
 
     let mut meta = HashMap::new();
     meta.insert("identities".to_string(), offending_identities.join(", "));
@@ -349,11 +355,8 @@ pub fn im_03_ses_email_verified(store: &Store) -> Vec<Alert> {
     let event_names = ["VerifyEmailIdentity", "CreateEmailIdentity", "VerifyDomainIdentity"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["ses.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -374,6 +377,6 @@ pub fn im_03_ses_email_verified(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1534".to_string(),
         service: "SES".to_string(),
-        query: "eventName=VerifyEmailIdentity OR eventName=CreateEmailIdentity OR eventName=VerifyDomainIdentity".to_string(),
+        query: "eventName=VerifyEmailIdentity eventSource=ses.amazonaws.com OR eventName=CreateEmailIdentity eventSource=ses.amazonaws.com OR eventName=VerifyDomainIdentity eventSource=ses.amazonaws.com".to_string(),
     }]
 }

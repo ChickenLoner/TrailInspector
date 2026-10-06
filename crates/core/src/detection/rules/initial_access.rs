@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids, restrict};
 
 /// IA-01: Console Login Without MFA
 pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ConsoleLogin") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ConsoleLogin"], &["signin.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -51,14 +51,14 @@ pub fn ia_01_console_login_no_mfa(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Initial Access".to_string(),
         mitre_technique: "T1078.004".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=ConsoleLogin".to_string(),
+        query: "eventName=ConsoleLogin eventSource=signin.amazonaws.com".to_string(),
     }]
 }
 
 /// IA-03: Root Account Usage
 pub fn ia_03_root_usage(store: &Store) -> Vec<Alert> {
     let ids = match store.idx_identity_type.get("Root") {
-        Some(ids) => ids.clone(),
+        Some(ids) => restrict(store, ids.clone(), &[], true),
         None => return vec![],
     };
 
@@ -90,10 +90,10 @@ pub fn ia_03_root_usage(store: &Store) -> Vec<Alert> {
 
 /// IA-04: Failed Login Brute Force (≥5 failures within 10 min from same IP)
 pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ConsoleLogin") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ConsoleLogin"], &["signin.amazonaws.com"], false);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     // Collect failure events grouped by source IP
     let mut by_ip: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
@@ -158,6 +158,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
     } else {
         "eventName=ConsoleLogin".to_string()
     };
+    let query = format!("{query} eventSource=signin.amazonaws.com");
 
     vec![Alert {
         rule_id: "IA-04".to_string(),

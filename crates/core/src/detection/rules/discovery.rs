@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// DI-02: IAM Enumeration
 pub fn di_02_iam_enumeration(store: &Store) -> Vec<Alert> {
@@ -15,11 +15,8 @@ pub fn di_02_iam_enumeration(store: &Store) -> Vec<Alert> {
     ];
 
     let mut matching = vec![];
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            matching.extend(ids);
-        }
-    }
+    let ids = scoped_ids(store, &event_names, &["iam.amazonaws.com"], true);
+    matching.extend(ids);
 
     if matching.is_empty() {
         return vec![];
@@ -43,7 +40,7 @@ pub fn di_02_iam_enumeration(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Discovery".to_string(),
         mitre_technique: "T1087.004".to_string(),
         service: "IAM".to_string(),
-        query: "eventName=ListUsers OR eventName=ListRoles OR eventName=ListPolicies OR eventName=GetAccountAuthorizationDetails OR eventName=ListGroups".to_string(),
+        query: "eventName=ListUsers eventSource=iam.amazonaws.com OR eventName=ListRoles eventSource=iam.amazonaws.com OR eventName=ListPolicies eventSource=iam.amazonaws.com OR eventName=GetAccountAuthorizationDetails eventSource=iam.amazonaws.com OR eventName=ListGroups eventSource=iam.amazonaws.com".to_string(),
     }]
 }
 

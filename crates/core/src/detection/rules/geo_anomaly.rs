@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 use crate::geoip::GeoIpEngine;
 
 /// GEO-01: Same identity accessed AWS from multiple countries
@@ -73,10 +73,10 @@ pub fn geo_01_multi_country(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
 
 /// GEO-02: Console login from a country not seen in prior API activity for that identity
 pub fn geo_02_console_unusual_country(store: &Store, geoip: &GeoIpEngine) -> Vec<Alert> {
-    let login_ids = match store.idx_event_name.get("ConsoleLogin") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+    let login_ids = scoped_ids(store, &["ConsoleLogin"], &["signin.amazonaws.com"], true);
+    if login_ids.is_empty() {
+        return vec![];
+    }
 
     // Build per-identity baseline from non-login events
     let mut baseline: HashMap<String, HashSet<String>> = HashMap::new();

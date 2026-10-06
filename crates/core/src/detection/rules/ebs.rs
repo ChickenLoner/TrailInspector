@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// EBS-01: EBS Default Encryption Disabled
 pub fn ebs_01_encryption_disabled(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DisableEbsEncryptionByDefault") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["DisableEbsEncryptionByDefault"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     vec![Alert {
         rule_id: "EBS-01".to_string(),
@@ -24,16 +24,16 @@ pub fn ebs_01_encryption_disabled(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Defense Evasion".to_string(),
         mitre_technique: "T1486".to_string(),
         service: "EBS".to_string(),
-        query: "eventName=DisableEbsEncryptionByDefault".to_string(),
+        query: "eventName=DisableEbsEncryptionByDefault eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// EBS-02: EBS Snapshot Made Public
 pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifySnapshotAttribute") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ModifySnapshotAttribute"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -65,16 +65,16 @@ pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "EBS".to_string(),
-        query: "eventName=ModifySnapshotAttribute".to_string(),
+        query: "eventName=ModifySnapshotAttribute eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// EBS-03: EBS Volume Detached
 pub fn ebs_03_volume_detached(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DetachVolume") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["DetachVolume"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     vec![Alert {
         rule_id: "EBS-03".to_string(),
@@ -91,16 +91,16 @@ pub fn ebs_03_volume_detached(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "EBS".to_string(),
-        query: "eventName=DetachVolume".to_string(),
+        query: "eventName=DetachVolume eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// EBS-04: EBS Snapshot Deleted
 pub fn ebs_04_snapshot_deleted(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteSnapshot") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["DeleteSnapshot"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     vec![Alert {
         rule_id: "EBS-04".to_string(),
@@ -117,16 +117,16 @@ pub fn ebs_04_snapshot_deleted(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1485".to_string(),
         service: "EBS".to_string(),
-        query: "eventName=DeleteSnapshot".to_string(),
+        query: "eventName=DeleteSnapshot eventSource=ec2.amazonaws.com".to_string(),
     }]
 }
 
 /// EBS-05: EBS Default KMS Key Changed
 pub fn ebs_05_default_kms_changed(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("ModifyEbsDefaultKmsKeyId") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["ModifyEbsDefaultKmsKeyId"], &["ec2.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     vec![Alert {
         rule_id: "EBS-05".to_string(),
@@ -143,6 +143,6 @@ pub fn ebs_05_default_kms_changed(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Impact".to_string(),
         mitre_technique: "T1486".to_string(),
         service: "EBS".to_string(),
-        query: "eventName=ModifyEbsDefaultKmsKeyId".to_string(),
+        query: "eventName=ModifyEbsDefaultKmsKeyId eventSource=ec2.amazonaws.com".to_string(),
     }]
 }

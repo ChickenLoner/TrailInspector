@@ -1,19 +1,16 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 /// EX-01: S3 Bucket Made Public (PutBucketPolicy or PutBucketAcl)
 pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
     let event_names = ["PutBucketPolicy", "PutBucketAcl"];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                if is_public_grant(store.parse_request_parameters(id)) {
-                    matching.push(id);
-                }
-            }
+    let ids = scoped_ids(store, &event_names, &["s3.amazonaws.com"], true);
+    for id in ids {
+        if is_public_grant(store.parse_request_parameters(id)) {
+            matching.push(id);
         }
     }
 
@@ -36,7 +33,7 @@ pub fn ex_01_s3_bucket_public(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "S3".to_string(),
-        query: "eventName=PutBucketPolicy OR eventName=PutBucketAcl".to_string(),
+        query: "eventName=PutBucketPolicy eventSource=s3.amazonaws.com OR eventName=PutBucketAcl eventSource=s3.amazonaws.com".to_string(),
     }]
 }
 
@@ -76,11 +73,7 @@ fn is_public_grant(params: Option<serde_json::Value>) -> bool {
 
 /// EX-02: S3 Bucket Deleted
 pub fn ex_02_s3_bucket_deleted(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteBucket") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["DeleteBucket"], &["s3.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -100,16 +93,16 @@ pub fn ex_02_s3_bucket_deleted(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1485".to_string(),
         service: "S3".to_string(),
-        query: "eventName=DeleteBucket".to_string(),
+        query: "eventName=DeleteBucket eventSource=s3.amazonaws.com".to_string(),
     }]
 }
 
 /// EX-03: S3 Bulk Download (50+ GetObject in 5 min by same identity)
 pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("GetObject") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["GetObject"], &["s3.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut by_identity: HashMap<String, Vec<(i64, u32)>> = HashMap::new();
     for id in ids {
@@ -174,6 +167,7 @@ pub fn ex_03_s3_bulk_download(store: &Store) -> Vec<Alert> {
     } else {
         "eventName=GetObject".to_string()
     };
+    let query = format!("{query} eventSource=s3.amazonaws.com");
 
     vec![Alert {
         rule_id: "EX-03".to_string(),
@@ -210,10 +204,10 @@ fn format_bytes(b: u64) -> String {
 
 /// EX-04: S3 Bucket Logging Disabled
 pub fn ex_04_s3_logging_disabled(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("PutBucketLogging") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+    let ids = scoped_ids(store, &["PutBucketLogging"], &["s3.amazonaws.com"], true);
+    if ids.is_empty() {
+        return vec![];
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -248,17 +242,13 @@ pub fn ex_04_s3_logging_disabled(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1562.008".to_string(),
         service: "S3".to_string(),
-        query: "eventName=PutBucketLogging".to_string(),
+        query: "eventName=PutBucketLogging eventSource=s3.amazonaws.com".to_string(),
     }]
 }
 
 /// EX-05: S3 Bucket Encryption Removed
 pub fn ex_05_s3_encryption_removed(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("DeleteBucketEncryption") {
-        Some(ids) => ids.clone(),
-        None => return vec![],
-    };
-
+    let ids = scoped_ids(store, &["DeleteBucketEncryption"], &["s3.amazonaws.com"], true);
     if ids.is_empty() {
         return vec![];
     }
@@ -278,6 +268,6 @@ pub fn ex_05_s3_encryption_removed(store: &Store) -> Vec<Alert> {
         mitre_tactic: "Exfiltration".to_string(),
         mitre_technique: "T1537".to_string(),
         service: "S3".to_string(),
-        query: "eventName=DeleteBucketEncryption".to_string(),
+        query: "eventName=DeleteBucketEncryption eventSource=s3.amazonaws.com".to_string(),
     }]
 }
