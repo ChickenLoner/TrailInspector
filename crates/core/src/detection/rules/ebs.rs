@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids};
+use crate::detection::{Alert, Severity, scoped_ids, adds_public_group};
 
 /// EBS-01: EBS Default Encryption Disabled
 pub fn ebs_01_encryption_disabled(store: &Store) -> Vec<Alert> {
@@ -37,12 +37,11 @@ pub fn ebs_02_snapshot_public(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for id in ids {
-        if store.get_record(id).is_some() {
-            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-            // Public share adds "all" as a group in createVolumePermission
-            if params_str.contains("\"all\"") || params_str.contains("all") && params_str.contains("add") {
-                matching.push(id);
-            }
+        // Public share *adds* the "all" group to createVolumePermission; removing it
+        // makes the snapshot private and must not fire.
+        let Some(p) = store.parse_request_parameters(id) else { continue };
+        if adds_public_group(&p, "createVolumePermission") {
+            matching.push(id);
         }
     }
 

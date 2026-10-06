@@ -134,6 +134,43 @@ pub(crate) fn json_has_str(v: &serde_json::Value, needle: &str) -> bool {
     }
 }
 
+/// True when any object anywhere under `v` has `key` (case-insensitive) holding a string
+/// equal to `needle` (case-insensitive). Used for shapes like `{"items":[{"group":"all"}]}`.
+pub(crate) fn json_contains_pair(v: &serde_json::Value, key: &str, needle: &str) -> bool {
+    match v {
+        serde_json::Value::Object(o) => o.iter().any(|(k, val)| {
+            (k.eq_ignore_ascii_case(key) && json_has_str(val, needle)) || json_contains_pair(val, key, needle)
+        }),
+        serde_json::Value::Array(a) => a.iter().any(|x| json_contains_pair(x, key, needle)),
+        _ => false,
+    }
+}
+
+/// True when an EC2 `Modify*Attribute` call **adds** the public group `all` to
+/// `permission_key` (`launchPermission` for AMIs, `createVolumePermission` for snapshots).
+/// `remove` never matches: removing the group makes the resource private.
+pub(crate) fn adds_public_group(params: &serde_json::Value, permission_key: &str) -> bool {
+    // Shape 1: {"<permission_key>":{"add":{"items":[{"group":"all"}]}}}
+    if let Some(add) = jget(params, permission_key).and_then(|p| jget(p, "add")) {
+        if json_contains_pair(add, "group", "all") {
+            return true;
+        }
+    }
+    // Shape 2: {"attributeType":"<permission_key>","operationType":"add","userGroups":{"items":[{"group":"all"}]}}
+    let is_add = jget(params, "operationType").is_some_and(|v| json_has_str(v, "add"));
+    let is_attr = jget(params, "attributeType").is_some_and(|v| json_has_str(v, permission_key));
+    if is_add && is_attr {
+        for k in ["userGroups", "userGroup", "groupNames", "groupName"] {
+            if let Some(g) = jget(params, k) {
+                if json_has_str(g, "all") || json_contains_pair(g, "group", "all") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 // ---------------------------------------------------------------------------
 // Rule registry
 // ---------------------------------------------------------------------------

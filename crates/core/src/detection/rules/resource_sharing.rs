@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str};
+use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str, adds_public_group};
 
 /// RS-01: EC2 AMI Made Public
 pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
@@ -11,14 +11,10 @@ pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for id in ids {
-        if store.get_record(id).is_some() {
-            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-            // Public AMI adds "all" group to launchPermission
-            if (params_str.contains("launchPermission") || params_str.contains("LaunchPermission"))
-                && params_str.contains("all")
-            {
-                matching.push(id);
-            }
+        // Public AMI *adds* the "all" group to launchPermission.
+        let Some(p) = store.parse_request_parameters(id) else { continue };
+        if adds_public_group(&p, "launchPermission") {
+            matching.push(id);
         }
     }
 

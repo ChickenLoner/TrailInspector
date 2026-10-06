@@ -1037,6 +1037,58 @@ fn rs_03_does_not_fire_on_add_specific_account() {
     assert!(rules::resource_sharing::rs_03_rds_snapshot_public(&store).is_empty());
 }
 
+#[test]
+fn ebs_02_does_not_fire_on_remove_all() {
+    let rec = with_params(
+        make_indexed(0, "ModifySnapshotAttribute", "ec2.amazonaws.com"),
+        json!({"snapshotId": "snap-1", "createVolumePermission": {"remove": {"items": [{"group": "all"}]}}}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::ebs::ebs_02_snapshot_public(&store).is_empty());
+}
+
+#[test]
+fn ebs_02_ignores_words_containing_all() {
+    let rec = with_params(
+        make_indexed(0, "ModifySnapshotAttribute", "ec2.amazonaws.com"),
+        json!({"snapshotId": "snap-1", "description": "install small tools",
+               "createVolumePermission": {"add": {"items": [{"userId": "111122223333"}]}}}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::ebs::ebs_02_snapshot_public(&store).is_empty());
+}
+
+#[test]
+fn ebs_02_fires_on_attribute_type_shape() {
+    let rec = with_params(
+        make_indexed(0, "ModifySnapshotAttribute", "ec2.amazonaws.com"),
+        json!({"snapshotId": "snap-1", "attributeType": "createVolumePermission",
+               "operationType": "add", "userGroups": {"items": [{"group": "all"}]}}),
+    );
+    let store = build_store(vec![rec]);
+    assert_eq!(rules::ebs::ebs_02_snapshot_public(&store).len(), 1);
+}
+
+#[test]
+fn rs_01_does_not_fire_on_remove_all() {
+    let rec = with_params(
+        make_indexed(0, "ModifyImageAttribute", "ec2.amazonaws.com"),
+        json!({"imageId": "ami-1", "launchPermission": {"remove": {"items": [{"group": "all"}]}}}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::resource_sharing::rs_01_ami_made_public(&store).is_empty());
+}
+
+#[test]
+fn rs_01_does_not_fire_on_add_specific_account() {
+    let rec = with_params(
+        make_indexed(0, "ModifyImageAttribute", "ec2.amazonaws.com"),
+        json!({"imageId": "ami-1", "launchPermission": {"add": {"items": [{"userId": "111122223333"}]}}}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::resource_sharing::rs_01_ami_made_public(&store).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------
