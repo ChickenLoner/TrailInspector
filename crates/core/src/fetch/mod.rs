@@ -218,14 +218,10 @@ pub fn summarize_staged(dir: &std::path::Path) -> FetchSummary {
         };
 
         for bytes in batches {
-            let Ok(records) = parser::parse_records(&bytes, &path, 0, 0) else { continue };
+            let Ok(parsed) = parser::parse_records(&bytes, &path, 0, 0) else { continue };
+            let records = parsed.records;
             summary.events += records.len();
             for r in &records {
-                // Records that failed timestamp parsing land on 0; ignore those
-                // rather than reporting a 1970 range.
-                if r.timestamp == 0 {
-                    continue;
-                }
                 summary.earliest_ms =
                     Some(summary.earliest_ms.map_or(r.timestamp, |e: i64| e.min(r.timestamp)));
                 summary.latest_ms =

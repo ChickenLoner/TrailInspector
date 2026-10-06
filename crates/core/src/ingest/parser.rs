@@ -2,6 +2,35 @@ use std::path::Path;
 use crate::error::CoreError;
 use crate::model::{CloudTrailFile, CloudTrailRecord, IndexedRecord, LookupEventsFile};
 
+/// What one parsed file yields: the usable records plus how many were dropped.
+pub struct ParsedFile {
+    pub records: Vec<IndexedRecord>,
+    /// Records whose `eventTime` could not be parsed. They are dropped rather than stamped with
+    /// epoch 0, which would put them in 1970 and stretch the timeline across 54 years.
+    pub bad_time: usize,
+}
+
+/// Parse an `eventTime` to epoch milliseconds. Accepts RFC 3339 first, then the shapes that
+/// emulators and hand-edited logs produce: space-separated, no zone (taken as UTC), and
+/// numeric offsets without a colon (`+0000`).
+pub fn parse_event_time(s: &str) -> Option<i64> {
+    use chrono::{DateTime, NaiveDateTime};
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp_millis());
+    }
+    for fmt in ["%Y-%m-%dT%H:%M:%S%.f%z", "%Y-%m-%d %H:%M:%S%.f%z"] {
+        if let Ok(dt) = DateTime::parse_from_str(s, fmt) {
+            return Some(dt.timestamp_millis());
+        }
+    }
+    for fmt in ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S%.f"] {
+        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, fmt) {
+            return Some(ndt.and_utc().timestamp_millis());
+        }
+    }
+    None
+}
+
 /// Parse a CloudTrail JSON byte buffer into indexed records.
 /// Uses serde_json::from_slice (NOT from_reader) — 2-5x faster.
 ///
@@ -13,7 +42,7 @@ pub fn parse_records(
     path: &Path,
     file_idx: u32,
     start_id: u32,
-) -> Result<Vec<IndexedRecord>, CoreError> {
+) -> Result<ParsedFile, CoreError> {
     let json_err = |e: serde_json::Error| CoreError::Json {
         path: path.to_string_lossy().to_string(),
         source: e,
@@ -35,28 +64,25 @@ pub fn parse_records(
         },
     };
 
-    let records = records
-        .into_iter()
-        .enumerate()
-        .map(|(i, record)| {
-            // Parse timestamp to epoch millis; fall back to 0 on error
-            let timestamp = chrono::DateTime::parse_from_rfc3339(&record.event_time)
-                .map(|dt| dt.timestamp_millis())
-                .unwrap_or(0);
+    let mut bad_time = 0usize;
+    let mut out = Vec::with_capacity(records.len());
+    for record in records {
+        let Some(timestamp) = parse_event_time(&record.event_time) else {
+            bad_time += 1;
+            continue;
+        };
+        out.push(IndexedRecord {
+            id: start_id + out.len() as u32,
+            timestamp,
+            source_file: file_idx,
+            record,
+            request_params_ref: None,
+            response_elements_ref: None,
+            additional_event_data_ref: None,
+        });
+    }
 
-            IndexedRecord {
-                id: start_id + i as u32,
-                timestamp,
-                source_file: file_idx,
-                record,
-                request_params_ref: None,
-                response_elements_ref: None,
-                additional_event_data_ref: None,
-            }
-        })
-        .collect();
-
-    Ok(records)
+    Ok(ParsedFile { records: out, bad_time })
 }
 
 #[cfg(test)]
@@ -79,7 +105,7 @@ mod tests {
             }]
         }"#;
         let path = PathBuf::from("test.json");
-        let records = parse_records(json.as_bytes(), &path, 0, 0).unwrap();
+        let records = parse_records(json.as_bytes(), &path, 0, 0).unwrap().records;
         assert_eq!(records.len(), 1);
         assert_eq!(&*records[0].record.event_name, "CreateUser");
     }
@@ -101,7 +127,7 @@ mod tests {
             }]
         }"#;
         let path = PathBuf::from("cloudtrail-events.json");
-        let records = parse_records(json.as_bytes(), &path, 0, 7).unwrap();
+        let records = parse_records(json.as_bytes(), &path, 0, 7).unwrap().records;
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].id, 7);
         assert_eq!(&*records[0].record.event_name, "StopLogging");
@@ -125,5 +151,38 @@ mod tests {
             Ok(_) => panic!("expected a parse failure"),
         };
         assert!(!msg.contains("Events"), "unexpected error message: {msg}");
+    }
+
+    fn record_json(event_time: &str) -> String {
+        format!(r#"{{"eventVersion":"1.08","eventTime":"{event_time}","eventSource":"iam.amazonaws.com","eventName":"CreateUser","awsRegion":"us-east-1","userIdentity":{{"type":"IAMUser","userName":"a"}}}}"#)
+    }
+
+    #[test]
+    fn test_event_time_fallback_formats_parse() {
+        let want = parse_event_time("2024-01-15T10:00:00Z").unwrap();
+        assert_eq!(parse_event_time("2024-01-15 10:00:00"), Some(want));
+        assert_eq!(parse_event_time("2024-01-15T10:00:00"), Some(want));
+        assert_eq!(parse_event_time("2024-01-15T10:00:00+0000"), Some(want));
+        assert_eq!(parse_event_time("2024-01-15T17:00:00+0700"), Some(want));
+        assert_eq!(parse_event_time("2024-01-15 10:00:00.250"), Some(want + 250));
+        assert_eq!(parse_event_time("garbage"), None);
+        assert_eq!(parse_event_time(""), None);
+    }
+
+    #[test]
+    fn test_unparseable_event_time_is_dropped_and_counted() {
+        let json = format!(
+            r#"{{"Records":[{},{},{}]}}"#,
+            record_json("2024-01-15 10:00:00"),
+            record_json("garbage"),
+            record_json("2024-01-15T10:00:01Z"),
+        );
+        let parsed = parse_records(json.as_bytes(), &PathBuf::from("t.json"), 0, 5).unwrap();
+        assert_eq!(parsed.bad_time, 1);
+        assert_eq!(parsed.records.len(), 2);
+        // ids stay dense and start at start_id even though a record was dropped
+        assert_eq!(parsed.records[0].id, 5);
+        assert_eq!(parsed.records[1].id, 6);
+        assert!(parsed.records.iter().all(|r| r.timestamp > 0));
     }
 }
