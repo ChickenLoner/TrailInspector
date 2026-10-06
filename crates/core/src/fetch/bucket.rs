@@ -216,22 +216,36 @@ where
 
     let total = keys.len();
     let mut files_written = 0usize;
+    let mut skipped: Vec<String> = Vec::new();
 
     for (i, key) in keys.iter().enumerate() {
-        let resp = client
-            .get_object()
-            .bucket(&target.bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|e| CoreError::aws(format!("GetObject {key}"), aws_message(&e)))?;
-
-        let bytes = resp
-            .body
-            .collect()
-            .await
-            .map_err(|e| CoreError::aws(format!("GetObject {key}"), e))?
-            .into_bytes();
+        // A failed object is skipped and reported, not fatal: one AccessDenied (for instance an
+        // SSE-KMS key this role cannot use) must not throw away the thousands already fetched.
+        let fetched: Result<_, String> = async {
+            let resp = client
+                .get_object()
+                .bucket(&target.bucket)
+                .key(key)
+                .send()
+                .await
+                .map_err(|e| aws_message(&e))?;
+            let body = resp.body.collect().await.map_err(|e| e.to_string())?;
+            Ok(body.into_bytes())
+        }
+        .await;
+        let bytes = match fetched {
+            Ok(b) => b,
+            Err(msg) => {
+                skipped.push(format!("{key}: {msg}"));
+                on_progress(FetchProgress {
+                    phase: FetchPhase::Downloading,
+                    items_done: i + 1,
+                    items_total: Some(total),
+                    message: format!("{}/{total} objects ({} skipped)", i + 1, skipped.len()),
+                });
+                continue;
+            }
+        };
 
         // Mirror the key path locally. `key` is server-supplied, so strip any
         // absolute or parent components before joining — an object named
@@ -267,12 +281,125 @@ where
         events_fetched: None,
         trails: target.all_names,
         bucket: Some(target.bucket),
+        skipped,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Minimal in-process fake S3 (path-style) so the download loop can be tested offline.
+    /// Lists `keys`; serves a small body for each, except keys in `deny`, which get a real
+    /// S3-shaped 403 AccessDenied. Runs on a std thread because core's tokio has no `net`.
+    pub(super) fn spawn_fake_s3(
+        bucket: &'static str,
+        keys: Vec<&'static str>,
+        deny: Vec<&'static str>,
+    ) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut req = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    req.extend_from_slice(&buf[..n]);
+                    if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let head = String::from_utf8_lossy(&req).to_string();
+                let target = head.lines().next().unwrap_or("").split_whitespace().nth(1).unwrap_or("/").to_string();
+                let path = target.split('?').next().unwrap_or("/");
+
+                let (status, body) = if path == format!("/{bucket}") || path == format!("/{bucket}/") {
+                    let contents: String = keys
+                        .iter()
+                        .map(|k| format!("<Contents><Key>{k}</Key><Size>7</Size></Contents>"))
+                        .collect();
+                    (
+                        "200 OK",
+                        format!(
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>{bucket}</Name><Prefix></Prefix><KeyCount>{}</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>{contents}</ListBucketResult>",
+                            keys.len()
+                        ),
+                    )
+                } else if let Some(key) = path.strip_prefix(&format!("/{bucket}/")) {
+                    if deny.contains(&key) {
+                        (
+                            "403 Forbidden",
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>1</RequestId></Error>".to_string(),
+                        )
+                    } else {
+                        ("200 OK", "payload".to_string())
+                    }
+                } else {
+                    ("404 Not Found", "<Error><Code>NoSuchKey</Code><Message>nope</Message></Error>".to_string())
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    pub(super) fn fake_request(endpoint: String) -> FetchRequest {
+        FetchRequest {
+            profile: None,
+            credentials: Some(crate::fetch::AwsCredentials {
+                access_key_id: "AKIATESTTESTTESTTEST".into(),
+                secret_access_key: "test-secret".into(),
+                session_token: None,
+            }),
+            region: "us-east-1".into(),
+            source: crate::fetch::FetchSource::TrailBucket,
+            start_ms: None,
+            end_ms: None,
+            bucket: Some("bkt".into()),
+            prefix: None,
+            endpoint_url: Some(endpoint),
+        }
+    }
+
+    const KEY_A: &str = "AWSLogs/111122223333/CloudTrail/us-east-1/2026/07/25/a.json.gz";
+    const KEY_B: &str = "AWSLogs/111122223333/CloudTrail/us-east-1/2026/07/25/b.json.gz";
+    const KEY_C: &str = "AWSLogs/111122223333/CloudTrail/us-east-1/2026/07/25/c.json.gz";
+
+    /// One AccessDenied object used to abort the whole fetch (and the app then deleted
+    /// everything already downloaded). It is now skipped and reported.
+    #[tokio::test]
+    async fn one_denied_object_is_skipped_not_fatal() {
+        let endpoint = spawn_fake_s3("bkt", vec![KEY_A, KEY_B, KEY_C], vec![KEY_B]);
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = fetch_trail_bucket(&fake_request(endpoint), dir.path(), |_| {}).await.unwrap();
+
+        assert_eq!(out.files_written, 2, "{:?}", out.skipped);
+        assert_eq!(out.skipped.len(), 1);
+        assert!(out.skipped[0].contains("b.json.gz"), "{:?}", out.skipped);
+        assert!(out.skipped[0].to_lowercase().contains("denied"), "{:?}", out.skipped);
+        assert!(dir.path().join(KEY_A).exists());
+        assert!(!dir.path().join(KEY_B).exists());
+        assert!(dir.path().join(KEY_C).exists());
+    }
+
+    #[tokio::test]
+    async fn all_objects_denied_reports_every_skip() {
+        let endpoint = spawn_fake_s3("bkt", vec![KEY_A, KEY_B], vec![KEY_A, KEY_B]);
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = fetch_trail_bucket(&fake_request(endpoint), dir.path(), |_| {}).await.unwrap();
+        assert_eq!(out.files_written, 0);
+        assert_eq!(out.skipped.len(), 2);
+    }
 
     const DAY: i64 = 86_400_000;
     /// 2026-07-25T00:00:00Z

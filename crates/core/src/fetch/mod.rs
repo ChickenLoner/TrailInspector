@@ -172,6 +172,11 @@ pub struct FetchOutcome {
     pub trails: Vec<String>,
     #[serde(default)]
     pub bucket: Option<String>,
+    /// Objects or pages that could not be fetched and were skipped, each as a one-line
+    /// reason (`<key>: <error>`). A single unreadable object (say an SSE-KMS key the role
+    /// cannot use) no longer discards every other download.
+    #[serde(default)]
+    pub skipped: Vec<String>,
 }
 
 /// What a "check" found, before committing to load it into the analysis views.
@@ -188,6 +193,12 @@ pub struct FetchSummary {
     pub trails: Vec<String>,
     #[serde(default)]
     pub bucket: Option<String>,
+    /// How many objects or pages were skipped during the download (see `FetchOutcome::skipped`).
+    #[serde(default)]
+    pub skipped: usize,
+    /// The first few skip reasons, for display. The full list stays backend-side.
+    #[serde(default)]
+    pub skipped_sample: Vec<String>,
 }
 
 /// Count events and find the time range in an already-staged directory.

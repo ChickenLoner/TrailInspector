@@ -461,6 +461,15 @@ export function AwsFetchPanel({ busy, onCheckStart, onCheckEnd, onProgress, onPu
           <div><span style={{ color: "var(--text-secondary)" }}>Range</span>{" "}
             {fmt(summary.earliestMs)} → {fmt(summary.latestMs)}
           </div>
+          {summary.skipped > 0 && (
+            <div
+              style={{ color: "var(--accent-orange, #d29922)", cursor: "help" }}
+              title={summary.skippedSample.join("\n")}
+            >
+              {summary.skipped.toLocaleString()} object(s) could not be downloaded and were skipped.
+              Hover for the first reasons.
+            </div>
+          )}
           {summary.bucket && (
             <div><span style={{ color: "var(--text-secondary)" }}>Bucket</span> s3://{summary.bucket}</div>
           )}

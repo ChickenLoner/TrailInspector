@@ -126,6 +126,10 @@ export interface FetchSummary {
   latestMs: number | null;
   trails: string[];
   bucket: string | null;
+  /** Objects or pages skipped during the download (each one failed; the rest were kept). */
+  skipped: number;
+  /** The first few skip reasons, for display. */
+  skippedSample: string[];
 }
 
 export type IngestProgressEvent =

@@ -177,6 +177,18 @@ pub async fn check_aws(
         e.to_string()
     })?;
 
+    // Per-object failures are skipped, not fatal. If *nothing* downloaded though, there is
+    // nothing to stage: drop the empty directory and report why, instead of staging an empty
+    // dataset behind a green "Check complete".
+    if outcome.files_written == 0 && !outcome.skipped.is_empty() {
+        let _ = std::fs::remove_dir_all(&dest);
+        return Err(format!(
+            "Every download failed ({} skipped). First error: {}",
+            outcome.skipped.len(),
+            outcome.skipped[0]
+        ));
+    }
+
     // Count via the real ingest parser, so the number shown is the number that
     // will actually load — not the fetcher's own tally.
     let dir = dest.clone();
@@ -185,6 +197,8 @@ pub async fn check_aws(
         .map_err(|e| format!("Task join error: {e}"))?;
     summary.trails = outcome.trails;
     summary.bucket = outcome.bucket;
+    summary.skipped = outcome.skipped.len();
+    summary.skipped_sample = outcome.skipped.iter().take(10).cloned().collect();
 
     // Only cache credentials once they have been proven to work.
     if let Some(c) = credentials {
