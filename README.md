@@ -176,6 +176,8 @@ To enable IP enrichment and geo anomaly rules, download the free **DB-IP Lite** 
 
 Without the databases the tool still works fully — IP enrichment and geo anomaly rules (`GEO-01`, `GEO-02`) are simply disabled.
 
+> **Privacy:** the IP tab can also fetch geo data online from [ip-api.com](https://ip-api.com). Its free tier is HTTP-only, so the IPs being looked up are sent **in cleartext to a third party**. Do not use the online lookup for sensitive investigations; the offline databases above keep everything on your machine.
+
 ---
 
 ## Architecture

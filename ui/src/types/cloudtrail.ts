@@ -197,6 +197,12 @@ export interface IpPage {
   pageSize: number;
 }
 
+/** Online lookup outcome: partial `results` plus the reason it stopped early, if it did. */
+export interface OnlineGeoResponse {
+  results: OnlineGeoResult[];
+  error: string | null;
+}
+
 export interface OnlineGeoResult {
   query: string;
   status: string; // "success" | "fail"

@@ -108,17 +108,45 @@ pub struct OnlineGeoResult {
     pub asname: Option<String>,
 }
 
+/// Result of an online batch lookup: whatever was resolved, plus why it stopped early (if it did).
+/// Partial results are returned instead of an `Err` so a rate limit on batch 16 of 20 does not
+/// throw away the 15 batches already paid for.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineGeoResponse {
+    pub results: Vec<OnlineGeoResult>,
+    pub error: Option<String>,
+}
+
+/// If ip-api.com says no requests remain (`X-Rl: 0`), the message to stop with.
+/// `X-Ttl` is the number of seconds until the window resets.
+fn rate_limit_message(rl: Option<&str>, ttl: Option<&str>) -> Option<String> {
+    let remaining: u32 = rl?.trim().parse().ok()?;
+    if remaining > 0 {
+        return None;
+    }
+    let wait = ttl.and_then(|t| t.trim().parse::<u32>().ok());
+    Some(match wait {
+        Some(secs) => format!("ip-api.com rate limit reached; retry in {secs}s"),
+        None => "ip-api.com rate limit reached; retry shortly".to_string(),
+    })
+}
+
 /// Batch geo-lookup via ip-api.com (up to 100 IPs per call, HTTP free tier).
 /// Private/reserved IPs are returned with status "fail" and are harmless.
+///
+/// **Privacy:** the free tier is HTTP-only, so the IPs are sent in cleartext to a third party.
+/// Do not use this for sensitive investigations; load the offline MMDB databases instead.
 #[tauri::command]
-pub async fn geo_lookup_online(ips: Vec<String>) -> Result<Vec<OnlineGeoResult>, String> {
+pub async fn geo_lookup_online(ips: Vec<String>) -> Result<OnlineGeoResponse, String> {
     if ips.is_empty() {
-        return Ok(vec![]);
+        return Ok(OnlineGeoResponse { results: vec![], error: None });
     }
     let client = reqwest::Client::new();
     let mut all_results: Vec<OnlineGeoResult> = Vec::new();
+    let chunk_count = ips.chunks(100).count();
 
-    for chunk in ips.chunks(100) {
+    for (n, chunk) in ips.chunks(100).enumerate() {
         let body: Vec<serde_json::Value> = chunk
             .iter()
             .map(|ip| serde_json::json!({
@@ -127,25 +155,60 @@ pub async fn geo_lookup_online(ips: Vec<String>) -> Result<Vec<OnlineGeoResult>,
             }))
             .collect();
 
-        let resp = client
-            .post("http://ip-api.com/batch")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("ip-api.com request failed: {e}"))?;
+        let stop = |results: Vec<OnlineGeoResult>, error: String| {
+            Ok(OnlineGeoResponse { results, error: Some(error) })
+        };
+
+        let resp = match client.post("http://ip-api.com/batch").json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => return stop(all_results, format!("ip-api.com request failed: {e}")),
+        };
+
+        let rate_limit = rate_limit_message(
+            resp.headers().get("X-Rl").and_then(|v| v.to_str().ok()),
+            resp.headers().get("X-Ttl").and_then(|v| v.to_str().ok()),
+        );
 
         if !resp.status().is_success() {
-            return Err(format!("ip-api.com returned HTTP {}", resp.status()));
+            // 429 carries the same X-Ttl hint.
+            let msg = rate_limit.unwrap_or_else(|| format!("ip-api.com returned HTTP {}", resp.status()));
+            return stop(all_results, msg);
         }
 
-        let mut results: Vec<OnlineGeoResult> = resp
-            .json()
-            .await
-            .map_err(|e| format!("ip-api.com parse error: {e}"))?;
-        all_results.append(&mut results);
+        match resp.json::<Vec<OnlineGeoResult>>().await {
+            Ok(mut results) => all_results.append(&mut results),
+            Err(e) => return stop(all_results, format!("ip-api.com parse error: {e}")),
+        }
+
+        // This batch succeeded but the window is spent: stop before the next one 429s.
+        if let Some(msg) = rate_limit {
+            if n + 1 < chunk_count {
+                return stop(all_results, msg);
+            }
+        }
     }
 
-    Ok(all_results)
+    Ok(OnlineGeoResponse { results: all_results, error: None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rate_limit_message;
+
+    #[test]
+    fn rate_limit_stops_only_when_none_remaining() {
+        assert_eq!(rate_limit_message(Some("14"), Some("30")), None);
+        assert_eq!(rate_limit_message(None, None), None);
+        assert_eq!(rate_limit_message(Some("garbage"), Some("30")), None);
+        assert_eq!(
+            rate_limit_message(Some("0"), Some("42")).as_deref(),
+            Some("ip-api.com rate limit reached; retry in 42s")
+        );
+        assert_eq!(
+            rate_limit_message(Some("0"), None).as_deref(),
+            Some("ip-api.com rate limit reached; retry shortly")
+        );
+    }
 }
 
 /// Look up geo info for a single IP address.

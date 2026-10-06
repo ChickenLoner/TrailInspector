@@ -398,12 +398,14 @@ export function IpView({ startMs, endMs }: IpViewProps) {
     setGeoFetching(true);
     setGeoError(null);
     try {
-      const results = await geoLookupOnline(missing);
+      const { results, error } = await geoLookupOnline(missing);
       const newEntries: Record<string, OnlineGeoResult> = {};
       for (const r of results) {
         newEntries[r.query] = r;
       }
+      // Keep whatever was resolved even when the lookup stopped early (rate limit, network).
       setOnlineGeoCache((prev) => ({ ...prev, ...newEntries }));
+      if (error) setGeoError(error);
     } catch (e) {
       setGeoError(String(e));
     } finally {
