@@ -671,16 +671,10 @@ mod tests {
         assert_eq!((&*e2.bucket, e2.bytes_out), ("b2", 0), "a non-numeric byte count reads as 0");
     }
 
-    /// Ingest throughput on synthetic data. Ignored by default (it writes ~100 MB);
-    /// run it after touching the ingest consumer:
-    /// `cargo test -p trail-inspector-core --release -- --ignored bench_ingest --nocapture`
-    #[test]
-    #[ignore]
-    fn bench_ingest_200k_records() {
-        use std::time::Instant;
-        let dir = tempfile::TempDir::new().unwrap();
-        let files = 20usize;
-        let per_file = 10_000usize;
+    /// Write `files` x `per_file` synthetic records into `dir`. With `assumed_role`, 70% of the
+    /// records come from an assumed role carrying a realistic `sessionContext` (the largest
+    /// per-event identity payload in real accounts).
+    fn write_synthetic_logs(dir: &Path, files: usize, per_file: usize, assumed_role: bool) {
         let names = ["DescribeInstances", "GetObject", "AssumeRole", "PutObject", "ListBuckets", "GetCallerIdentity"];
         for f in 0..files {
             let mut records = Vec::with_capacity(per_file);
@@ -700,19 +694,94 @@ mod tests {
                         String::new(),
                     )
                 };
+                let identity = if assumed_role && n % 10 < 7 {
+                    format!(
+                        r#"{{"type":"AssumedRole","principalId":"AROAEXAMPLE:session-{}","arn":"arn:aws:sts::123456789012:assumed-role/Role{}/session-{}","accountId":"123456789012","accessKeyId":"ASIAEXAMPLE{}","sessionContext":{{"sessionIssuer":{{"type":"Role","principalId":"AROAEXAMPLE","arn":"arn:aws:iam::123456789012:role/Role{}","accountId":"123456789012","userName":"Role{}"}},"webIdFederationData":{{}},"attributes":{{"creationDate":"2024-01-15T09:00:00Z","mfaAuthenticated":"false"}}}}}}"#,
+                        n % 500, n % 20, n % 500, n % 500, n % 20, n % 20
+                    )
+                } else {
+                    format!(
+                        r#"{{"type":"IAMUser","arn":"arn:aws:iam::123456789012:user/user{}","userName":"user{}","accountId":"123456789012"}}"#,
+                        n % 40, n % 40
+                    )
+                };
                 records.push(format!(
-                    r#"{{"eventVersion":"1.08","eventTime":"2024-01-15T{:02}:{:02}:{:02}Z","eventSource":"{source}","eventName":"{name}","awsRegion":"us-east-1","sourceIPAddress":"203.0.113.{}","userAgent":"aws-cli/2.15","userIdentity":{{"type":"IAMUser","arn":"arn:aws:iam::123456789012:user/user{}","userName":"user{}","accountId":"123456789012"}},"requestParameters":{params},"responseElements":null,"eventID":"{n:032x}"{extra}}}"#,
-                    (n / 3600) % 24, (n / 60) % 60, n % 60, n % 250, n % 40, n % 40,
+                    r#"{{"eventVersion":"1.08","eventTime":"2024-01-15T{:02}:{:02}:{:02}Z","eventSource":"{source}","eventName":"{name}","awsRegion":"us-east-1","sourceIPAddress":"203.0.113.{}","userAgent":"aws-cli/2.15","userIdentity":{identity},"requestParameters":{params},"responseElements":null,"eventID":"{n:032x}"{extra}}}"#,
+                    (n / 3600) % 24, (n / 60) % 60, n % 60, n % 250,
                 ));
             }
-            std::fs::write(dir.path().join(format!("f{f:03}.json")), format!(r#"{{"Records":[{}]}}"#, records.join(","))).unwrap();
+            std::fs::write(dir.join(format!("f{f:03}.json")), format!(r#"{{"Records":[{}]}}"#, records.join(","))).unwrap();
         }
+    }
+
+    /// Return freed heap pages to the OS so RSS reflects live data, not the parse-time peak
+    /// glibc keeps resident after free. No-op off glibc Linux.
+    fn trim_heap() {
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        {
+            extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
+            // SAFETY: malloc_trim has no preconditions; it only releases unused heap memory.
+            unsafe {
+                malloc_trim(0);
+            }
+        }
+    }
+
+    /// A `/proc/self/status` counter in KiB (Linux only): `VmRSS` is resident now, `VmHWM` is
+    /// the peak since the process started.
+    fn proc_status_kib(key: &str) -> Option<u64> {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()?
+            .lines()
+            .find(|l| l.starts_with(key))?
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()
+    }
+
+    fn rss_kib() -> Option<u64> {
+        proc_status_kib("VmRSS:")
+    }
+
+    /// Ingest throughput on synthetic data. Ignored by default (it writes ~100 MB);
+    /// run it after touching the ingest consumer:
+    /// `cargo test -p trail-inspector-core --release -- --ignored bench_ingest_200k --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_ingest_200k_records() {
+        use std::time::Instant;
+        let dir = tempfile::TempDir::new().unwrap();
+        write_synthetic_logs(dir.path(), 20, 10_000, false);
 
         let mut store = Store::new();
         let start = Instant::now();
         let (loaded, _) = store.load_directory(dir.path(), |_| {}).unwrap();
-        let elapsed = start.elapsed();
-        println!("Ingest {loaded} records: {elapsed:?}");
-        assert_eq!(loaded, files * per_file);
+        println!("Ingest {loaded} records: {:?}", start.elapsed());
+        assert_eq!(loaded, 200_000);
+    }
+
+    /// Resident memory after loading assumed-role traffic. Run on its own so the process RSS is
+    /// not polluted by other tests:
+    /// `cargo test -p trail-inspector-core --release -- --ignored bench_ingest_rss --nocapture --test-threads=1`
+    #[test]
+    #[ignore]
+    fn bench_ingest_rss_assumed_role() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_synthetic_logs(dir.path(), 20, 10_000, true);
+        let before = rss_kib().unwrap_or(0);
+
+        let mut store = Store::new();
+        let (loaded, _) = store.load_directory(dir.path(), |_| {}).unwrap();
+        trim_heap();
+        let after = rss_kib().unwrap_or(0);
+        let peak = proc_status_kib("VmHWM:").unwrap_or(0);
+        println!(
+            "RSS after loading {loaded} assumed-role records: {} MiB (+{} MiB); peak {} MiB",
+            after / 1024, after.saturating_sub(before) / 1024, peak / 1024
+        );
+        assert_eq!(loaded, 200_000);
     }
 }

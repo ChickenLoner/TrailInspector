@@ -73,15 +73,17 @@ impl CloudTrailRecord {
     /// Replace all Arc<str> fields with pooled (interned) versions.
     /// Called from Store::load_directory after each batch is parsed.
     /// After interning, identical string values share a single Arc heap allocation.
+    /// `eventTime` (unique to the second) and `errorMessage` (free text, often unique) are
+    /// deliberately not pooled: pooling only pays for values that repeat, and for these every
+    /// entry cost a `Box<str>` key, an `Arc`, and a hash slot. Measured: ingest is ~17% faster
+    /// without them.
     pub(crate) fn intern(&mut self, pool: &mut crate::store::StringPool) {
-        self.event_time = pool.intern(&self.event_time);
         self.event_source = pool.intern(&self.event_source);
         self.event_name = pool.intern(&self.event_name);
         self.aws_region = pool.intern(&self.aws_region);
         self.source_ip_address = self.source_ip_address.as_deref().map(|s| pool.intern(s));
         self.user_agent = self.user_agent.as_deref().map(|s| pool.intern(s));
         self.error_code = self.error_code.as_deref().map(|s| pool.intern(s));
-        self.error_message = self.error_message.as_deref().map(|s| pool.intern(s));
         self.event_type = self.event_type.as_deref().map(|s| pool.intern(s));
         self.recipient_account_id = self.recipient_account_id.as_deref().map(|s| pool.intern(s));
         self.event_category = self.event_category.as_deref().map(|s| pool.intern(s));
