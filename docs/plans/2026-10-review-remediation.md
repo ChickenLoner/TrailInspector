@@ -669,10 +669,10 @@ Phase 3: [x] P3.1  [x] P3.2  [x] P3.3  [x] P3.4  [x] P3.5  [x] P3.6  [x] P3.7  [
 Phase 4: [x] P4.1  [x] P4.2  [x] P4.3  [x] P4.4  [x] P4.5  [x] P4.6  [x] P4.7  [x] P4.8  [x] P4.9
 Phase 5: [x] P5.1  [x] P5.2  [x] P5.3  [x] P5.4  [x] P5.5  [x] P5.6  [x] P5.7  [x] P5.8  [x] P5.9
 Phase 6: [x] P6.1  [x] P6.2  [x] P6.3  [x] P6.4  [x] P6.5  [x] P6.6  [x] P6.7 (partial)
-Phase 7: [ ] P7.1  [ ] P7.2
+Phase 7: [x] P7.1  [x] P7.2
 
 Ingest bench (200k records, release, `bench_ingest_200k_records`): baseline 958 ms (943/958/988); after P6.1 741 ms (736/741/745).
-Bench after Phase 6: ____ ms (burst case included)
+Bench after Phase 6: 100k mixed 8.4 ms (baseline 753 ms); burst 20k RunInstances 1.2 ms (old code ~94 s); ingest 200k ~631 ms (baseline 958 ms); custom rules x5 ~7 ms (baseline ~101 ms); 1M GeoIP lookups ~213 ms (baseline ~400 ms).
 
 Notes / blockers (task id, what, why):
 - P1.2 deviation: IA-04 (failed-login brute force) uses `exclude_errors = false`, like DI-03, because failure is its subject.

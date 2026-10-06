@@ -56,3 +56,8 @@ When something fails repeatedly, when user has to re-explain, or when a workarou
 - `bench_detection_100k_records` is `#[ignore]`d — run it after touching detection perf.
 - Detection time concentrates in one or two rules; measure per-rule before optimizing.
 - Tab switches unmount the search view — state a parent derives from must not live in it.
+- Detection rules scope via `scoped_ids(names, sources, exclude_errors)`; fixtures need real `eventSource`.
+- serde enum `rename_all` skips struct-variant fields; put it on the variant.
+- Fetch tests: use `spawn_fake_s3_with` in `fetch/bucket.rs`, no emulator needed.
+- Run `--ignored bench_detection_burst` too; the mixed bench misses quadratic windows.
+- `react-is` stays in `ui/package.json`; recharts requires it as a peer.
