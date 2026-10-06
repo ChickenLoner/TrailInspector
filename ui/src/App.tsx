@@ -288,10 +288,11 @@ export default function App() {
       setWarningsDismissed(false);
       setWarningsBannerOpen(false);
       if (elapsedMs !== undefined) setLoadTimeMs(elapsedMs);
-      fetchPage(0, "");
-      fetchTimeline("");
+      // Apply the query / filters / time range restored from localStorage, so the table,
+      // timeline and the "N of M" status agree with the header chip and with export.
+      runQuery(queryText, filterFragment, globalTimeRange);
     },
-    [fetchPage, fetchTimeline]
+    [runQuery, queryText, filterFragment, globalTimeRange]
   );
 
   const handleTimeRangeSelect = useCallback(
