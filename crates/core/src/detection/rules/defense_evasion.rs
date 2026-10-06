@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids};
+use crate::detection::{Alert, Severity, scoped_ids, jget};
 
 /// DE-01: CloudTrail Stopped or Deleted
 pub fn de_01_cloudtrail_stopped(store: &Store) -> Vec<Alert> {
@@ -258,12 +258,15 @@ pub fn de_10_cloudfront_logging_disabled(store: &Store) -> Vec<Alert> {
 
     let mut matching = vec![];
     for id in ids {
-        if store.get_record(id).is_some() {
-            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-            // Look for logging being disabled (Enabled: false in Logging config)
-            if params_str.contains("\"Enabled\":false") || params_str.contains("\"enabled\":false") {
-                matching.push(id);
-            }
+        // Navigate distributionConfig.logging.enabled. Other `enabled:false` flags
+        // (trustedSigners, trustedKeyGroups) are present on nearly every update.
+        let Some(p) = store.parse_request_parameters(id) else { continue };
+        let logging_off = jget(&p, "distributionConfig")
+            .and_then(|c| jget(c, "logging"))
+            .and_then(|l| jget(l, "enabled"))
+            == Some(&serde_json::Value::Bool(false));
+        if logging_off {
+            matching.push(id);
         }
     }
 

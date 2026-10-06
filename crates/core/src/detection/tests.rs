@@ -1119,6 +1119,28 @@ fn rds_01_does_not_fire_when_enabling_protection() {
     assert!(rules::rds::rds_01_deletion_protection_disabled(&store).is_empty());
 }
 
+#[test]
+fn de_10_ignores_trusted_signers_enabled_false() {
+    let rec = with_params(
+        make_indexed(0, "UpdateDistribution", "cloudfront.amazonaws.com"),
+        json!({"id": "E123", "distributionConfig": {
+            "trustedSigners": {"enabled": false, "quantity": 0},
+            "logging": {"enabled": true, "bucket": "logs.s3.amazonaws.com"}}}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::defense_evasion::de_10_cloudfront_logging_disabled(&store).is_empty());
+}
+
+#[test]
+fn de_10_fires_on_lower_camel_logging_disabled() {
+    let rec = with_params(
+        make_indexed(0, "UpdateDistribution", "cloudfront.amazonaws.com"),
+        json!({"id": "E123", "distributionConfig": {"logging": {"enabled": false}}}),
+    );
+    let store = build_store(vec![rec]);
+    assert_eq!(rules::defense_evasion::de_10_cloudfront_logging_disabled(&store).len(), 1);
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------
