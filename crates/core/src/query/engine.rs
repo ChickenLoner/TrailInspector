@@ -89,7 +89,7 @@ fn reorder_to_time(store: &Store, ids: impl Iterator<Item = u32>) -> Vec<u32> {
     let mut timed: Vec<(i64, u32)> = ids
         .filter_map(|id| store.get_record(id).map(|r| (r.timestamp, id)))
         .collect();
-    timed.sort_unstable_by_key(|(ts, _)| *ts);
+    timed.sort_unstable();
     timed.into_iter().map(|(_, id)| id).collect()
 }
 

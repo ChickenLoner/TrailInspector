@@ -28,7 +28,7 @@ fn mass_ec2_op_inner(
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
-        events.sort_unstable_by_key(|(ts, _)| *ts);
+        events.sort_unstable();
         let mut start = 0;
         for end in 0..events.len() {
             while events[end].0 - events[start].0 > window_ms {
@@ -64,7 +64,7 @@ pub fn im_01_ec2_bulk_launch(store: &Store) -> Vec<Alert> {
         .filter_map(|id| store.get_record(id).map(|r| (r.timestamp, id)))
         .collect();
 
-    events.sort_unstable_by_key(|(ts, _)| *ts);
+    events.sort_unstable();
 
     let window_ms = 10 * 60 * 1000;
     let threshold = 5;
@@ -159,7 +159,7 @@ pub fn im_02_resource_deletion_spree(store: &Store) -> Vec<Alert> {
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
-        events.sort_unstable_by_key(|(ts, _)| *ts);
+        events.sort_unstable();
         let mut start = 0;
         for end in 0..events.len() {
             while events[end].0 - events[start].0 > window_ms {

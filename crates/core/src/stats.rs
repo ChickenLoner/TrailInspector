@@ -225,7 +225,7 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
             }
         })
         .collect();
-    timed_ids.sort_unstable_by_key(|(ts, _)| *ts);
+    timed_ids.sort_unstable();
 
     let first_seen_ms = timed_ids.first().map(|(ts, _)| *ts).unwrap_or(0);
     let last_seen_ms = timed_ids.last().map(|(ts, _)| *ts).unwrap_or(0);

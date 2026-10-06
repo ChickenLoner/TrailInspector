@@ -126,7 +126,7 @@ pub fn ia_04_brute_force(store: &Store) -> Vec<Alert> {
     let mut offending_ips: Vec<String> = vec![];
 
     for (ip, mut events) in by_ip {
-        events.sort_unstable_by_key(|(ts, _)| *ts);
+        events.sort_unstable();
         // Sliding window
         let mut start = 0;
         for end in 0..events.len() {

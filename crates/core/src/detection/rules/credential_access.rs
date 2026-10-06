@@ -27,7 +27,7 @@ pub fn ca_02_secrets_bulk(store: &Store) -> Vec<Alert> {
     let mut offending_identities: Vec<String> = vec![];
 
     for (identity, mut events) in by_identity {
-        events.sort_unstable_by_key(|(ts, _)| *ts);
+        events.sort_unstable();
         let mut start = 0;
         for end in 0..events.len() {
             while events[end].0 - events[start].0 > window_ms {

@@ -333,7 +333,7 @@ impl Store {
 
         // Build time-sorted index
         let mut pairs: Vec<(i64, u32)> = self.records.iter().map(|r| (r.timestamp, r.id)).collect();
-        pairs.sort_unstable_by_key(|(ts, _)| *ts);
+        pairs.sort_unstable();
         self.time_sorted_ids = pairs.into_iter().map(|(_, id)| id).collect();
 
         Ok((total_records, warnings))

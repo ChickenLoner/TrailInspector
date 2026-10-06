@@ -415,7 +415,7 @@ mod tests {
         }
 
         let mut sorted: Vec<(i64, u32)> = records.iter().map(|r| (r.timestamp, r.id)).collect();
-        sorted.sort_unstable_by_key(|(ts, _)| *ts);
+        sorted.sort_unstable();
         store.time_sorted_ids = sorted.into_iter().map(|(_, id)| id).collect();
         store.records = records;
         store
