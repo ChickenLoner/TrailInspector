@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useRef, type KeyboardEvent } from "react";
 
 interface Props {
+  /** The submitted (active) query. The text being typed is local until the user submits it. */
   value: string;
-  onChange: (value: string) => void;
   onSubmit: (value: string) => void;
   disabled?: boolean;
   /** Optional ref forwarded to the underlying <input> for external focus control */
@@ -16,7 +16,7 @@ const FIELD_HINTS = [
   "userName", "userArn", "accountId", "errorCode", "identityType", "userAgent",
 ];
 
-export function QueryBar({ value, onChange, onSubmit, disabled, inputRef }: Props) {
+export function QueryBar({ value, onSubmit, disabled, inputRef }: Props) {
   const [localValue, setLocalValue] = useState(value);
   const internalRef = useRef<HTMLInputElement>(null);
   const resolvedRef = inputRef ?? internalRef;
@@ -33,27 +33,26 @@ export function QueryBar({ value, onChange, onSubmit, disabled, inputRef }: Prop
         onSubmit(localValue);
       } else if (e.key === "Escape") {
         setLocalValue("");
-        onChange("");
         onSubmit("");
         resolvedRef.current?.blur();
       }
     },
-    [localValue, onChange, onSubmit, resolvedRef]
+    [localValue, onSubmit, resolvedRef]
   );
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
+      // Draft only: nothing outside this input sees it until submit, so half-typed text can't
+      // leak into paging, facet counts, or export.
       setLocalValue(e.target.value);
-      onChange(e.target.value);
     },
-    [onChange]
+    []
   );
 
   const handleClear = useCallback(() => {
     setLocalValue("");
-    onChange("");
     onSubmit("");
-  }, [onChange, onSubmit]);
+  }, [onSubmit]);
 
   return (
     <div className="flex items-center gap-2 px-3" style={{ height: 40 }}>
@@ -105,7 +104,6 @@ export function QueryBar({ value, onChange, onSubmit, disabled, inputRef }: Prop
             onClick={() => {
               const newVal = localValue ? `${localValue} ${f}=` : `${f}=`;
               setLocalValue(newVal);
-              onChange(newVal);
             }}
             style={{
               background: "var(--bg-tertiary)",

@@ -393,7 +393,6 @@ export default function App() {
         <div className="flex-1">
           <QueryBar
             value={queryText}
-            onChange={setQueryText}
             onSubmit={handleQuerySubmit}
             disabled={loading}
             inputRef={queryInputRef}
