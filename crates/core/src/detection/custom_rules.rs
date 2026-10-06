@@ -123,6 +123,21 @@ where D: serde::Deserializer<'de>
 // Loading
 // ---------------------------------------------------------------------------
 
+/// Upper bound for `threshold.window_minutes` (one year). Keeps `minutes * 60_000`
+/// far from i64 overflow, which would wrap the sliding window negative.
+const MAX_WINDOW_MINUTES: u64 = 527_040;
+
+/// `T` + 4 digits, optionally `.` + 3 digits (e.g. `T1078` or `T1078.004`).
+fn is_valid_mitre_technique(s: &str) -> bool {
+    let b = s.as_bytes();
+    let digits = |r: &[u8]| r.iter().all(u8::is_ascii_digit);
+    match b.len() {
+        5 => b[0] == b'T' && digits(&b[1..]),
+        9 => b[0] == b'T' && digits(&b[1..5]) && b[5] == b'.' && digits(&b[6..]),
+        _ => false,
+    }
+}
+
 pub struct LoadResult {
     pub rules: Vec<CustomRule>,
     pub errors: Vec<String>,
@@ -182,6 +197,21 @@ pub fn load_custom_rules(path: &Path) -> LoadResult {
                 errors.push(format!("Rule '{}': threshold.min_count must be >= 1", rule.id));
                 continue;
             }
+            if t.window_minutes.is_some_and(|w| w > MAX_WINDOW_MINUTES) {
+                errors.push(format!(
+                    "Rule '{}': threshold.window_minutes must be <= {MAX_WINDOW_MINUTES} (1 year)",
+                    rule.id
+                ));
+                continue;
+            }
+        }
+
+        if !rule.mitre_technique.is_empty() && !is_valid_mitre_technique(&rule.mitre_technique) {
+            errors.push(format!(
+                "Rule '{}': mitre_technique '{}' must look like T1234 or T1234.001",
+                rule.id, rule.mitre_technique
+            ));
+            continue;
         }
 
         seen_ids.insert(rule.id.clone());
@@ -252,7 +282,7 @@ fn check_threshold(store: &Store, matching: &[u32], threshold: &Threshold) -> bo
 
         let mut left = 0;
         for right in 0..ts.len() {
-            while ts[right] - ts[left] > window_ms {
+            while left < right && ts[right] - ts[left] > window_ms {
                 left += 1;
             }
             if right - left + 1 >= threshold.min_count {
@@ -1017,6 +1047,76 @@ rules:
         let mut rule = simple_rule("DeleteBucket");
         rule.threshold = Some(Threshold { min_count: 3, window_minutes: Some(10) });
         assert_eq!(evaluate_custom_rule(&rule, &store).len(), 1);
+    }
+
+    // ── Validation and alert finalization ────────────────────────────────────
+
+    fn load_yaml(yaml: &str) -> LoadResult {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), yaml).unwrap();
+        load_custom_rules(tmp.path())
+    }
+
+    #[test]
+    fn huge_window_minutes_rejected() {
+        let result = load_yaml(r#"
+rules:
+  - id: "CR-01"
+    name: "Test"
+    severity: high
+    match:
+      event_name: "DeleteBucket"
+    threshold:
+      min_count: 2
+      window_minutes: 200000000000000
+"#);
+        assert!(result.rules.is_empty());
+        assert!(result.errors[0].contains("window_minutes must be <= 527040"), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn window_one_year_accepted() {
+        let result = load_yaml(r#"
+rules:
+  - id: "CR-01"
+    name: "Test"
+    severity: high
+    match:
+      event_name: "DeleteBucket"
+    threshold:
+      min_count: 2
+      window_minutes: 527040
+"#);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn bad_mitre_technique_rejected() {
+        for bad in ["1078", "T10", "T1078.4", "t1078", "T1078.0041", "T10x8"] {
+            let result = load_yaml(&format!(r#"
+rules:
+  - id: "CR-01"
+    name: "Test"
+    severity: high
+    mitre_technique: "{bad}"
+    match:
+      event_name: "DeleteBucket"
+"#));
+            assert!(result.rules.is_empty(), "{bad} should be rejected");
+            assert!(result.errors[0].contains("mitre_technique"), "{:?}", result.errors);
+        }
+        for good in ["T1078", "T1078.004"] {
+            let result = load_yaml(&format!(r#"
+rules:
+  - id: "CR-01"
+    name: "Test"
+    severity: high
+    mitre_technique: "{good}"
+    match:
+      event_name: "DeleteBucket"
+"#));
+            assert!(result.errors.is_empty(), "{good}: {:?}", result.errors);
+        }
     }
 
     // ── run_custom_rules ─────────────────────────────────────────────────────
