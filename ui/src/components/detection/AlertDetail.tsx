@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { Alert, Severity, SessionSummary } from "../../types/cloudtrail";
 import { getAlertSessions } from "../../lib/tauri";
+import { useLatestRequest } from "../../lib/useLatest";
 import { formatTs } from "../../lib/time";
 
 
@@ -28,13 +29,17 @@ interface Props {
 
 export function AlertDetail({ alert, onViewEvidence, onClose }: Props) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const begin = useLatestRequest();
 
   useEffect(() => {
     setSessions([]);
+    const isCurrent = begin();
     if (alert) {
-      getAlertSessions(alert.ruleId).then(setSessions).catch(() => {});
+      getAlertSessions(alert.ruleId)
+        .then((s) => { if (isCurrent()) setSessions(s); })
+        .catch(() => {});
     }
-  }, [alert?.ruleId]);
+  }, [alert?.ruleId, begin]);
 
   if (!alert) {
     return (

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { getIdentitySummary } from "../../lib/tauri";
 import { formatTs } from "../../lib/time";
+import { useLatestRequest } from "../../lib/useLatest";
 import type { IdentitySummary, TimelineEvent } from "../../types/cloudtrail";
 
 function durLabel(ms: number): string {
@@ -162,23 +163,26 @@ export function IdentityTimeline({ initialValue, startMs, endMs }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const begin = useLatestRequest();
 
   const lookup = useCallback(async (target: string, page: number = 0) => {
     const t = target.trim();
     if (!t) return;
+    const isCurrent = begin();
     setLoading(true);
     setError(null);
     if (page === 0) setSummary(null);
     try {
       const result = await getIdentitySummary(t, page, undefined, startMs, endMs);
+      if (!isCurrent()) return; // a newer lookup or page change superseded this one
       setSummary(result);
       setCurrentPage(page);
     } catch (e) {
-      setError(String(e));
+      if (isCurrent()) setError(String(e));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startMs, endMs, begin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (initialValue) {

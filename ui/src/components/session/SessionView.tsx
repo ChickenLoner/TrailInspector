@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { listSessions } from "../../lib/tauri";
+import { useLatestRequest } from "../../lib/useLatest";
 import type { SessionSummary, SessionPage } from "../../types/cloudtrail";
 import { SessionDetail } from "./SessionDetail";
 import { formatTs } from "../../lib/time";
@@ -138,7 +139,10 @@ export function SessionView({ startMs, endMs }: SessionViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
+  const begin = useLatestRequest();
+
   const load = useCallback(async (pg: number, sort: string, identity: string, ip: string) => {
+    const isCurrent = begin();
     setLoading(true);
     setError(null);
     try {
@@ -151,14 +155,15 @@ export function SessionView({ startMs, endMs }: SessionViewProps) {
         startMs,
         endMs,
       );
+      if (!isCurrent()) return;
       setPage(result);
       setCurrentPage(pg);
     } catch (e) {
-      setError(String(e));
+      if (isCurrent()) setError(String(e));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startMs, endMs, begin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initial load + re-load when time range changes
   useEffect(() => {

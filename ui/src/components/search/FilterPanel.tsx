@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getTopFields } from "../../lib/tauri";
+import { useLatestRequest } from "../../lib/useLatest";
 import type { ActiveFilters, FieldValueCount, FilterMode } from "../../types/cloudtrail";
 
 interface FilterSection {
@@ -34,10 +35,14 @@ export function FilterPanel({ filters, onFiltersChange, onUserSelect, query }: P
   const [sections, setSections] = useState<Record<string, FieldValueCount[]>>({});
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const begin = useLatestRequest();
 
   // Reload field value counts whenever the active query changes (debounced 300ms)
   useEffect(() => {
     if (loadTimer.current) clearTimeout(loadTimer.current);
+    // Claim the slot now so a load already in flight for an older query is superseded
+    // immediately, not only once this debounce timer fires.
+    const isCurrent = begin();
     loadTimer.current = setTimeout(async () => {
       const results: Record<string, FieldValueCount[]> = {};
       await Promise.all(
@@ -49,12 +54,12 @@ export function FilterPanel({ filters, onFiltersChange, onUserSelect, query }: P
           }
         })
       );
-      setSections(results);
+      if (isCurrent()) setSections(results);
     }, 300);
     return () => {
       if (loadTimer.current) clearTimeout(loadTimer.current);
     };
-  }, [query]);
+  }, [query, begin]);
 
   // Cycles: absent → include → exclude → absent
   const toggleValue = useCallback(

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { RecordRow, RecordDetail, IpInfo } from "../../types/cloudtrail";
 import { lookupIp, getRecordById } from "../../lib/tauri";
+import { useLatestRequest } from "../../lib/useLatest";
 
 function countryFlag(code?: string): string {
   if (!code || code.length !== 2) return "";
@@ -17,21 +18,30 @@ interface Props {
 export function EventDetail({ record, onClose }: Props) {
   const [geoInfo, setGeoInfo] = useState<IpInfo | null>(null);
   const [detail, setDetail] = useState<RecordDetail | null>(null);
+  // Clicking row A then row B quickly must not show A's payload under B's header.
+  const beginGeo = useLatestRequest();
+  const beginDetail = useLatestRequest();
 
   useEffect(() => {
     setGeoInfo(null);
+    const isCurrent = beginGeo();
     if (record?.sourceIPAddress) {
-      lookupIp(record.sourceIPAddress).then(setGeoInfo).catch(() => {});
+      lookupIp(record.sourceIPAddress)
+        .then((g) => { if (isCurrent()) setGeoInfo(g); })
+        .catch(() => {});
     }
-  }, [record?.sourceIPAddress]);
+  }, [record?.sourceIPAddress, beginGeo]);
 
   // Load full raw payload on demand when a record is selected
   useEffect(() => {
     setDetail(null);
+    const isCurrent = beginDetail();
     if (record?.id != null) {
-      getRecordById(record.id).then(setDetail).catch(() => {});
+      getRecordById(record.id)
+        .then((d) => { if (isCurrent()) setDetail(d); })
+        .catch(() => {});
     }
-  }, [record?.id]);
+  }, [record?.id, beginDetail]);
 
   if (!record) return null;
 

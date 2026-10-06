@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { loadGeoipDb, listIps, checkAbuseIpdb, geoLookupOnline } from "../../lib/tauri";
+import { useLatestRequest } from "../../lib/useLatest";
 import type { IpPage, IpRow, AbuseCheckResult, OnlineGeoResult } from "../../types/cloudtrail";
 
 // ---------------------------------------------------------------------------
@@ -413,21 +414,25 @@ export function IpView({ startMs, endMs }: IpViewProps) {
     }
   }, [onlineGeoCache]);
 
+  const beginLoad = useLatestRequest();
+
   const load = useCallback(async (pg: number, sort: string, country: string) => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError(null);
     try {
       const result = await listIps(pg, PAGE_SIZE, sort, country || undefined, startMs, endMs);
+      if (!isCurrent()) return; // a newer page/sort/filter request superseded this one
       setPage(result);
       setCurrentPage(pg);
       // Auto-fetch online geo for the new page
       fetchOnlineGeo(result.rows.map((r) => r.ip));
     } catch (e) {
-      setError(String(e));
+      if (isCurrent()) setError(String(e));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [startMs, endMs, fetchOnlineGeo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startMs, endMs, fetchOnlineGeo, beginLoad]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMmdbLoaded = useCallback(() => {
     setMmdbLoaded(true);
