@@ -668,15 +668,17 @@ Phase 2: [x] P2.1  [x] P2.2  [x] P2.3  [x] P2.4  [x] P2.5  [x] P2.6  [x] P2.7  [
 Phase 3: [x] P3.1  [x] P3.2  [x] P3.3  [x] P3.4  [x] P3.5  [x] P3.6  [x] P3.7  [x] P3.8
 Phase 4: [x] P4.1  [x] P4.2  [x] P4.3  [x] P4.4  [x] P4.5  [x] P4.6  [x] P4.7  [x] P4.8  [x] P4.9
 Phase 5: [x] P5.1  [x] P5.2  [x] P5.3  [x] P5.4  [x] P5.5  [x] P5.6  [x] P5.7  [x] P5.8  [x] P5.9
-Phase 6: [ ] P6.1  [ ] P6.2  [ ] P6.3  [ ] P6.4  [ ] P6.5  [ ] P6.6  [ ] P6.7
+Phase 6: [x] P6.1  [ ] P6.2  [ ] P6.3  [ ] P6.4  [ ] P6.5  [ ] P6.6  [ ] P6.7
 Phase 7: [ ] P7.1  [ ] P7.2
 
+Ingest bench (200k records, release, `bench_ingest_200k_records`): baseline 958 ms (943/958/988); after P6.1 741 ms (736/741/745).
 Bench after Phase 6: ____ ms (burst case included)
 
 Notes / blockers (task id, what, why):
 - P1.2 deviation: IA-04 (failed-login brute force) uses `exclude_errors = false`, like DI-03, because failure is its subject.
 - P1.2 correction: EC-06 events come from `ec2-instance-connect.amazonaws.com`, not `ec2.amazonaws.com`; the plan table was wrong.
 - P1.2: evidence `query` strings gain `eventSource=` per OR clause (appending `AND` to an OR query would change its meaning in this parser). They do not exclude errored events, so evidence can show denied calls the rule skipped.
+- P6.1: kept the ingest benchmark as an `#[ignore]`d test in store.rs instead of a temporary example (matches the existing detection bench). The `bucketName` index now only covers `s3.amazonaws.com` events; no rule or query depended on it for other services.
 - P5.9: could not run `cargo tauri dev` (no display), so the CSP was verified by serving the built frontend with the exact production CSP in headless Chromium (zero violations; first screen and main search view identical to a no-CSP control). Added `devCsp` (not in the plan) so Vite's inline preamble and HMR websocket keep working under `cargo tauri dev`; that dev policy is unverified.
 - Phase 3/4 UI behaviour was verified end to end in headless Chromium against the real built UI with a mocked Tauri backend (13 checks: UTC timestamps, facets surviving a tab switch, draft query not submitting, unknown-field error bar, empty-result pagination, restored query). The script lives in the session scratchpad, not the repo.
 - P5.8: JSON export is now compact, one record per line, instead of pretty-printed (per the plan). CSV cells are still not protected against spreadsheet formula injection (a cell starting with = + - @); not in the plan, noted for a follow-up.

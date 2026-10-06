@@ -38,6 +38,22 @@ impl StringPool {
     }
 }
 
+/// The two requestParameters fields ingestion needs for S3 events. Everything else is ignored.
+#[derive(serde::Deserialize)]
+struct S3Params<'a> {
+    #[serde(rename = "bucketName", borrow, default)]
+    bucket_name: Option<std::borrow::Cow<'a, str>>,
+    #[serde(borrow, default)]
+    key: Option<std::borrow::Cow<'a, str>>,
+}
+
+/// GetObject's additionalEventData: only the bytes-out count is read.
+#[derive(serde::Deserialize)]
+struct S3AdditionalData {
+    #[serde(rename = "bytesTransferredOut", default)]
+    bytes_transferred_out: Option<serde_json::Number>,
+}
+
 pub struct Store {
     pub records: Vec<IndexedRecord>,
     pub file_paths: Vec<String>,
@@ -233,31 +249,37 @@ impl Store {
                 // Extract bucket name BEFORE draining request_parameters to blob store,
                 // so we avoid a disk read-back during ingestion.
                 // For GetObject events also extract the object key and bytes transferred out.
-                let rp_value: Option<serde_json::Value> = rec.record.request_parameters
-                    .as_ref()
-                    .and_then(|rp| serde_json::from_str::<serde_json::Value>(rp.get()).ok());
+                // Only S3 events carry a bucket, so only they are parsed. This loop is the serial
+                // bottleneck of ingestion; building a full `serde_json::Value` tree for every
+                // record's requestParameters (200 B to 2 KB each) cost more than the interning and
+                // indexing combined. Two borrowed fields are enough, and `Cow` keeps strings with
+                // escape sequences working.
+                let s3_params: Option<S3Params> = if rec.record.event_source.as_ref() == "s3.amazonaws.com" {
+                    rec.record.request_parameters
+                        .as_ref()
+                        .and_then(|rp| serde_json::from_str::<S3Params>(rp.get()).ok())
+                } else {
+                    None
+                };
 
-                let bucket_name: Option<String> = rp_value
+                let bucket_name: Option<String> = s3_params
                     .as_ref()
-                    .and_then(|v| v.get("bucketName").and_then(|v| v.as_str()).map(|s| s.to_owned()));
+                    .and_then(|p| p.bucket_name.as_deref().map(str::to_owned));
 
                 // S3 enrichment: extract key + bytesTransferredOut for GetObject events
                 if rec.record.event_name.as_ref() == "GetObject" {
                     if let Some(ref bname) = bucket_name {
-                        let key: Arc<str> = rp_value
+                        let key: Arc<str> = s3_params
                             .as_ref()
-                            .and_then(|v| v.get("key").and_then(|v| v.as_str()))
+                            .and_then(|p| p.key.as_deref())
                             .map(|s| pool.intern(s))
                             .unwrap_or_else(|| Arc::from(""));
 
                         let bytes_out: u64 = rec.record.additional_event_data
                             .as_ref()
-                            .and_then(|ae| serde_json::from_str::<serde_json::Value>(ae.get()).ok())
-                            .and_then(|v| {
-                                v.get("bytesTransferredOut")
-                                    .and_then(|b| b.as_u64()
-                                        .or_else(|| b.as_f64().map(|f| f as u64)))
-                            })
+                            .and_then(|ae| serde_json::from_str::<S3AdditionalData>(ae.get()).ok())
+                            .and_then(|d| d.bytes_transferred_out)
+                            .and_then(|n| n.as_u64().or_else(|| n.as_f64().map(|f| f as u64)))
                             .unwrap_or(0);
 
                         let identity: Arc<str> = rec.record.user_identity.arn
@@ -610,5 +632,87 @@ mod tests {
         let last = events.last().unwrap();
         assert_eq!((last.files_done, last.files_total), (1, 1));
         assert!(events.iter().all(|e| e.files_done <= e.files_total));
+    }
+
+    /// The ingest consumer only parses requestParameters for S3 events, via a borrowed struct.
+    /// Pin what it must still extract: escaped keys, the several shapes of bytesTransferredOut,
+    /// and the bucket index.
+    #[test]
+    fn s3_events_are_indexed_from_borrowed_request_parameters() {
+        let rec = |name: &str, source: &str, params: &str, extra: &str| {
+            format!(
+                r#"{{"eventTime":"2024-01-15T10:00:00Z","eventSource":"{source}","eventName":"{name}","awsRegion":"us-east-1","userIdentity":{{"type":"IAMUser","userName":"a"}},"requestParameters":{params}{extra}}}"#
+            )
+        };
+        let records = [
+            rec("GetObject", "s3.amazonaws.com", r#"{"bucketName":"b1","key":"dir/a\"b-\u00e9.json"}"#, r#","additionalEventData":{"bytesTransferredOut":1234}"#),
+            rec("GetObject", "s3.amazonaws.com", r#"{"bucketName":"b1","key":"k2"}"#, r#","additionalEventData":{"bytesTransferredOut":12.0}"#),
+            rec("GetObject", "s3.amazonaws.com", r#"{"bucketName":"b2","key":"k3"}"#, r#","additionalEventData":{"bytesTransferredOut":"bad"}"#),
+            rec("PutObject", "s3.amazonaws.com", r#"{"bucketName":"b1","key":"k4"}"#, ""),
+            // Not an S3 event: ingestion no longer parses it, so its bucketName is not indexed.
+            rec("DescribeThings", "ec2.amazonaws.com", r#"{"bucketName":"x"}"#, ""),
+        ];
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.json"), format!(r#"{{"Records":[{}]}}"#, records.join(","))).unwrap();
+        let mut store = Store::new();
+        store.load_directory(dir.path(), |_| {}).unwrap();
+
+        assert_eq!(store.idx_bucket_name.get("b1").map(|b| b.len()), Some(3));
+        assert_eq!(store.idx_bucket_name.get("b2").map(|b| b.len()), Some(1));
+        assert!(store.idx_bucket_name.get("x").is_none(), "non-S3 events are not indexed by bucket");
+
+        // GetObject only: three entries, keyed by record id (file order = id order).
+        assert_eq!(store.s3_event_index.len(), 3);
+        let e0 = &store.s3_event_index[&0];
+        assert_eq!((&*e0.bucket, &*e0.key, e0.bytes_out), ("b1", "dir/a\"b-\u{e9}.json", 1234));
+        let e1 = &store.s3_event_index[&1];
+        assert_eq!((&*e1.key, e1.bytes_out), ("k2", 12));
+        let e2 = &store.s3_event_index[&2];
+        assert_eq!((&*e2.bucket, e2.bytes_out), ("b2", 0), "a non-numeric byte count reads as 0");
+    }
+
+    /// Ingest throughput on synthetic data. Ignored by default (it writes ~100 MB);
+    /// run it after touching the ingest consumer:
+    /// `cargo test -p trail-inspector-core --release -- --ignored bench_ingest --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_ingest_200k_records() {
+        use std::time::Instant;
+        let dir = tempfile::TempDir::new().unwrap();
+        let files = 20usize;
+        let per_file = 10_000usize;
+        let names = ["DescribeInstances", "GetObject", "AssumeRole", "PutObject", "ListBuckets", "GetCallerIdentity"];
+        for f in 0..files {
+            let mut records = Vec::with_capacity(per_file);
+            for i in 0..per_file {
+                let n = f * per_file + i;
+                let name = names[n % names.len()];
+                let (source, params, extra) = if name == "GetObject" || name == "PutObject" {
+                    (
+                        "s3.amazonaws.com",
+                        format!(r#"{{"bucketName":"bucket-{}","key":"logs/2024/{}/object-{n}.json","Host":"bucket.s3.amazonaws.com"}}"#, n % 7, n % 31),
+                        r#","additionalEventData":{"bytesTransferredOut":1234,"SignatureVersion":"SigV4"}"#.to_string(),
+                    )
+                } else {
+                    (
+                        "ec2.amazonaws.com",
+                        format!(r#"{{"filterSet":{{"items":[{{"name":"instance-state-name","valueSet":{{"items":[{{"value":"running"}},{{"value":"stopped"}}]}}}}]}},"maxResults":50,"instancesSet":{{"items":[{{"instanceId":"i-{n:017x}"}}]}}}}"#),
+                        String::new(),
+                    )
+                };
+                records.push(format!(
+                    r#"{{"eventVersion":"1.08","eventTime":"2024-01-15T{:02}:{:02}:{:02}Z","eventSource":"{source}","eventName":"{name}","awsRegion":"us-east-1","sourceIPAddress":"203.0.113.{}","userAgent":"aws-cli/2.15","userIdentity":{{"type":"IAMUser","arn":"arn:aws:iam::123456789012:user/user{}","userName":"user{}","accountId":"123456789012"}},"requestParameters":{params},"responseElements":null,"eventID":"{n:032x}"{extra}}}"#,
+                    (n / 3600) % 24, (n / 60) % 60, n % 60, n % 250, n % 40, n % 40,
+                ));
+            }
+            std::fs::write(dir.path().join(format!("f{f:03}.json")), format!(r#"{{"Records":[{}]}}"#, records.join(","))).unwrap();
+        }
+
+        let mut store = Store::new();
+        let start = Instant::now();
+        let (loaded, _) = store.load_directory(dir.path(), |_| {}).unwrap();
+        let elapsed = start.elapsed();
+        println!("Ingest {loaded} records: {elapsed:?}");
+        assert_eq!(loaded, files * per_file);
     }
 }
