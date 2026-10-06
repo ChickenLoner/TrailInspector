@@ -1089,6 +1089,26 @@ fn rs_01_does_not_fire_on_add_specific_account() {
     assert!(rules::resource_sharing::rs_01_ami_made_public(&store).is_empty());
 }
 
+#[test]
+fn rs_02_does_not_fire_on_remove_all() {
+    let rec = with_params(
+        make_indexed(0, "ModifyDocumentPermission", "ssm.amazonaws.com"),
+        json!({"name": "MyDoc", "permissionType": "Share", "accountIdsToRemove": ["all"]}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::resource_sharing::rs_02_ssm_document_public(&store).is_empty());
+}
+
+#[test]
+fn rs_02_ignores_document_names_containing_all() {
+    let rec = with_params(
+        make_indexed(0, "ModifyDocumentPermission", "ssm.amazonaws.com"),
+        json!({"name": "AllowSSH", "permissionType": "Share", "accountIdsToAdd": ["111122223333"]}),
+    );
+    let store = build_store(vec![rec]);
+    assert!(rules::resource_sharing::rs_02_ssm_document_public(&store).is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Alert finalization: time filter must run before the IPC id cap
 // ---------------------------------------------------------------------------
