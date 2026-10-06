@@ -120,7 +120,9 @@ impl Store {
         // Each message carries: (path_str, source_file_idx, records, optional "records skipped" note).
         // ZIP files produce multiple batches — one per inner entry — all
         // attributed to the same source file index so the path table stays compact.
-        type IngestMsg = Result<(String, u32, Vec<IndexedRecord>, Option<String>), CoreError>;
+        // The error side carries the source file index so a failure is attributed to its file even
+        // when that file (a ZIP) has already produced other messages.
+        type IngestMsg = Result<(String, u32, Vec<IndexedRecord>, Option<String>), (u32, CoreError)>;
         let bound = (rayon::current_num_threads() * 4).max(8);
         let (tx, rx) = std::sync::mpsc::sync_channel::<IngestMsg>(bound);
 
@@ -128,6 +130,8 @@ impl Store {
         let mut pool = StringPool::new();
         let mut total_records = 0usize;
         let mut files_done = 0usize;
+        // A ZIP sends one message per inner entry; a file counts as done once, on its first message.
+        let mut files_seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut warnings: Vec<IngestWarning> = Vec::new();
 
         std::thread::scope(|scope| {
@@ -148,7 +152,8 @@ impl Store {
                         // the largest entry and the bounded channel actually applies back-pressure.
                         let visited = for_each_zip_entry(path, |bytes| {
                             let msg = parse_records(&bytes, path, src_idx, 0)
-                                .map(|p| { let note = p.skip_note(); (path_str.clone(), src_idx, p.records, note) });
+                                .map(|p| { let note = p.skip_note(); (path_str.clone(), src_idx, p.records, note) })
+                                .map_err(|e| (src_idx, e));
                             if tx.send(msg).is_err() {
                                 std::ops::ControlFlow::Break(())
                             } else {
@@ -156,18 +161,22 @@ impl Store {
                             }
                         });
                         if let Err(e) = visited {
-                            let _ = tx.send(Err(e));
+                            let _ = tx.send(Err((src_idx, e)));
                         }
+                        // A zip with no matching entries sends nothing above, so without this the
+                        // file would never be counted and the bar would stall short of 100%.
+                        let _ = tx.send(Ok((path_str.clone(), src_idx, Vec::new(), None)));
                     } else {
                         match read_log_file(path) {
                             Ok(bytes) => {
                                 let _ = tx.send(
                                     parse_records(&bytes, path, src_idx, 0)
-                                        .map(|p| { let note = p.skip_note(); (path_str, src_idx, p.records, note) }),
+                                        .map(|p| { let note = p.skip_note(); (path_str, src_idx, p.records, note) })
+                                        .map_err(|e| (src_idx, e)),
                                 );
                             }
                             Err(e) => {
-                                let _ = tx.send(Err(e));
+                                let _ = tx.send(Err((src_idx, e)));
                             }
                         }
                     }
@@ -180,7 +189,7 @@ impl Store {
             for result in rx {
             let (path_str, src_idx, mut batch, skip_note) = match result {
                 Ok(v) => v,
-                Err(e) => {
+                Err((err_idx, e)) => {
                     // Extract the file path from the error for the warning message
                     let file = match &e {
                         CoreError::Io { path, .. } => Some(path.clone()),
@@ -190,7 +199,9 @@ impl Store {
                         _ => None,
                     };
                     warnings.push(IngestWarning { message: e.to_string(), file });
-                    files_done += 1;
+                    if files_seen.insert(err_idx) {
+                        files_done += 1;
+                    }
                     on_progress(ProgressEvent { files_total, files_done, records_total: total_records });
                     continue;
                 }
@@ -310,7 +321,9 @@ impl Store {
 
             total_records += batch.len();
             self.records.extend(batch);
-            files_done += 1;
+            if files_seen.insert(src_idx) {
+                files_done += 1;
+            }
 
             on_progress(ProgressEvent {
                 files_total,
@@ -506,5 +519,96 @@ impl Store {
                 rec.additional_event_data_ref = Some(br);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::Mutex;
+
+    fn file_json(event_name: &str) -> String {
+        format!(
+            r#"{{"Records":[{{"eventVersion":"1.08","eventTime":"2024-01-15T10:00:00Z","eventSource":"iam.amazonaws.com","eventName":"{event_name}","awsRegion":"us-east-1","userIdentity":{{"type":"IAMUser","userName":"a"}}}}]}}"#
+        )
+    }
+
+    fn make_zip(path: &Path, entries: &[(&str, String)]) {
+        let mut w = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        for (name, data) in entries {
+            w.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(data.as_bytes()).unwrap();
+        }
+        w.finish().unwrap();
+    }
+
+    /// Load `dir` and return (final store, every progress event in order).
+    fn load(dir: &Path) -> (Store, Vec<ProgressEvent>) {
+        let events = Mutex::new(Vec::new());
+        let mut store = Store::new();
+        store.load_directory(dir, |e| events.lock().unwrap().push(e)).unwrap();
+        (store, events.into_inner().unwrap())
+    }
+
+    /// A ZIP with N entries used to report N files done against `files_total = 1` (>100%).
+    #[test]
+    fn multi_entry_zip_counts_as_one_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        make_zip(
+            &dir.path().join("logs.zip"),
+            &[("a.json", file_json("CreateUser")), ("b.json", file_json("DeleteUser")), ("c.json", file_json("ListUsers"))],
+        );
+        let (store, events) = load(dir.path());
+        assert_eq!(store.len(), 3, "all three entries must load");
+        assert!(!events.is_empty());
+        for e in &events {
+            assert!(e.files_done <= e.files_total, "progress overshot: {e:?}");
+        }
+        let last = events.last().unwrap();
+        assert_eq!((last.files_done, last.files_total), (1, 1));
+        assert_eq!(last.records_total, 3);
+    }
+
+    /// A ZIP whose entries are all filtered out sends no entry messages, so the file was never
+    /// counted and the bar stalled below 100%.
+    #[test]
+    fn zip_with_no_matching_entries_still_completes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        make_zip(&dir.path().join("docs.zip"), &[("readme.md", "hello".to_string())]);
+        let (store, events) = load(dir.path());
+        assert_eq!(store.len(), 0);
+        let last = events.last().expect("a progress event for the zip");
+        assert_eq!((last.files_done, last.files_total), (1, 1));
+    }
+
+    #[test]
+    fn plain_files_each_count_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.json"), file_json("A")).unwrap();
+        std::fs::write(dir.path().join("b.json"), file_json("B")).unwrap();
+        let (store, events) = load(dir.path());
+        assert_eq!(store.len(), 2);
+        let last = events.last().unwrap();
+        assert_eq!((last.files_done, last.files_total), (2, 2));
+    }
+
+    /// A corrupt entry is reported once and the file still counts exactly once.
+    #[test]
+    fn failing_zip_entry_warns_and_counts_the_file_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        make_zip(
+            &dir.path().join("mixed.zip"),
+            &[("good.json", file_json("Good")), ("bad.json", "{not json".to_string())],
+        );
+        let events = Mutex::new(Vec::new());
+        let mut store = Store::new();
+        let (loaded, warnings) = store.load_directory(dir.path(), |e| events.lock().unwrap().push(e)).unwrap();
+        assert_eq!(loaded, 1);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let events = events.into_inner().unwrap();
+        let last = events.last().unwrap();
+        assert_eq!((last.files_done, last.files_total), (1, 1));
+        assert!(events.iter().all(|e| e.files_done <= e.files_total));
     }
 }
