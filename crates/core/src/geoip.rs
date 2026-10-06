@@ -56,9 +56,19 @@ pub struct IpPage {
 // GeoIpEngine
 // ---------------------------------------------------------------------------
 
+/// Memoised lookups are capped so a dataset with millions of distinct IPs cannot grow the cache
+/// without bound; past the cap, lookups simply go to the database as before.
+const MAX_CACHE_ENTRIES: usize = 500_000;
+
 pub struct GeoIpEngine {
-    geo_reader: Option<maxminddb::Reader<Vec<u8>>>,
-    asn_reader: Option<maxminddb::Reader<Vec<u8>>>,
+    // Memory-mapped: a City database is over 100 MB, and reading it into a Vec made loading slow
+    // and doubled the memory the page cache already holds. The mapping is read-only; replacing the
+    // file on disk while it is loaded is not supported (Windows refuses, others may fault).
+    geo_reader: Option<maxminddb::Reader<maxminddb::Mmap>>,
+    asn_reader: Option<maxminddb::Reader<maxminddb::Mmap>>,
+    /// IP -> result. GEO-01 and GEO-02 look up once per *event*, but a dataset has far fewer
+    /// distinct IPs than events, and each uncached lookup walks two search trees and allocates.
+    cache: dashmap::DashMap<IpAddr, Option<IpInfo>>,
 }
 
 impl GeoIpEngine {
@@ -68,18 +78,31 @@ impl GeoIpEngine {
         asn_path: Option<&str>,
     ) -> Result<Self, String> {
         let geo_reader = geo_path
-            .map(|p| maxminddb::Reader::open_readfile(p).map_err(|e| format!("Geo DB error: {e}")))
+            .map(|p| maxminddb::Reader::open_mmap(p).map_err(|e| format!("Geo DB error: {e}")))
             .transpose()?;
 
         let asn_reader = asn_path
-            .map(|p| maxminddb::Reader::open_readfile(p).map_err(|e| format!("ASN DB error: {e}")))
+            .map(|p| maxminddb::Reader::open_mmap(p).map_err(|e| format!("ASN DB error: {e}")))
             .transpose()?;
 
         if geo_reader.is_none() && asn_reader.is_none() {
             return Err("At least one MMDB file must be provided".to_string());
         }
 
-        Ok(GeoIpEngine { geo_reader, asn_reader })
+        Ok(GeoIpEngine::new(geo_reader, asn_reader))
+    }
+
+    fn new(
+        geo_reader: Option<maxminddb::Reader<maxminddb::Mmap>>,
+        asn_reader: Option<maxminddb::Reader<maxminddb::Mmap>>,
+    ) -> Self {
+        GeoIpEngine { geo_reader, asn_reader, cache: dashmap::DashMap::new() }
+    }
+
+    /// Drop every memoised lookup. Called when a new dataset is loaded so the previous dataset's
+    /// IPs do not stay resident.
+    pub fn clear_cache(&self) {
+        self.cache.clear();
     }
 
     /// Look up a single IP. Returns `None` if the IP is private/invalid or not found.
@@ -91,6 +114,22 @@ impl GeoIpEngine {
             return None;
         }
 
+        // Keyed by the parsed address, so `::ffff:1.2.3.4` and other spellings share an entry.
+        // A hit reports the caller's own spelling of the address.
+        if let Some(hit) = self.cache.get(&ip) {
+            return hit.value().clone().map(|mut info| {
+                info.ip = ip_str.to_string();
+                info
+            });
+        }
+        let info = self.lookup_uncached(ip, ip_str);
+        if self.cache.len() < MAX_CACHE_ENTRIES {
+            self.cache.insert(ip, info.clone());
+        }
+        info
+    }
+
+    fn lookup_uncached(&self, ip: IpAddr, ip_str: &str) -> Option<IpInfo> {
         let mut info = IpInfo {
             ip: ip_str.to_string(),
             country_code: None,
@@ -332,10 +371,59 @@ mod tests {
     /// all-`None` record that reads as "public IP, unknown country".
     #[test]
     fn test_lookup_without_any_match_is_none() {
-        let engine = GeoIpEngine { geo_reader: None, asn_reader: None };
+        let engine = GeoIpEngine::new(None, None);
         assert!(engine.lookup("8.8.8.8").is_none());
         assert!(engine.lookup("fe80::1").is_none());
         assert!(engine.lookup("not an ip").is_none());
+    }
+
+    /// Lookups are memoised per parsed address (including "not found"), private addresses never
+    /// reach the cache, and `clear_cache` empties it.
+    #[test]
+    fn test_lookup_cache_behaviour() {
+        let engine = GeoIpEngine::new(None, None);
+        assert!(engine.lookup("8.8.8.8").is_none());
+        assert_eq!(engine.cache.len(), 1, "a public miss is cached");
+        assert!(engine.lookup("8.8.8.8").is_none());
+        assert_eq!(engine.cache.len(), 1, "a repeat lookup reuses the entry");
+        // Two spellings of one address share an entry.
+        assert!(engine.lookup("::ffff:8.8.4.4").is_none());
+        assert!(engine.lookup("::ffff:808:404").is_none());
+        assert_eq!(engine.cache.len(), 2);
+        // Private ranges are rejected before the cache.
+        assert!(engine.lookup("10.0.0.1").is_none());
+        assert!(engine.lookup("fe80::1").is_none());
+        assert_eq!(engine.cache.len(), 2);
+        engine.clear_cache();
+        assert_eq!(engine.cache.len(), 0);
+    }
+
+    /// Per-record lookup cost, the access pattern of GEO-01/GEO-02 (one lookup per event, far
+    /// fewer distinct IPs than events). Needs a real City `.mmdb`, so it does nothing unless
+    /// `TRAIL_INSPECTOR_BENCH_MMDB` points at one:
+    /// `TRAIL_INSPECTOR_BENCH_MMDB=/path/city.mmdb cargo test -p trail-inspector-core --release -- --ignored bench_geo_lookup --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_geo_lookup_per_record() {
+        let Ok(path) = std::env::var("TRAIL_INSPECTOR_BENCH_MMDB") else {
+            eprintln!("set TRAIL_INSPECTOR_BENCH_MMDB to a City .mmdb to run this benchmark");
+            return;
+        };
+        let t = std::time::Instant::now();
+        let engine = GeoIpEngine::load(Some(&path), None).unwrap();
+        let load = t.elapsed();
+        let ips: Vec<String> = (0..50_000u32)
+            .map(|i| format!("{}.{}.{}.{}", 1 + i % 222, (i * 7) % 256, (i / 222) % 256, 1 + i % 250))
+            .collect();
+        let t = std::time::Instant::now();
+        let mut resolved = 0usize;
+        for r in 0..1_000_000usize {
+            if engine.lookup(&ips[r % ips.len()]).and_then(|i| i.country_code).is_some() {
+                resolved += 1;
+            }
+        }
+        println!("GeoIP load {load:?}; 1M lookups over 50k distinct IPs: {:?} ({resolved} resolved)", t.elapsed());
+        assert!(resolved > 0);
     }
 
     // -----------------------------------------------------------------------

@@ -53,6 +53,12 @@ pub(crate) async fn ingest_path_into_state(
         // Invalidate cached session index so it is rebuilt on next access
         let mut sidx = state.session_index.write().map_err(|e| format!("Lock error: {e}"))?;
         *sidx = None;
+        // The previous dataset's IPs no longer need to stay in the GeoIP cache.
+        if let Ok(geoip) = state.geoip.read() {
+            if let Some(engine) = geoip.as_ref() {
+                engine.clear_cache();
+            }
+        }
     }
 
     let _ = on_progress.send(IngestProgress::Complete {
