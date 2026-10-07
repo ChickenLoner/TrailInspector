@@ -16,7 +16,8 @@ use super::filter::*;
 /// - `earliest=2024-01-01T00:00:00Z` — absolute time
 /// - `latest=...`            — same for upper bound
 ///
-/// Unknown field names are silently skipped to allow forward compatibility.
+/// Unknown field names are an error: silently dropping a misspelled filter (`eventname=` typo)
+/// would return the whole dataset and look like a real result.
 pub fn parse_query(input: &str) -> Result<Query, CoreError> {
     let mut query = Query::default();
     let input = input.trim();
@@ -96,17 +97,26 @@ fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
+/// Resolve a field name or fail with the list of valid ones.
+fn known_field(name: &str) -> Result<FieldName, CoreError> {
+    FieldName::from_str(name).ok_or_else(|| {
+        CoreError::Query(format!(
+            "Unknown field '{name}'. Known fields: eventName, eventSource, awsRegion, \
+             sourceIPAddress, userArn, userName, accountId, errorCode, identityType, userAgent, bucketName"
+        ))
+    })
+}
+
 /// Parse a token like `field=value` or `field!=value` into a FieldFilter.
 /// Returns `Ok(None)` for tokens that don't look like filters (skipped silently).
 fn parse_filter_token(token: &str) -> Result<Option<FieldFilter>, CoreError> {
     // Must check `!=` before `=` so we don't split on the `=` inside `!=`
-    if let Some(pos) = token.find("!=") {
+    // `!=` is the operator only when it is the first `=` in the token. A later `!=` belongs to
+    // the value (`userAgent=*a!=b*` is a contains-match on `a!=b`, not a negated `*a`).
+    if let Some(pos) = token.find("!=").filter(|&p| token.find('=') == Some(p + 1)) {
         let field_str = &token[..pos];
         let value_str = &token[pos + 2..];
-        let field = match FieldName::from_str(field_str) {
-            Some(f) => f,
-            None => return Ok(None), // unknown field — skip
-        };
+        let field = known_field(field_str)?;
         return Ok(Some(FieldFilter {
             field,
             mode: parse_match_mode(value_str),
@@ -117,10 +127,7 @@ fn parse_filter_token(token: &str) -> Result<Option<FieldFilter>, CoreError> {
     if let Some(pos) = token.find('=') {
         let field_str = &token[..pos];
         let value_str = &token[pos + 1..];
-        let field = match FieldName::from_str(field_str) {
-            Some(f) => f,
-            None => return Ok(None), // unknown field — skip
-        };
+        let field = known_field(field_str)?;
         return Ok(Some(FieldFilter {
             field,
             mode: parse_match_mode(value_str),
@@ -187,14 +194,18 @@ fn parse_time_value(value: &str) -> Result<i64, CoreError> {
         let n: i64 = num_str
             .parse()
             .map_err(|_| CoreError::Query(format!("Invalid number in time: {value}")))?;
-        let millis = match unit_char {
-            'm' => n * 60 * 1_000,
-            'h' => n * 3_600 * 1_000,
-            'd' => n * 86_400 * 1_000,
-            'w' => n * 7 * 86_400 * 1_000,
+        let unit_ms: i64 = match unit_char {
+            'm' => 60 * 1_000,
+            'h' => 3_600 * 1_000,
+            'd' => 86_400 * 1_000,
+            'w' => 7 * 86_400 * 1_000,
             _ => return Err(CoreError::Query(format!("Unknown time unit '{unit_char}' in: {value}"))),
         };
-        return Ok(Utc::now().timestamp_millis() - millis);
+        // User input: `earliest=-99999999999999w` must be an error, not a panic (debug) or a
+        // wrapped far-future timestamp that silently matches nothing (release).
+        let out_of_range = || CoreError::Query(format!("Relative time out of range: {value}"));
+        let millis = n.checked_mul(unit_ms).ok_or_else(out_of_range)?;
+        return Utc::now().timestamp_millis().checked_sub(millis).ok_or_else(out_of_range);
     }
 
     // Epoch milliseconds (plain integer — sent by the frontend)
@@ -270,10 +281,47 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_field_skipped() {
-        let q = parse_query("unknownField=value eventName=CreateUser").unwrap();
-        assert_eq!(q.filter_groups.len(), 1);
-        assert_eq!(q.filter_groups[0].len(), 1);
+    fn test_unknown_field_is_an_error() {
+        // Not unwrap_err(): Query has no PartialEq/Debug requirements we want to add here.
+        let msg = match parse_query("unknownField=value eventName=CreateUser") {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("unknown field must be rejected, not silently dropped"),
+        };
+        assert!(msg.contains("Unknown field 'unknownField'"), "{msg}");
+        assert!(msg.contains("eventName"), "message should list known fields: {msg}");
+        assert!(parse_query("unknownField!=value").is_err());
+    }
+
+    #[test]
+    fn test_relative_time_overflow_is_an_error() {
+        for bad in ["-99999999999999w", "-9999999999999d", "-99999999999999999h", "-9223372036854775807m"] {
+            let msg = match parse_query(&format!("earliest={bad}")) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("{bad} should be out of range"),
+            };
+            assert!(msg.contains("out of range"), "{bad}: {msg}");
+        }
+        // Big but representable still works.
+        assert!(parse_query("earliest=-100000d").is_ok());
+    }
+
+    #[test]
+    fn test_not_equals_inside_value_is_not_the_operator() {
+        let q = parse_query("userAgent=*a!=b*").unwrap();
+        let f = &q.filter_groups[0][0];
+        assert_eq!(f.field, FieldName::UserAgent);
+        assert!(!f.negated);
+        assert!(matches!(&f.mode, MatchMode::Contains(v) if v == "a!=b"), "{:?}", f.mode);
+        // A real negation still parses.
+        let neg = parse_query("errorCode!=AccessDenied").unwrap();
+        assert!(neg.filter_groups[0][0].negated);
+    }
+
+    #[test]
+    fn test_field_case_insensitive() {
+        let q = parse_query("eventname=StopLogging AND ERRORCODE!=AccessDenied").unwrap();
         assert_eq!(q.filter_groups[0][0].field, FieldName::EventName);
+        assert_eq!(q.filter_groups[0][1].field, FieldName::ErrorCode);
+        assert!(q.filter_groups[0][1].negated);
     }
 }

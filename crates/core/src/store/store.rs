@@ -5,7 +5,7 @@ use crate::model::IndexedRecord;
 use crate::store::blob_store::BlobStore;
 use crate::s3::S3EventData;
 use rayon::prelude::*;
-use crate::ingest::{decompress::{read_log_file, read_zip_entries}, parser::parse_records};
+use crate::ingest::{decompress::{read_log_file, for_each_zip_entry}, parser::parse_records};
 use crate::error::{CoreError, IngestWarning};
 use std::path::Path;
 
@@ -36,6 +36,22 @@ impl StringPool {
         self.pool.insert(s.into(), Arc::clone(&arc));
         arc
     }
+}
+
+/// The two requestParameters fields ingestion needs for S3 events. Everything else is ignored.
+#[derive(serde::Deserialize)]
+struct S3Params<'a> {
+    #[serde(rename = "bucketName", borrow, default)]
+    bucket_name: Option<std::borrow::Cow<'a, str>>,
+    #[serde(borrow, default)]
+    key: Option<std::borrow::Cow<'a, str>>,
+}
+
+/// GetObject's additionalEventData: only the bytes-out count is read.
+#[derive(serde::Deserialize)]
+struct S3AdditionalData {
+    #[serde(rename = "bytesTransferredOut", default)]
+    bytes_transferred_out: Option<serde_json::Number>,
 }
 
 pub struct Store {
@@ -117,10 +133,12 @@ impl Store {
         // instead of collecting every parsed record — blobs and all — into one
         // giant Vec before the blob-draining ingest phase even begins.
         //
-        // Each message carries: (path_str, source_file_idx, records).
+        // Each message carries: (path_str, source_file_idx, records, optional "records skipped" note).
         // ZIP files produce multiple batches — one per inner entry — all
         // attributed to the same source file index so the path table stays compact.
-        type IngestMsg = Result<(String, u32, Vec<IndexedRecord>), CoreError>;
+        // The error side carries the source file index so a failure is attributed to its file even
+        // when that file (a ZIP) has already produced other messages.
+        type IngestMsg = Result<(String, u32, Vec<IndexedRecord>, Option<String>), (u32, CoreError)>;
         let bound = (rayon::current_num_threads() * 4).max(8);
         let (tx, rx) = std::sync::mpsc::sync_channel::<IngestMsg>(bound);
 
@@ -128,6 +146,8 @@ impl Store {
         let mut pool = StringPool::new();
         let mut total_records = 0usize;
         let mut files_done = 0usize;
+        // A ZIP sends one message per inner entry; a file counts as done once, on its first message.
+        let mut files_seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut warnings: Vec<IngestWarning> = Vec::new();
 
         std::thread::scope(|scope| {
@@ -144,30 +164,35 @@ impl Store {
                         .unwrap_or(false);
 
                     if is_zip {
-                        match read_zip_entries(path) {
-                            Ok(entries) => {
-                                for bytes in entries {
-                                    let msg = parse_records(&bytes, path, src_idx, 0)
-                                        .map(|r| (path_str.clone(), src_idx, r));
-                                    if tx.send(msg).is_err() {
-                                        return;
-                                    }
-                                }
+                        // Entries are inflated and sent one at a time, so memory is bounded by
+                        // the largest entry and the bounded channel actually applies back-pressure.
+                        let visited = for_each_zip_entry(path, |bytes| {
+                            let msg = parse_records(&bytes, path, src_idx, 0)
+                                .map(|p| { let note = p.skip_note(); (path_str.clone(), src_idx, p.records, note) })
+                                .map_err(|e| (src_idx, e));
+                            if tx.send(msg).is_err() {
+                                std::ops::ControlFlow::Break(())
+                            } else {
+                                std::ops::ControlFlow::Continue(())
                             }
-                            Err(e) => {
-                                let _ = tx.send(Err(e));
-                            }
+                        });
+                        if let Err(e) = visited {
+                            let _ = tx.send(Err((src_idx, e)));
                         }
+                        // A zip with no matching entries sends nothing above, so without this the
+                        // file would never be counted and the bar would stall short of 100%.
+                        let _ = tx.send(Ok((path_str.clone(), src_idx, Vec::new(), None)));
                     } else {
                         match read_log_file(path) {
                             Ok(bytes) => {
                                 let _ = tx.send(
                                     parse_records(&bytes, path, src_idx, 0)
-                                        .map(|r| (path_str, src_idx, r)),
+                                        .map(|p| { let note = p.skip_note(); (path_str, src_idx, p.records, note) })
+                                        .map_err(|e| (src_idx, e)),
                                 );
                             }
                             Err(e) => {
-                                let _ = tx.send(Err(e));
+                                let _ = tx.send(Err((src_idx, e)));
                             }
                         }
                     }
@@ -178,9 +203,9 @@ impl Store {
             // Consumer (this thread): single-threaded ingest keeps ids monotonic,
             // so every posting list stays sorted ascending by id.
             for result in rx {
-            let (path_str, src_idx, mut batch) = match result {
+            let (path_str, src_idx, mut batch, skip_note) = match result {
                 Ok(v) => v,
-                Err(e) => {
+                Err((err_idx, e)) => {
                     // Extract the file path from the error for the warning message
                     let file = match &e {
                         CoreError::Io { path, .. } => Some(path.clone()),
@@ -190,7 +215,9 @@ impl Store {
                         _ => None,
                     };
                     warnings.push(IngestWarning { message: e.to_string(), file });
-                    files_done += 1;
+                    if files_seen.insert(err_idx) {
+                        files_done += 1;
+                    }
                     on_progress(ProgressEvent { files_total, files_done, records_total: total_records });
                     continue;
                 }
@@ -200,6 +227,9 @@ impl Store {
             // Ensure file path is registered
             while self.file_paths.len() <= file_idx {
                 self.file_paths.push(String::new());
+            }
+            if let Some(message) = skip_note {
+                warnings.push(IngestWarning { message, file: Some(path_str.clone()) });
             }
             self.file_paths[file_idx] = path_str;
 
@@ -219,31 +249,37 @@ impl Store {
                 // Extract bucket name BEFORE draining request_parameters to blob store,
                 // so we avoid a disk read-back during ingestion.
                 // For GetObject events also extract the object key and bytes transferred out.
-                let rp_value: Option<serde_json::Value> = rec.record.request_parameters
-                    .as_ref()
-                    .and_then(|rp| serde_json::from_str::<serde_json::Value>(rp.get()).ok());
+                // Only S3 events carry a bucket, so only they are parsed. This loop is the serial
+                // bottleneck of ingestion; building a full `serde_json::Value` tree for every
+                // record's requestParameters (200 B to 2 KB each) cost more than the interning and
+                // indexing combined. Two borrowed fields are enough, and `Cow` keeps strings with
+                // escape sequences working.
+                let s3_params: Option<S3Params> = if rec.record.event_source.as_ref() == "s3.amazonaws.com" {
+                    rec.record.request_parameters
+                        .as_ref()
+                        .and_then(|rp| serde_json::from_str::<S3Params>(rp.get()).ok())
+                } else {
+                    None
+                };
 
-                let bucket_name: Option<String> = rp_value
+                let bucket_name: Option<String> = s3_params
                     .as_ref()
-                    .and_then(|v| v.get("bucketName").and_then(|v| v.as_str()).map(|s| s.to_owned()));
+                    .and_then(|p| p.bucket_name.as_deref().map(str::to_owned));
 
                 // S3 enrichment: extract key + bytesTransferredOut for GetObject events
                 if rec.record.event_name.as_ref() == "GetObject" {
                     if let Some(ref bname) = bucket_name {
-                        let key: Arc<str> = rp_value
+                        let key: Arc<str> = s3_params
                             .as_ref()
-                            .and_then(|v| v.get("key").and_then(|v| v.as_str()))
+                            .and_then(|p| p.key.as_deref())
                             .map(|s| pool.intern(s))
                             .unwrap_or_else(|| Arc::from(""));
 
                         let bytes_out: u64 = rec.record.additional_event_data
                             .as_ref()
-                            .and_then(|ae| serde_json::from_str::<serde_json::Value>(ae.get()).ok())
-                            .and_then(|v| {
-                                v.get("bytesTransferredOut")
-                                    .and_then(|b| b.as_u64()
-                                        .or_else(|| b.as_f64().map(|f| f as u64)))
-                            })
+                            .and_then(|ae| serde_json::from_str::<S3AdditionalData>(ae.get()).ok())
+                            .and_then(|d| d.bytes_transferred_out)
+                            .and_then(|n| n.as_u64().or_else(|| n.as_f64().map(|f| f as u64)))
                             .unwrap_or(0);
 
                         let identity: Arc<str> = rec.record.user_identity.arn
@@ -307,7 +343,9 @@ impl Store {
 
             total_records += batch.len();
             self.records.extend(batch);
-            files_done += 1;
+            if files_seen.insert(src_idx) {
+                files_done += 1;
+            }
 
             on_progress(ProgressEvent {
                 files_total,
@@ -327,7 +365,7 @@ impl Store {
 
         // Build time-sorted index
         let mut pairs: Vec<(i64, u32)> = self.records.iter().map(|r| (r.timestamp, r.id)).collect();
-        pairs.sort_unstable_by_key(|(ts, _)| *ts);
+        pairs.sort_unstable();
         self.time_sorted_ids = pairs.into_iter().map(|(_, id)| id).collect();
 
         Ok((total_records, warnings))
@@ -503,5 +541,247 @@ impl Store {
                 rec.additional_event_data_ref = Some(br);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::Mutex;
+
+    fn file_json(event_name: &str) -> String {
+        format!(
+            r#"{{"Records":[{{"eventVersion":"1.08","eventTime":"2024-01-15T10:00:00Z","eventSource":"iam.amazonaws.com","eventName":"{event_name}","awsRegion":"us-east-1","userIdentity":{{"type":"IAMUser","userName":"a"}}}}]}}"#
+        )
+    }
+
+    fn make_zip(path: &Path, entries: &[(&str, String)]) {
+        let mut w = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        for (name, data) in entries {
+            w.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(data.as_bytes()).unwrap();
+        }
+        w.finish().unwrap();
+    }
+
+    /// Load `dir` and return (final store, every progress event in order).
+    fn load(dir: &Path) -> (Store, Vec<ProgressEvent>) {
+        let events = Mutex::new(Vec::new());
+        let mut store = Store::new();
+        store.load_directory(dir, |e| events.lock().unwrap().push(e)).unwrap();
+        (store, events.into_inner().unwrap())
+    }
+
+    /// A ZIP with N entries used to report N files done against `files_total = 1` (>100%).
+    #[test]
+    fn multi_entry_zip_counts_as_one_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        make_zip(
+            &dir.path().join("logs.zip"),
+            &[("a.json", file_json("CreateUser")), ("b.json", file_json("DeleteUser")), ("c.json", file_json("ListUsers"))],
+        );
+        let (store, events) = load(dir.path());
+        assert_eq!(store.len(), 3, "all three entries must load");
+        assert!(!events.is_empty());
+        for e in &events {
+            assert!(e.files_done <= e.files_total, "progress overshot: {e:?}");
+        }
+        let last = events.last().unwrap();
+        assert_eq!((last.files_done, last.files_total), (1, 1));
+        assert_eq!(last.records_total, 3);
+    }
+
+    /// A ZIP whose entries are all filtered out sends no entry messages, so the file was never
+    /// counted and the bar stalled below 100%.
+    #[test]
+    fn zip_with_no_matching_entries_still_completes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        make_zip(&dir.path().join("docs.zip"), &[("readme.md", "hello".to_string())]);
+        let (store, events) = load(dir.path());
+        assert_eq!(store.len(), 0);
+        let last = events.last().expect("a progress event for the zip");
+        assert_eq!((last.files_done, last.files_total), (1, 1));
+    }
+
+    #[test]
+    fn plain_files_each_count_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.json"), file_json("A")).unwrap();
+        std::fs::write(dir.path().join("b.json"), file_json("B")).unwrap();
+        let (store, events) = load(dir.path());
+        assert_eq!(store.len(), 2);
+        let last = events.last().unwrap();
+        assert_eq!((last.files_done, last.files_total), (2, 2));
+    }
+
+    /// A corrupt entry is reported once and the file still counts exactly once.
+    #[test]
+    fn failing_zip_entry_warns_and_counts_the_file_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        make_zip(
+            &dir.path().join("mixed.zip"),
+            &[("good.json", file_json("Good")), ("bad.json", "{not json".to_string())],
+        );
+        let events = Mutex::new(Vec::new());
+        let mut store = Store::new();
+        let (loaded, warnings) = store.load_directory(dir.path(), |e| events.lock().unwrap().push(e)).unwrap();
+        assert_eq!(loaded, 1);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let events = events.into_inner().unwrap();
+        let last = events.last().unwrap();
+        assert_eq!((last.files_done, last.files_total), (1, 1));
+        assert!(events.iter().all(|e| e.files_done <= e.files_total));
+    }
+
+    /// The ingest consumer only parses requestParameters for S3 events, via a borrowed struct.
+    /// Pin what it must still extract: escaped keys, the several shapes of bytesTransferredOut,
+    /// and the bucket index.
+    #[test]
+    fn s3_events_are_indexed_from_borrowed_request_parameters() {
+        let rec = |name: &str, source: &str, params: &str, extra: &str| {
+            format!(
+                r#"{{"eventTime":"2024-01-15T10:00:00Z","eventSource":"{source}","eventName":"{name}","awsRegion":"us-east-1","userIdentity":{{"type":"IAMUser","userName":"a"}},"requestParameters":{params}{extra}}}"#
+            )
+        };
+        let records = [
+            rec("GetObject", "s3.amazonaws.com", r#"{"bucketName":"b1","key":"dir/a\"b-\u00e9.json"}"#, r#","additionalEventData":{"bytesTransferredOut":1234}"#),
+            rec("GetObject", "s3.amazonaws.com", r#"{"bucketName":"b1","key":"k2"}"#, r#","additionalEventData":{"bytesTransferredOut":12.0}"#),
+            rec("GetObject", "s3.amazonaws.com", r#"{"bucketName":"b2","key":"k3"}"#, r#","additionalEventData":{"bytesTransferredOut":"bad"}"#),
+            rec("PutObject", "s3.amazonaws.com", r#"{"bucketName":"b1","key":"k4"}"#, ""),
+            // Not an S3 event: ingestion no longer parses it, so its bucketName is not indexed.
+            rec("DescribeThings", "ec2.amazonaws.com", r#"{"bucketName":"x"}"#, ""),
+        ];
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.json"), format!(r#"{{"Records":[{}]}}"#, records.join(","))).unwrap();
+        let mut store = Store::new();
+        store.load_directory(dir.path(), |_| {}).unwrap();
+
+        assert_eq!(store.idx_bucket_name.get("b1").map(|b| b.len()), Some(3));
+        assert_eq!(store.idx_bucket_name.get("b2").map(|b| b.len()), Some(1));
+        assert!(store.idx_bucket_name.get("x").is_none(), "non-S3 events are not indexed by bucket");
+
+        // GetObject only: three entries, keyed by record id (file order = id order).
+        assert_eq!(store.s3_event_index.len(), 3);
+        let e0 = &store.s3_event_index[&0];
+        assert_eq!((&*e0.bucket, &*e0.key, e0.bytes_out), ("b1", "dir/a\"b-\u{e9}.json", 1234));
+        let e1 = &store.s3_event_index[&1];
+        assert_eq!((&*e1.key, e1.bytes_out), ("k2", 12));
+        let e2 = &store.s3_event_index[&2];
+        assert_eq!((&*e2.bucket, e2.bytes_out), ("b2", 0), "a non-numeric byte count reads as 0");
+    }
+
+    /// Write `files` x `per_file` synthetic records into `dir`. With `assumed_role`, 70% of the
+    /// records come from an assumed role carrying a realistic `sessionContext` (the largest
+    /// per-event identity payload in real accounts).
+    fn write_synthetic_logs(dir: &Path, files: usize, per_file: usize, assumed_role: bool) {
+        let names = ["DescribeInstances", "GetObject", "AssumeRole", "PutObject", "ListBuckets", "GetCallerIdentity"];
+        for f in 0..files {
+            let mut records = Vec::with_capacity(per_file);
+            for i in 0..per_file {
+                let n = f * per_file + i;
+                let name = names[n % names.len()];
+                let (source, params, extra) = if name == "GetObject" || name == "PutObject" {
+                    (
+                        "s3.amazonaws.com",
+                        format!(r#"{{"bucketName":"bucket-{}","key":"logs/2024/{}/object-{n}.json","Host":"bucket.s3.amazonaws.com"}}"#, n % 7, n % 31),
+                        r#","additionalEventData":{"bytesTransferredOut":1234,"SignatureVersion":"SigV4"}"#.to_string(),
+                    )
+                } else {
+                    (
+                        "ec2.amazonaws.com",
+                        format!(r#"{{"filterSet":{{"items":[{{"name":"instance-state-name","valueSet":{{"items":[{{"value":"running"}},{{"value":"stopped"}}]}}}}]}},"maxResults":50,"instancesSet":{{"items":[{{"instanceId":"i-{n:017x}"}}]}}}}"#),
+                        String::new(),
+                    )
+                };
+                let identity = if assumed_role && n % 10 < 7 {
+                    format!(
+                        r#"{{"type":"AssumedRole","principalId":"AROAEXAMPLE:session-{}","arn":"arn:aws:sts::123456789012:assumed-role/Role{}/session-{}","accountId":"123456789012","accessKeyId":"ASIAEXAMPLE{}","sessionContext":{{"sessionIssuer":{{"type":"Role","principalId":"AROAEXAMPLE","arn":"arn:aws:iam::123456789012:role/Role{}","accountId":"123456789012","userName":"Role{}"}},"webIdFederationData":{{}},"attributes":{{"creationDate":"2024-01-15T09:00:00Z","mfaAuthenticated":"false"}}}}}}"#,
+                        n % 500, n % 20, n % 500, n % 500, n % 20, n % 20
+                    )
+                } else {
+                    format!(
+                        r#"{{"type":"IAMUser","arn":"arn:aws:iam::123456789012:user/user{}","userName":"user{}","accountId":"123456789012"}}"#,
+                        n % 40, n % 40
+                    )
+                };
+                records.push(format!(
+                    r#"{{"eventVersion":"1.08","eventTime":"2024-01-15T{:02}:{:02}:{:02}Z","eventSource":"{source}","eventName":"{name}","awsRegion":"us-east-1","sourceIPAddress":"203.0.113.{}","userAgent":"aws-cli/2.15","userIdentity":{identity},"requestParameters":{params},"responseElements":null,"eventID":"{n:032x}"{extra}}}"#,
+                    (n / 3600) % 24, (n / 60) % 60, n % 60, n % 250,
+                ));
+            }
+            std::fs::write(dir.join(format!("f{f:03}.json")), format!(r#"{{"Records":[{}]}}"#, records.join(","))).unwrap();
+        }
+    }
+
+    /// Return freed heap pages to the OS so RSS reflects live data, not the parse-time peak
+    /// glibc keeps resident after free. No-op off glibc Linux.
+    fn trim_heap() {
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        {
+            extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
+            // SAFETY: malloc_trim has no preconditions; it only releases unused heap memory.
+            unsafe {
+                malloc_trim(0);
+            }
+        }
+    }
+
+    /// A `/proc/self/status` counter in KiB (Linux only): `VmRSS` is resident now, `VmHWM` is
+    /// the peak since the process started.
+    fn proc_status_kib(key: &str) -> Option<u64> {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()?
+            .lines()
+            .find(|l| l.starts_with(key))?
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()
+    }
+
+    fn rss_kib() -> Option<u64> {
+        proc_status_kib("VmRSS:")
+    }
+
+    /// Ingest throughput on synthetic data. Ignored by default (it writes ~100 MB);
+    /// run it after touching the ingest consumer:
+    /// `cargo test -p trail-inspector-core --release -- --ignored bench_ingest_200k --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_ingest_200k_records() {
+        use std::time::Instant;
+        let dir = tempfile::TempDir::new().unwrap();
+        write_synthetic_logs(dir.path(), 20, 10_000, false);
+
+        let mut store = Store::new();
+        let start = Instant::now();
+        let (loaded, _) = store.load_directory(dir.path(), |_| {}).unwrap();
+        println!("Ingest {loaded} records: {:?}", start.elapsed());
+        assert_eq!(loaded, 200_000);
+    }
+
+    /// Resident memory after loading assumed-role traffic. Run on its own so the process RSS is
+    /// not polluted by other tests:
+    /// `cargo test -p trail-inspector-core --release -- --ignored bench_ingest_rss --nocapture --test-threads=1`
+    #[test]
+    #[ignore]
+    fn bench_ingest_rss_assumed_role() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_synthetic_logs(dir.path(), 20, 10_000, true);
+        let before = rss_kib().unwrap_or(0);
+
+        let mut store = Store::new();
+        let (loaded, _) = store.load_directory(dir.path(), |_| {}).unwrap();
+        trim_heap();
+        let after = rss_kib().unwrap_or(0);
+        let peak = proc_status_kib("VmHWM:").unwrap_or(0);
+        println!(
+            "RSS after loading {loaded} assumed-role records: {} MiB (+{} MiB); peak {} MiB",
+            after / 1024, after.saturating_sub(before) / 1024, peak / 1024
+        );
+        assert_eq!(loaded, 200_000);
     }
 }

@@ -172,6 +172,11 @@ pub struct FetchOutcome {
     pub trails: Vec<String>,
     #[serde(default)]
     pub bucket: Option<String>,
+    /// Objects or pages that could not be fetched and were skipped, each as a one-line
+    /// reason (`<key>: <error>`). A single unreadable object (say an SSE-KMS key the role
+    /// cannot use) no longer discards every other download.
+    #[serde(default)]
+    pub skipped: Vec<String>,
 }
 
 /// What a "check" found, before committing to load it into the analysis views.
@@ -188,6 +193,12 @@ pub struct FetchSummary {
     pub trails: Vec<String>,
     #[serde(default)]
     pub bucket: Option<String>,
+    /// How many objects or pages were skipped during the download (see `FetchOutcome::skipped`).
+    #[serde(default)]
+    pub skipped: usize,
+    /// The first few skip reasons, for display. The full list stays backend-side.
+    #[serde(default)]
+    pub skipped_sample: Vec<String>,
 }
 
 /// Count events and find the time range in an already-staged directory.
@@ -208,28 +219,28 @@ pub fn summarize_staged(dir: &std::path::Path) -> FetchSummary {
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
 
-        let batches = if is_zip {
-            decompress::read_zip_entries(&path).unwrap_or_default()
-        } else {
-            match decompress::read_log_file(&path) {
-                Ok(b) => vec![b],
-                Err(_) => continue,
-            }
-        };
-
-        for bytes in batches {
-            let Ok(records) = parser::parse_records(&bytes, &path, 0, 0) else { continue };
+        // Fold one file's bytes into the running totals.
+        let mut absorb = |bytes: &[u8]| {
+            let Ok(parsed) = parser::parse_records(bytes, &path, 0, 0) else { return };
+            let records = parsed.records;
             summary.events += records.len();
             for r in &records {
-                // Records that failed timestamp parsing land on 0; ignore those
-                // rather than reporting a 1970 range.
-                if r.timestamp == 0 {
-                    continue;
-                }
                 summary.earliest_ms =
                     Some(summary.earliest_ms.map_or(r.timestamp, |e: i64| e.min(r.timestamp)));
                 summary.latest_ms =
                     Some(summary.latest_ms.map_or(r.timestamp, |l: i64| l.max(r.timestamp)));
+            }
+        };
+
+        if is_zip {
+            let _ = decompress::for_each_zip_entry(&path, |bytes| {
+                absorb(&bytes);
+                std::ops::ControlFlow::Continue(())
+            });
+        } else {
+            match decompress::read_log_file(&path) {
+                Ok(b) => absorb(&b),
+                Err(_) => continue,
             }
         }
         summary.files += 1;

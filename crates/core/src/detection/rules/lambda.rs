@@ -1,13 +1,12 @@
-use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Finding, scoped_ids};
 
 /// LM-01: Lambda Function Public Access via Resource Policy
-pub fn lm_01_lambda_public_access(store: &Store) -> Vec<Alert> {
-    let ids = match store.idx_event_name.get("AddPermission20150331v2") {
-        Some(ids) => ids,
-        None => return vec![],
-    };
+pub fn lm_01_lambda_public_access(store: &Store) -> Option<Finding> {
+    let ids = scoped_ids(store, &["AddPermission20150331v2"], &["lambda.amazonaws.com"], true);
+    if ids.is_empty() {
+        return None;
+    }
 
     let mut matching = vec![];
     for id in ids {
@@ -24,30 +23,22 @@ pub fn lm_01_lambda_public_access(store: &Store) -> Vec<Alert> {
     }
 
     if matching.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "LM-01".to_string(),
-        severity: Severity::High,
-        title: "Lambda Function Granted Public Access".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} Lambda function(s) were granted public invocation access (principal=*). \
              Publicly accessible Lambda functions can be invoked by any AWS principal.",
             matching.len()
         ),
-        matching_count: 0,
-        matching_record_ids: matching,
-        metadata: HashMap::new(),
-        mitre_tactic: "Persistence".to_string(),
-        mitre_technique: "T1098".to_string(),
-        service: "Lambda".to_string(),
-        query: "eventName=AddPermission20150331v2".to_string(),
-    }]
+        matching,
+        "eventName=AddPermission20150331v2",
+    ))
 }
 
 /// LM-02: Lambda Environment Variables Updated
-pub fn lm_02_lambda_env_updated(store: &Store) -> Vec<Alert> {
+pub fn lm_02_lambda_env_updated(store: &Store) -> Option<Finding> {
     // Lambda function configuration updates (v2 API variant)
     let event_names = [
         "UpdateFunctionConfiguration20150331v2",
@@ -55,38 +46,27 @@ pub fn lm_02_lambda_env_updated(store: &Store) -> Vec<Alert> {
     ];
     let mut matching = vec![];
 
-    for name in &event_names {
-        if let Some(ids) = store.idx_event_name.get(*name) {
-            for id in ids {
-                {
-                    let params_str = store.get_request_parameters_str(id).unwrap_or_default();
-                    if params_str.contains("Environment") || params_str.contains("environment") {
-                        matching.push(id);
-                    }
-                }
+    let ids = scoped_ids(store, &event_names, &["lambda.amazonaws.com"], true);
+    for id in ids {
+        {
+            let params_str = store.get_request_parameters_str(id).unwrap_or_default();
+            if params_str.contains("Environment") || params_str.contains("environment") {
+                matching.push(id);
             }
         }
     }
 
     if matching.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "LM-02".to_string(),
-        severity: Severity::Low,
-        title: "Lambda Environment Variables Updated".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} Lambda function(s) had environment variables updated. Attackers may inject \
              malicious values (e.g., modified endpoints, stolen credentials as env vars).",
             matching.len()
         ),
-        matching_count: 0,
-        matching_record_ids: matching,
-        metadata: HashMap::new(),
-        mitre_tactic: "Persistence".to_string(),
-        mitre_technique: "T1525".to_string(),
-        service: "Lambda".to_string(),
-        query: "eventName=UpdateFunctionConfiguration20150331v2".to_string(),
-    }]
+        matching,
+        crate::detection::field_query("eventName", &event_names),
+    ))
 }

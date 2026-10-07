@@ -5,6 +5,92 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+Remediation of the October 2026 code review (`docs/plans/2026-10-code-review.md`, executed per `docs/plans/2026-10-review-remediation.md`). Task ids are in brackets. This branch also absorbed the 1.6.0 detection refactor (registry-owned rule identity, `Finding`, `Eval::Match`); where both fixed the same bug, 1.6.0's entry below is the one of record.
+
+### Changed (behaviour you may notice)
+
+- **An unknown query field is now an error** instead of silently matching everything; field names are case-insensitive (`eventname=` works) [P3.1]
+- **All timestamps render in UTC**, labelled in the status bar; the fetch panel's date inputs are UTC too [P4.5]
+- **Session views include custom-rule alerts**, matching the Detections tab [P6.6]
+- **JSON export is compact**, one record per line, and streams to the file [P5.8]
+- **Evidence queries carry `eventSource`** so "View evidence" shows what the rule evaluated [P1.2]
+- **The `bucketName` index covers S3 events only** [P6.1]
+- **Detection rule count in docs is 70** (68 registry rules plus GEO-01/02) [P1.6]
+
+### Fixed
+
+- **Detections**: `finalize_alerts` is the single filter → cap → sort step for every command that returns alerts, and the capped preview is time-ordered [P1.1]; every rule is scoped to its event source and ignores failed calls [P1.2]; RS-01/02/03, EBS-02, RDS-01, DE-10, EX-01 and PE-04 read parsed request parameters instead of substring-matching JSON, removing a large class of false positives (removals, unrelated words, always-present flags) [P2.1–P2.7]; PE-02 flags assumed roles, IA-01 exempts SSO/SAML logins, IM-02 uses an allow-list of destructive calls, GEO-01 skips anonymous callers [P2.8–P2.11]
+- **Custom rules**: a huge `window_minutes` no longer panics, `mitre_technique` is validated, alert ids are capped [P1.3, P1.4]
+- **Ingest**: unparseable `eventTime` is dropped with a warning instead of landing in 1970 [P3.2]; one malformed record no longer discards its file [P3.5]; relative-time overflow is an error [P3.3]; events within the same second order deterministically [P3.4]; a ZIP counts as one file in progress [P5.6]; multi-member gzip is read fully [P5.5]
+- **AWS fetch**: a failed object or page is skipped and reported instead of deleting everything downloaded [P5.1]; digest and Insights objects are skipped [P5.2]; the bucket's own region is used [P5.3]; hostile object keys cannot write outside the staging directory on Windows [P5.4]; `sso-session`/`services` sections no longer appear as profiles [P3.8]
+- **GeoIP**: online lookup keeps partial results and honours rate limits [P3.6]; IPv6 link-local, unique-local and mapped addresses are private [P3.7]
+- **UI**: facet filters survive tab switches [P4.1]; typing no longer fires searches or leaks into paging and export [P4.2]; the saved query is applied on load [P4.3]; no searches run inside state updaters [P4.4]; out-of-order responses are ignored in every data view [P4.6] (the filter sidebar's own guard comes from 1.6.0); dialog errors are handled, alert rows keyed safely, empty results show "page 1 of 1" [P4.9]; TypeScript types match what serde sends [P4.8]
+- Page sizes are clamped to 500 on session, IP and S3 commands [P1.5]
+
+### Performance
+
+- Detection on a 100k-event store: 1.42 s before 1.6.0 → ~7 ms now (1.6.0's linear IM-01 and parallel rules, plus source-scoped bitmap lookups); a 20,000-launch burst: ~94 s → ~2 ms [P6.3, P6.4]
+- Custom-rule filters on bitmaps: ~14× faster on a 300k-event store [P6.2]
+- Ingest ~35% faster (958 → ~631 ms per 200k events) by parsing request parameters only for S3 events and no longer pooling `eventTime` [P6.1, P6.7]
+- GeoIP lookups ~47% faster (per-IP cache) and databases are memory-mapped [P6.5]
+- Detection results are cached across tab visits and session views; full rule passes, exports and session-index builds run off the async runtime [P5.7, P6.6]
+- CSV/JSON exports stream instead of buffering the whole result [P5.8]
+- ZIP entries are streamed one at a time; decompression is capped at 2 GiB [P5.5]
+
+### Security
+
+- The Tauri CSP is no longer disabled; unused `fs:read-all` permission removed [P5.9]
+- Object keys containing `\`, `:`, NUL or dot-only segments are refused during S3 fetch [P5.4]
+- Online GeoIP lookup sends IPs in cleartext (ip-api.com free tier is HTTP-only); now documented in the README [P3.6]
+
+### Build
+
+- CI also runs the core tests with the `aws` feature and checks the Tauri app crate [P5.9]
+- `npm ci` works without `--legacy-peer-deps` (Tailwind bumped to 4.3.x); unused frontend dependencies and dead CSS removed [P4.7]
+
+---
+
+## [1.6.0] — 2026-07-27
+
+### Fixed
+
+- **Filters survived tab switches invisibly** — excluding a value then leaving the Search tab left the filter applied but unreachable: the value vanished from the sidebar, and the Clear button hid itself. `FilterPanel` held its active filters in local state while `App` held the fragment derived from them, and switching tabs unmounts the search view, destroying the child's copy. Filters now live in `App`
+- **Filtering a value emptied its own section** — including a value scoped that field's own counts to itself, so every other value dropped to zero and disappeared. Each field is now counted with its own clause removed, the standard faceted-search scoping, so an excluded value keeps a true count and you can switch between values without clearing first
+- **Alerts silently lost their evidence when time-filtered** — the 100-id transport cap was applied before time filtering, so an alert whose first 100 ids fell outside the selected window vanished entirely. Capping now happens last, at the IPC boundary
+- **Custom-rule alerts shipped unbounded id lists over IPC** — only built-in rules were capped
+- **Session correlation matched against a truncated sample** — `get_session_alerts` and `get_alert_sessions` saw only each alert's first 100 records
+- **"View evidence" showed fewer events than the alert counted** — DI-02 matched 7 event names and advertised 5; PE-04 matched 6 and advertised 4; LM-02 matched 2 and advertised 1; RDS-02 matched 3 and advertised 2. Queries are now derived from the names the rule matches on
+- **Severity colours disagreed between panels** — the same Critical alert rendered `#d41f1f` in the alert list and `#f85149` in the detail panel. Both now read the `--sev-*` design tokens
+
+### Changed
+
+- **Alert record ids are deterministic** — burst rules collected ids in `HashMap` iteration order, so the capped 100-id preview varied between runs on identical data. Ids now come out ascending
+- **AlertDetail severity colours** now match the rest of the app (see above)
+- **Redundant `count` metadata removed** from DE-01, DI-02, IA-03 and PE-01 — it duplicated `matchingCount`, which the UI already displays
+
+### Performance
+
+- **Detection is ~8× faster** — 1.42s → 176ms on 100,000 records. IM-01 accounted for 91% of the time: it is the only rule that collects every qualifying window rather than stopping at the first, and it re-inserted the whole window on each step (~3M redundant inserts for ~7k events)
+- **Detection rules run in parallel** — worth ~13% while IM-01 dominated, 2.4× once it no longer did
+- **Filter sidebar counts use bitmap intersections** — each of the nine per-click queries previously executed the query, materialised every matching id, sorted it by timestamp, then walked every record. Cost now scales with distinct values in the field rather than matching records. `bucketName` stops parsing a blob per record and uses its index
+- **Quadratic dedup removed from seven burst rules** — `Vec::contains` inside the sliding window became `RoaringBitmap`
+- **Release profile** — fat LTO, one codegen unit, stripped
+- **Dependencies optimised in dev builds** — the core test suite went from 5.66s to 0.43s
+
+### Internal
+
+- Rule identity (id, title, severity, MITRE, service) lives only in the registry; rules return a `Finding` and the registry stamps the rest. Previously both declared it and nothing checked they agreed
+- 31 rules that were pure index lookups are now declarative `Eval::Match` specs rather than hand-written functions
+- Shared `window_burst` replaces seven copies of the sliding-window loop; `UserIdentity::identity_key` replaces eight copies of the arn→userName fallback
+- `crates/app` no longer reimplements query logic — field counting moved to core
+- Tests: 176, up from 161
+
+**Breaking (library):** `crates/core`'s `DetectionRule.name` is now `title`, `evaluate` is an `Eval` enum, rule functions return `Option<Finding>`, and 31 rule functions were removed. The desktop app is unaffected.
+
+---
+
 ## [1.5.0] — 2026-07-26
 
 ### Added

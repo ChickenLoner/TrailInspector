@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { loadGeoipDb, listIps, checkAbuseIpdb, geoLookupOnline } from "../../lib/tauri";
+import { useLatestRequest } from "../../lib/useLatest";
 import type { IpPage, IpRow, AbuseCheckResult, OnlineGeoResult } from "../../types/cloudtrail";
 
 // ---------------------------------------------------------------------------
@@ -27,7 +28,7 @@ interface MergedGeo {
   isp?: string;
 }
 
-function parseAsnNumber(asStr?: string): number | undefined {
+function parseAsnNumber(asStr?: string | null): number | undefined {
   if (!asStr) return undefined;
   const m = asStr.match(/^AS(\d+)/);
   return m ? parseInt(m[1], 10) : undefined;
@@ -69,11 +70,15 @@ function GeoIpLoader({ onLoaded, onCancel }: LoaderProps) {
   const [error, setError] = useState<string | null>(null);
 
   const pickFile = async (setter: (p: string) => void) => {
-    const path = await open({
-      filters: [{ name: "GeoIP DB", extensions: ["mmdb"] }],
-      multiple: false,
-    });
-    if (typeof path === "string") setter(path);
+    try {
+      const path = await open({
+        filters: [{ name: "GeoIP DB", extensions: ["mmdb"] }],
+        multiple: false,
+      });
+      if (typeof path === "string") setter(path);
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   const handleLoad = async () => {
@@ -398,12 +403,14 @@ export function IpView({ startMs, endMs }: IpViewProps) {
     setGeoFetching(true);
     setGeoError(null);
     try {
-      const results = await geoLookupOnline(missing);
+      const { results, error } = await geoLookupOnline(missing);
       const newEntries: Record<string, OnlineGeoResult> = {};
       for (const r of results) {
         newEntries[r.query] = r;
       }
+      // Keep whatever was resolved even when the lookup stopped early (rate limit, network).
       setOnlineGeoCache((prev) => ({ ...prev, ...newEntries }));
+      if (error) setGeoError(error);
     } catch (e) {
       setGeoError(String(e));
     } finally {
@@ -411,21 +418,25 @@ export function IpView({ startMs, endMs }: IpViewProps) {
     }
   }, [onlineGeoCache]);
 
+  const beginLoad = useLatestRequest();
+
   const load = useCallback(async (pg: number, sort: string, country: string) => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError(null);
     try {
       const result = await listIps(pg, PAGE_SIZE, sort, country || undefined, startMs, endMs);
+      if (!isCurrent()) return; // a newer page/sort/filter request superseded this one
       setPage(result);
       setCurrentPage(pg);
       // Auto-fetch online geo for the new page
       fetchOnlineGeo(result.rows.map((r) => r.ip));
     } catch (e) {
-      setError(String(e));
+      if (isCurrent()) setError(String(e));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [startMs, endMs, fetchOnlineGeo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startMs, endMs, fetchOnlineGeo, beginLoad]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMmdbLoaded = useCallback(() => {
     setMmdbLoaded(true);

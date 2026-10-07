@@ -15,24 +15,25 @@ interface Props {
   onTimeRangeSelect?: (startMs: number, endMs: number) => void;
 }
 
+/** Axis labels, in UTC like every other timestamp in the app. */
 function formatLabel(ms: number, span: number): string {
   const d = new Date(ms);
   if (span <= 3_600_000) {
     // <= 1 hour → show HH:mm:ss
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" });
   } else if (span <= 86_400_000) {
     // <= 1 day → show HH:mm
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
   } else if (span <= 7 * 86_400_000) {
     // <= 7 days → show month/day HH:mm
     return (
-      d.toLocaleDateString([], { month: "short", day: "numeric" }) +
+      d.toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" }) +
       " " +
-      d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })
     );
   } else {
     // longer → show date only
-    return d.toLocaleDateString([], { month: "short", day: "numeric", year: "2-digit" });
+    return d.toLocaleDateString([], { month: "short", day: "numeric", year: "2-digit", timeZone: "UTC" });
   }
 }
 

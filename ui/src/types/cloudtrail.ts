@@ -1,29 +1,49 @@
 export interface UserIdentity {
-  type?: string;
-  principalId?: string;
-  arn?: string;
-  accountId?: string;
-  accessKeyId?: string;
-  userName?: string;
-  sessionContext?: unknown;
-  invokedBy?: string;
+  type: string | null;
+  principalId: string | null;
+  arn: string | null;
+  accountId: string | null;
+  accessKeyId: string | null;
+  userName: string | null;
+  sessionContext: unknown | null;
+  invokedBy: string | null;
 }
 
+/** Mirrors the Rust `Resource`: the rename on `ARN` is explicit there. */
+export interface CloudTrailResource {
+  accountId: string | null;
+  type: string | null;
+  ARN: string | null;
+}
+
+/**
+ * Mirrors the Rust `CloudTrailRecord` as serialized over IPC. Every Rust `Option` arrives as
+ * `null` (nothing skips serializing `None`), so optional fields are `| null`, not `?`.
+ * `eventVersion` is intentionally absent: the backend drops it at ingestion.
+ */
 export interface CloudTrailRecord {
-  eventVersion?: string;
   eventTime: string;
   eventSource: string;
   eventName: string;
   awsRegion: string;
-  sourceIPAddress?: string;
-  userAgent?: string;
+  sourceIPAddress: string | null;
+  userAgent: string | null;
   userIdentity: UserIdentity;
-  requestParameters?: unknown;
-  responseElements?: unknown;
-  errorCode?: string;
-  errorMessage?: string;
-  eventID?: string;
-  readOnly?: boolean;
+  requestParameters: unknown;
+  responseElements: unknown;
+  additionalEventData: unknown;
+  errorCode: string | null;
+  errorMessage: string | null;
+  requestId: string | null;
+  eventID: string | null;
+  eventType: string | null;
+  readOnly: boolean | null;
+  managementEvent: boolean | null;
+  recipientAccountId: string | null;
+  eventCategory: string | null;
+  sharedEventId: string | null;
+  sessionCredentialFromConsole: string | null;
+  resources: CloudTrailResource[];
   [key: string]: unknown;
 }
 
@@ -34,10 +54,10 @@ export interface RecordRow {
   eventName: string;
   eventSource: string;
   awsRegion: string;
-  sourceIPAddress?: string;
-  userName?: string;
-  userArn?: string;
-  errorCode?: string;
+  sourceIPAddress: string | null;
+  userName: string | null;
+  userArn: string | null;
+  errorCode: string | null;
 }
 
 /** Full record detail returned by getRecordById (includes raw payload). */
@@ -59,7 +79,7 @@ export interface FieldValue {
 
 export interface IngestWarning {
   message: string;
-  file?: string;
+  file: string | null;
 }
 
 /** Which AWS source a fetch pulls from. Mirrors core's `FetchSource`. */
@@ -83,7 +103,7 @@ export interface FetchProgress {
 /** A named AWS profile. Name and region only — never credential values. */
 export interface ProfileInfo {
   name: string;
-  region?: string;
+  region: string | null;
 }
 
 /**
@@ -106,6 +126,10 @@ export interface FetchSummary {
   latestMs: number | null;
   trails: string[];
   bucket: string | null;
+  /** Objects or pages skipped during the download (each one failed; the rest were kept). */
+  skipped: number;
+  /** The first few skip reasons, for display. */
+  skippedSample: string[];
 }
 
 export type IngestProgressEvent =
@@ -148,10 +172,10 @@ export interface TimelineEvent {
   eventTime: string;
   eventName: string;
   awsRegion: string;
-  sourceIp?: string;
-  errorCode?: string;
-  userAgent?: string;
-  requestParameters?: Record<string, unknown>;
+  sourceIp: string | null;
+  errorCode: string | null;
+  userAgent: string | null;
+  requestParameters: Record<string, unknown> | null;
 }
 
 export interface IdentitySummary {
@@ -171,23 +195,23 @@ export interface IdentitySummary {
 
 export interface IpInfo {
   ip: string;
-  countryCode?: string;
-  countryName?: string;
-  city?: string;
-  latitude?: number;
-  longitude?: number;
-  asn?: number;
-  asnOrg?: string;
+  countryCode: string | null;
+  countryName: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  asn: number | null;
+  asnOrg: string | null;
 }
 
 export interface IpRow {
   ip: string;
   eventCount: number;
-  countryCode?: string;
-  countryName?: string;
-  city?: string;
-  asn?: number;
-  asnOrg?: string;
+  countryCode: string | null;
+  countryName: string | null;
+  city: string | null;
+  asn: number | null;
+  asnOrg: string | null;
 }
 
 export interface IpPage {
@@ -197,17 +221,23 @@ export interface IpPage {
   pageSize: number;
 }
 
+/** Online lookup outcome: partial `results` plus the reason it stopped early, if it did. */
+export interface OnlineGeoResponse {
+  results: OnlineGeoResult[];
+  error: string | null;
+}
+
 export interface OnlineGeoResult {
   query: string;
   status: string; // "success" | "fail"
-  country?: string;
-  countryCode?: string;
-  city?: string;
-  isp?: string;
-  org?: string;
+  country: string | null;
+  countryCode: string | null;
+  city: string | null;
+  isp: string | null;
+  org: string | null;
   /** Raw AS string, e.g. "AS14907 Wikimedia Foundation, Inc." */
-  as?: string;
-  asname?: string;
+  as: string | null;
+  asname: string | null;
 }
 
 export interface AbuseCheckResult {
@@ -253,9 +283,9 @@ export interface SessionEvent {
   eventName: string;
   eventSource: string;
   awsRegion: string;
-  sourceIp?: string;
-  errorCode?: string;
-  userAgent?: string;
+  sourceIp: string | null;
+  errorCode: string | null;
+  userAgent: string | null;
 }
 
 export interface AlertStub {

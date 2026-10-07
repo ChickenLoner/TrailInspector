@@ -19,7 +19,7 @@ pub fn run() {
             }
 
             let result = load_custom_rules(&rules_path);
-            app.manage(AppState::new(rules_path, result.rules, result.errors));
+            app.manage(std::sync::Arc::new(AppState::new(rules_path, result.rules, result.errors)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

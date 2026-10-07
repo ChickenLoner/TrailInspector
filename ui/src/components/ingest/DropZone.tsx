@@ -67,14 +67,21 @@ export function DropZone({ onLoaded }: Props) {
   // the backend walks a directory or ingests the one file it was handed.
   const handleOpen = useCallback(
     async (mode: "directory" | "file") => {
-      const selected = await open(
-        mode === "directory"
-          ? { directory: true, multiple: false }
-          : {
-              multiple: false,
-              filters: [{ name: "CloudTrail logs", extensions: ["json", "gz", "zip"] }],
-            },
-      );
+      let selected: Awaited<ReturnType<typeof open>>;
+      try {
+        selected = await open(
+          mode === "directory"
+            ? { directory: true, multiple: false }
+            : {
+                multiple: false,
+                filters: [{ name: "CloudTrail logs", extensions: ["json", "gz", "zip"] }],
+              },
+        );
+      } catch (e) {
+        // A dialog failure used to escape as an unhandled rejection with no feedback.
+        setError(String(e));
+        return;
+      }
       if (!selected || Array.isArray(selected)) return;
       await runIngest((onProgress) => loadDirectory(selected, onProgress));
     },

@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import type { BarRectangleItem } from "recharts/types/cartesian/Bar";
 import { getTopFields } from "../../lib/tauri";
+import { useLatestRequest } from "../../lib/useLatest";
 import type { FieldValueCount } from "../../types/cloudtrail";
 
 const FIELDS = [
@@ -36,14 +37,17 @@ interface FieldBarProps {
 function FieldBar({ field, label, query, onFilterSelect }: FieldBarProps) {
   const [values, setValues] = useState<FieldValueCount[]>([]);
   const [loading, setLoading] = useState(false);
+  const begin = useLatestRequest();
 
   useEffect(() => {
+    // A slow result for an older query must not overwrite the newer one.
+    const isCurrent = begin();
     setLoading(true);
     getTopFields(field, query, 15)
-      .then(setValues)
+      .then((v) => { if (isCurrent()) setValues(v); })
       .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [field, query]);
+      .finally(() => { if (isCurrent()) setLoading(false); });
+  }, [field, query, begin]);
 
   if (loading) {
     return (

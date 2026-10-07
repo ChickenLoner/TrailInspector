@@ -1,5 +1,6 @@
-import { useCallback, useRef } from "react";
+import { useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { formatTs } from "../../lib/time";
 import type { RecordRow } from "../../types/cloudtrail";
 
 const COLUMNS = [
@@ -32,15 +33,10 @@ export function EventTable({ records, total, page, pageSize, onPageChange, selec
     overscan: 10,
   });
 
-  const totalPages = Math.ceil(total / pageSize);
-
-  const formatTime = useCallback((iso: string) => {
-    try {
-      return new Date(iso).toISOString().replace("T", " ").substring(0, 19);
-    } catch {
-      return iso;
-    }
-  }, []);
+  // At least one page, even for an empty result ("page 1 of 1", never "page 1 of 0"), and the
+  // shown page is clamped in case a narrower result arrives while an out-of-range page is held.
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
 
   return (
     <div className="flex flex-col h-full" style={{ background: 'var(--bg-primary)' }}>
@@ -95,7 +91,7 @@ export function EventTable({ records, total, page, pageSize, onPageChange, selec
                 }}
               >
                 <div className="px-2 text-xs" style={{ width: 160, minWidth: 160, color: 'var(--text-secondary)' }}>
-                  {formatTime(record.eventTime)}
+                  {formatTs(record.eventTime)}
                 </div>
                 <div className="px-2 text-xs font-medium" style={{ width: 200, minWidth: 200, color: 'var(--text-bright)' }}>
                   {record.eventName}
@@ -127,31 +123,31 @@ export function EventTable({ records, total, page, pageSize, onPageChange, selec
         style={{ height: 32, borderTop: '1px solid var(--border)', background: 'var(--bg-secondary)' }}
       >
         <span style={{ color: 'var(--text-secondary)' }}>
-          {total.toLocaleString()} events · page {page + 1} of {totalPages}
+          {total.toLocaleString()} events · page {currentPage + 1} of {totalPages}
         </span>
         <div className="flex gap-2">
           <button
-            onClick={() => onPageChange(page - 1)}
-            disabled={page === 0}
+            onClick={() => onPageChange(currentPage - 1)}
+            disabled={currentPage === 0}
             className="px-2 py-0.5 rounded text-xs"
             style={{
               background: 'var(--bg-tertiary)',
               border: '1px solid var(--border)',
-              color: page === 0 ? 'var(--text-secondary)' : 'var(--text-bright)',
-              cursor: page === 0 ? 'not-allowed' : 'pointer',
+              color: currentPage === 0 ? 'var(--text-secondary)' : 'var(--text-bright)',
+              cursor: currentPage === 0 ? 'not-allowed' : 'pointer',
             }}
           >
             ◀ Prev
           </button>
           <button
-            onClick={() => onPageChange(page + 1)}
-            disabled={page >= totalPages - 1}
+            onClick={() => onPageChange(currentPage + 1)}
+            disabled={currentPage >= totalPages - 1}
             className="px-2 py-0.5 rounded text-xs"
             style={{
               background: 'var(--bg-tertiary)',
               border: '1px solid var(--border)',
-              color: page >= totalPages - 1 ? 'var(--text-secondary)' : 'var(--text-bright)',
-              cursor: page >= totalPages - 1 ? 'not-allowed' : 'pointer',
+              color: currentPage >= totalPages - 1 ? 'var(--text-secondary)' : 'var(--text-bright)',
+              cursor: currentPage >= totalPages - 1 ? 'not-allowed' : 'pointer',
             }}
           >
             Next ▶

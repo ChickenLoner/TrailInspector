@@ -1,26 +1,11 @@
 import { useState, useEffect } from "react";
 import { getSessionDetail, getSessionAlerts, getRecordById } from "../../lib/tauri";
-import type { SessionDetail as SessionDetailType, SessionEvent, AlertStub, Severity, RecordDetail } from "../../types/cloudtrail";
+import type { SessionDetail as SessionDetailType, SessionEvent, AlertStub, RecordDetail } from "../../types/cloudtrail";
 import { EventDetail } from "../results/EventDetail";
-
-const SEV_COLOR: Record<Severity, string> = {
-  critical: "#d41f1f", high: "#c96d16", medium: "#f8be34", low: "#3c95d1", info: "#65a637",
-};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function fmtDuration(ms: number): string {
-  if (ms < 1000) return "<1s";
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
-  return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
-}
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 19);
-}
+import { useLatestRequest } from "../../lib/useLatest";
+import { formatTs } from "../../lib/time";
+import { SEVERITY_COLOR as SEV_COLOR } from "../../lib/severity";
+import { fmtDurationParts as fmtDuration } from "../../lib/format";
 
 // ---------------------------------------------------------------------------
 // Event row in the timeline
@@ -102,17 +87,24 @@ export function SessionDetail({ sessionId, onClose }: Props) {
   const [selectedRecord, setSelectedRecord] = useState<RecordDetail | null>(null);
   const [recordLoading, setRecordLoading] = useState(false);
 
+  // Rapid paging, or switching sessions mid-fetch, must not show the previous request's data.
+  const beginLoad = useLatestRequest();
+  const beginAlerts = useLatestRequest();
+  const beginRecord = useLatestRequest();
+
   async function load(epage: number) {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError(null);
     try {
       const d = await getSessionDetail(sessionId, epage, EVENTS_PAGE_SIZE);
+      if (!isCurrent()) return;
       setDetail(d);
       setEventsPage(epage);
     } catch (e) {
-      setError(String(e));
+      if (isCurrent()) setError(String(e));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
@@ -123,25 +115,30 @@ export function SessionDetail({ sessionId, onClose }: Props) {
     setSelectedEventId(null);
     setSelectedRecord(null);
     load(0);
-    getSessionAlerts(sessionId).then(setAlerts).catch(() => {});
+    const isCurrentAlerts = beginAlerts();
+    getSessionAlerts(sessionId)
+      .then((a) => { if (isCurrentAlerts()) setAlerts(a); })
+      .catch(() => {});
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectEvent = async (event: SessionEvent) => {
     if (selectedEventId === event.id) {
+      beginRecord(); // supersede any fetch still in flight for the row being closed
       setSelectedEventId(null);
       setSelectedRecord(null);
       return;
     }
+    const isCurrent = beginRecord();
     setSelectedEventId(event.id);
     setSelectedRecord(null);
     setRecordLoading(true);
     try {
       const rec = await getRecordById(event.id);
-      setSelectedRecord(rec);
+      if (isCurrent()) setSelectedRecord(rec);
     } catch {
       // silently ignore — EventDetail won't show
     } finally {
-      setRecordLoading(false);
+      if (isCurrent()) setRecordLoading(false);
     }
   };
 
@@ -166,7 +163,7 @@ export function SessionDetail({ sessionId, onClose }: Props) {
                 <span style={{ fontFamily: "monospace", color: "#58a6ff", background: "rgba(88,166,255,0.08)", padding: "1px 6px", borderRadius: 3, border: "1px solid rgba(88,166,255,0.2)" }}>
                   {detail.sourceIp}
                 </span>
-                <span>{fmtTime(detail.firstEventMs)} → {fmtTime(detail.lastEventMs)}</span>
+                <span>{formatTs(detail.firstEventMs)} → {formatTs(detail.lastEventMs)}</span>
                 <span>{fmtDuration(detail.durationMs)}</span>
                 <span>{detail.eventCount.toLocaleString()} events</span>
                 {detail.errorCount > 0 && <span style={{ color: "#f85149" }}>{detail.errorCount} errors</span>}

@@ -1,22 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { listSessions } from "../../lib/tauri";
+import { useLatestRequest } from "../../lib/useLatest";
 import type { SessionSummary, SessionPage } from "../../types/cloudtrail";
 import { SessionDetail } from "./SessionDetail";
+import { formatTs } from "../../lib/time";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function fmtDuration(ms: number): string {
-  if (ms < 1000) return "<1s";
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
-  return `${(ms / 3_600_000).toFixed(1)}h`;
-}
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 19);
-}
+import { fmtDuration } from "../../lib/format";
 
 // ---------------------------------------------------------------------------
 // Session card
@@ -88,7 +77,7 @@ function SessionCard({ session, isSelected, onClick }: CardProps) {
           {session.sourceIp}
         </span>
         <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>
-          {fmtTime(session.firstEventMs)}
+          {formatTs(session.firstEventMs)}
         </span>
       </div>
 
@@ -140,7 +129,10 @@ export function SessionView({ startMs, endMs }: SessionViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
+  const begin = useLatestRequest();
+
   const load = useCallback(async (pg: number, sort: string, identity: string, ip: string) => {
+    const isCurrent = begin();
     setLoading(true);
     setError(null);
     try {
@@ -153,14 +145,15 @@ export function SessionView({ startMs, endMs }: SessionViewProps) {
         startMs,
         endMs,
       );
+      if (!isCurrent()) return;
       setPage(result);
       setCurrentPage(pg);
     } catch (e) {
-      setError(String(e));
+      if (isCurrent()) setError(String(e));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startMs, endMs, begin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initial load + re-load when time range changes
   useEffect(() => {

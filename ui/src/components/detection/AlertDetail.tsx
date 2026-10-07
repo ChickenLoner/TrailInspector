@@ -1,26 +1,9 @@
 import { useState, useEffect } from "react";
-import type { Alert, Severity, SessionSummary } from "../../types/cloudtrail";
+import type { Alert, SessionSummary } from "../../types/cloudtrail";
 import { getAlertSessions } from "../../lib/tauri";
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", "").slice(0, 16);
-}
-
-const SEVERITY_COLOR: Record<Severity, string> = {
-  critical: "#f85149",
-  high: "#e3a020",
-  medium: "#d29922",
-  low: "#58a6ff",
-  info: "#8b949e",
-};
-
-const SEVERITY_LABEL: Record<Severity, string> = {
-  critical: "CRITICAL",
-  high: "HIGH",
-  medium: "MEDIUM",
-  low: "LOW",
-  info: "INFO",
-};
+import { useLatestRequest } from "../../lib/useLatest";
+import { formatTs } from "../../lib/time";
+import { SEVERITY_COLOR, SEVERITY_LABEL } from "../../lib/severity";
 
 interface Props {
   alert: Alert | null;
@@ -30,13 +13,17 @@ interface Props {
 
 export function AlertDetail({ alert, onViewEvidence, onClose }: Props) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const begin = useLatestRequest();
 
   useEffect(() => {
     setSessions([]);
+    const isCurrent = begin();
     if (alert) {
-      getAlertSessions(alert.ruleId).then(setSessions).catch(() => {});
+      getAlertSessions(alert.ruleId)
+        .then((s) => { if (isCurrent()) setSessions(s); })
+        .catch(() => {});
     }
-  }, [alert?.ruleId]);
+  }, [alert?.ruleId, begin]);
 
   if (!alert) {
     return (
@@ -180,7 +167,7 @@ export function AlertDetail({ alert, onViewEvidence, onClose }: Props) {
                 </div>
                 <div style={{ display: "flex", gap: 8, fontSize: 10, color: "var(--text-secondary)" }}>
                   <span style={{ fontFamily: "monospace", color: "#58a6ff" }}>{s.sourceIp}</span>
-                  <span>{fmtTime(s.firstEventMs)}</span>
+                  <span>{formatTs(s.firstEventMs, { seconds: false })}</span>
                   <span>{s.eventCount} events</span>
                 </div>
               </div>

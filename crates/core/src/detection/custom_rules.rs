@@ -1,6 +1,6 @@
 //! User-defined detection rules loaded from `rules.yaml` in the app config directory.
 //!
-//! Rules extend the 60 built-in detections. Each rule specifies:
+//! Rules extend the 70 built-in detections. Each rule specifies:
 //! - Metadata (id, name, severity, MITRE fields, service)
 //! - One or more `event_name` values to match (exact)
 //! - An optional boolean filter tree (AND / OR / NOT on indexed fields)
@@ -8,9 +8,10 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use roaring::RoaringBitmap;
 use serde::Deserialize;
 use crate::store::Store;
-use crate::detection::{Alert, Severity};
+use crate::detection::{Alert, Severity, scoped_ids};
 
 // ---------------------------------------------------------------------------
 // Schema types
@@ -123,6 +124,21 @@ where D: serde::Deserializer<'de>
 // Loading
 // ---------------------------------------------------------------------------
 
+/// Upper bound for `threshold.window_minutes` (one year). Keeps `minutes * 60_000`
+/// far from i64 overflow, which would wrap the sliding window negative.
+const MAX_WINDOW_MINUTES: u64 = 527_040;
+
+/// `T` + 4 digits, optionally `.` + 3 digits (e.g. `T1078` or `T1078.004`).
+fn is_valid_mitre_technique(s: &str) -> bool {
+    let b = s.as_bytes();
+    let digits = |r: &[u8]| r.iter().all(u8::is_ascii_digit);
+    match b.len() {
+        5 => b[0] == b'T' && digits(&b[1..]),
+        9 => b[0] == b'T' && digits(&b[1..5]) && b[5] == b'.' && digits(&b[6..]),
+        _ => false,
+    }
+}
+
 pub struct LoadResult {
     pub rules: Vec<CustomRule>,
     pub errors: Vec<String>,
@@ -182,6 +198,21 @@ pub fn load_custom_rules(path: &Path) -> LoadResult {
                 errors.push(format!("Rule '{}': threshold.min_count must be >= 1", rule.id));
                 continue;
             }
+            if t.window_minutes.is_some_and(|w| w > MAX_WINDOW_MINUTES) {
+                errors.push(format!(
+                    "Rule '{}': threshold.window_minutes must be <= {MAX_WINDOW_MINUTES} (1 year)",
+                    rule.id
+                ));
+                continue;
+            }
+        }
+
+        if !rule.mitre_technique.is_empty() && !is_valid_mitre_technique(&rule.mitre_technique) {
+            errors.push(format!(
+                "Rule '{}': mitre_technique '{}' must look like T1234 or T1234.001",
+                rule.id, rule.mitre_technique
+            ));
+            continue;
         }
 
         seen_ids.insert(rule.id.clone());
@@ -195,7 +226,10 @@ pub fn load_custom_rules(path: &Path) -> LoadResult {
 // Evaluation
 // ---------------------------------------------------------------------------
 
-fn apply_filter(expr: &FilterExpr, store: &Store, candidates: &[u32]) -> Vec<u32> {
+/// Evaluate a filter tree against `candidates`, entirely on compressed bitmaps. Every result is
+/// a subset of `candidates`. (This used to materialise whole posting lists into `HashSet<u32>`:
+/// `identity_type=AssumedRole` on 10M records meant a 9M-entry set per condition per rule.)
+fn apply_filter(expr: &FilterExpr, store: &Store, candidates: &RoaringBitmap) -> RoaringBitmap {
     match expr {
         FilterExpr::Condition { field, value } => {
             let idx = match field {
@@ -210,49 +244,46 @@ fn apply_filter(expr: &FilterExpr, store: &Store, candidates: &[u32]) -> Vec<u32
                 FilterField::UserAgent    => &store.idx_user_agent,
                 FilterField::BucketName   => &store.idx_bucket_name,
             };
-            let matching: HashSet<u32> = idx.get(value.as_str())
-                .map(|ids| ids.iter().collect())
-                .unwrap_or_default();
-            candidates.iter().copied().filter(|id| matching.contains(id)).collect()
+            match idx.get(value.as_str()) {
+                Some(posting) => candidates & posting,
+                None => RoaringBitmap::new(),
+            }
         }
         FilterExpr::And { and: exprs } => {
-            let mut result: Vec<u32> = candidates.to_vec();
+            let mut result = candidates.clone();
             for e in exprs {
                 result = apply_filter(e, store, &result);
-                if result.is_empty() { break; }
+                if result.is_empty() {
+                    break;
+                }
             }
             result
         }
         FilterExpr::Or { or: exprs } => {
-            let mut result_set: HashSet<u32> = HashSet::new();
+            let mut result = RoaringBitmap::new();
             for e in exprs {
-                for id in apply_filter(e, store, candidates) {
-                    result_set.insert(id);
-                }
+                result |= apply_filter(e, store, candidates);
             }
-            candidates.iter().copied().filter(|id| result_set.contains(id)).collect()
+            result
         }
-        FilterExpr::Not { not: inner } => {
-            let excluded: HashSet<u32> = apply_filter(inner, store, candidates).into_iter().collect();
-            candidates.iter().copied().filter(|id| !excluded.contains(id)).collect()
-        }
+        FilterExpr::Not { not: inner } => candidates - &apply_filter(inner, store, candidates),
     }
 }
 
-fn check_threshold(store: &Store, matching: &[u32], threshold: &Threshold) -> bool {
-    if matching.len() < threshold.min_count {
+fn check_threshold(store: &Store, matching: &RoaringBitmap, threshold: &Threshold) -> bool {
+    if (matching.len() as usize) < threshold.min_count {
         return false;
     }
     if let Some(window_minutes) = threshold.window_minutes {
         let window_ms = window_minutes as i64 * 60_000;
         let mut ts: Vec<i64> = matching.iter()
-            .filter_map(|&id| store.get_record(id).map(|r| r.timestamp))
+            .filter_map(|id| store.get_record(id).map(|r| r.timestamp))
             .collect();
         ts.sort_unstable();
 
         let mut left = 0;
         for right in 0..ts.len() {
-            while ts[right] - ts[left] > window_ms {
+            while left < right && ts[right] - ts[left] > window_ms {
                 left += 1;
             }
             if right - left + 1 >= threshold.min_count {
@@ -270,20 +301,14 @@ pub fn evaluate_custom_rule(rule: &CustomRule, store: &Store) -> Vec<Alert> {
         return vec![];
     }
 
-    let mut candidates: Vec<u32> = rule.match_spec.event_name.iter()
-        .flat_map(|name| {
-            store.idx_event_name.get(name.as_str())
-                .into_iter()
-                .flatten()
-        })
-        .collect();
+    let names: Vec<&str> = rule.match_spec.event_name.iter().map(String::as_str).collect();
+    // Any source, and failed calls included: custom rules keep their existing semantics
+    // (`error_code` is a filter field a rule can use on purpose).
+    let candidates = scoped_ids(store, &names, &[], false);
 
     if candidates.is_empty() {
         return vec![];
     }
-
-    candidates.sort_unstable();
-    candidates.dedup();
 
     let matching = if let Some(ref expr) = rule.filters {
         apply_filter(expr, store, &candidates)
@@ -314,8 +339,8 @@ pub fn evaluate_custom_rule(rule: &CustomRule, store: &Store) -> Vec<Alert> {
         severity: rule.severity.clone(),
         title: rule.name.clone(),
         description: rule.description.clone(),
-        matching_count: matching.len(),
-        matching_record_ids: matching,
+        matching_count: matching.len() as usize,
+        matching_record_ids: matching.iter().collect(),
         metadata,
         mitre_tactic: rule.mitre_tactic.clone(),
         mitre_technique: rule.mitre_technique.clone(),
@@ -334,7 +359,7 @@ pub fn run_custom_rules(rules: &[CustomRule], store: &Store) -> Vec<Alert> {
 
 pub const DEFAULT_RULES_YAML: &str = r#"# TrailInspector Custom Detection Rules
 #
-# These rules extend the 60 built-in detections. They are evaluated every
+# These rules extend the 70 built-in detections. They are evaluated every
 # time you run detections. Edit this file and click "Reload Rules" in the
 # Detection tab to apply changes without restarting the app.
 #
@@ -556,7 +581,7 @@ mod tests {
         }
 
         let mut sorted: Vec<(i64, u32)> = records.iter().map(|r| (r.timestamp, r.id)).collect();
-        sorted.sort_unstable_by_key(|(ts, _)| *ts);
+        sorted.sort_unstable();
         store.time_sorted_ids = sorted.into_iter().map(|(_, id)| id).collect();
         store.records = records;
         store
@@ -1019,6 +1044,88 @@ rules:
         assert_eq!(evaluate_custom_rule(&rule, &store).len(), 1);
     }
 
+    // ── Validation and alert finalization ────────────────────────────────────
+
+    fn load_yaml(yaml: &str) -> LoadResult {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), yaml).unwrap();
+        load_custom_rules(tmp.path())
+    }
+
+    #[test]
+    fn huge_window_minutes_rejected() {
+        let result = load_yaml(r#"
+rules:
+  - id: "CR-01"
+    name: "Test"
+    severity: high
+    match:
+      event_name: "DeleteBucket"
+    threshold:
+      min_count: 2
+      window_minutes: 200000000000000
+"#);
+        assert!(result.rules.is_empty());
+        assert!(result.errors[0].contains("window_minutes must be <= 527040"), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn window_one_year_accepted() {
+        let result = load_yaml(r#"
+rules:
+  - id: "CR-01"
+    name: "Test"
+    severity: high
+    match:
+      event_name: "DeleteBucket"
+    threshold:
+      min_count: 2
+      window_minutes: 527040
+"#);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn bad_mitre_technique_rejected() {
+        for bad in ["1078", "T10", "T1078.4", "t1078", "T1078.0041", "T10x8"] {
+            let result = load_yaml(&format!(r#"
+rules:
+  - id: "CR-01"
+    name: "Test"
+    severity: high
+    mitre_technique: "{bad}"
+    match:
+      event_name: "DeleteBucket"
+"#));
+            assert!(result.rules.is_empty(), "{bad} should be rejected");
+            assert!(result.errors[0].contains("mitre_technique"), "{:?}", result.errors);
+        }
+        for good in ["T1078", "T1078.004"] {
+            let result = load_yaml(&format!(r#"
+rules:
+  - id: "CR-01"
+    name: "Test"
+    severity: high
+    mitre_technique: "{good}"
+    match:
+      event_name: "DeleteBucket"
+"#));
+            assert!(result.errors.is_empty(), "{good}: {:?}", result.errors);
+        }
+    }
+
+    #[test]
+    fn custom_rule_ids_capped() {
+        let store = build_store(
+            (0..150).map(|i| make_indexed(i, "DeleteBucket", "s3.amazonaws.com")).collect(),
+        );
+        let alerts = run_custom_rules(&[simple_rule("DeleteBucket")], &store);
+        let out = crate::detection::finalize_alerts(&store, alerts, None);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].matching_count, 150);
+        assert_eq!(out[0].matching_record_ids.len(), 100);
+    }
+
     // ── run_custom_rules ─────────────────────────────────────────────────────
 
     #[test]
@@ -1037,5 +1144,45 @@ rules:
         ];
         let alerts = run_custom_rules(&rules, &store);
         assert_eq!(alerts.len(), 2);
+    }
+
+    /// Custom-rule evaluation on a large store where one filter value covers ~90% of records.
+    /// Ignored by default: `cargo test -p trail-inspector-core --release -- --ignored bench_custom --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_custom_rule_filters_300k_records() {
+        use std::time::Instant;
+        let records: Vec<IndexedRecord> = (0u32..300_000)
+            .map(|i| {
+                let mut r = make_indexed_ts(i, "GetObject", i as i64 * 100);
+                r.record.user_identity.identity_type =
+                    Some(Arc::from(if i % 10 == 0 { "IAMUser" } else { "AssumedRole" }));
+                if i % 20 == 0 {
+                    r.record.error_code = Some(Arc::from("AccessDenied"));
+                }
+                r
+            })
+            .collect();
+        let store = build_store(records);
+        let rule = CustomRule {
+            filters: Some(FilterExpr::And {
+                and: vec![
+                    FilterExpr::Condition { field: FilterField::IdentityType, value: "AssumedRole".into() },
+                    FilterExpr::Not {
+                        not: Box::new(FilterExpr::Condition { field: FilterField::ErrorCode, value: "AccessDenied".into() }),
+                    },
+                ],
+            }),
+            ..simple_rule("GetObject")
+        };
+
+        let start = Instant::now();
+        let mut matched = 0usize;
+        for _ in 0..5 {
+            let alerts = evaluate_custom_rule(&rule, &store);
+            matched = alerts.first().map(|a| a.matching_count).unwrap_or(0);
+        }
+        println!("Custom rule x5 on 300k records: {:?} ({matched} matches)", start.elapsed());
+        assert!(matched > 200_000);
     }
 }

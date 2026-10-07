@@ -1,18 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
 import { getIdentitySummary } from "../../lib/tauri";
+import { formatTs } from "../../lib/time";
+import { useLatestRequest } from "../../lib/useLatest";
 import type { IdentitySummary, TimelineEvent } from "../../types/cloudtrail";
-
-function formatTs(ms: number): string {
-  return new Date(ms).toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
 
 function durLabel(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -140,7 +130,7 @@ function EventRow({ ev }: { ev: TimelineEvent }) {
           whiteSpace: "nowrap",
           fontSize: 11,
         }}
-        title={ev.sourceIp}
+        title={ev.sourceIp ?? undefined}
       >
         {ev.sourceIp ?? "—"}
       </span>
@@ -153,7 +143,7 @@ function EventRow({ ev }: { ev: TimelineEvent }) {
           whiteSpace: "nowrap",
           fontSize: 11,
         }}
-        title={ev.errorCode}
+        title={ev.errorCode ?? undefined}
       >
         {ev.errorCode ?? ""}
       </span>
@@ -173,23 +163,26 @@ export function IdentityTimeline({ initialValue, startMs, endMs }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const begin = useLatestRequest();
 
   const lookup = useCallback(async (target: string, page: number = 0) => {
     const t = target.trim();
     if (!t) return;
+    const isCurrent = begin();
     setLoading(true);
     setError(null);
     if (page === 0) setSummary(null);
     try {
       const result = await getIdentitySummary(t, page, undefined, startMs, endMs);
+      if (!isCurrent()) return; // a newer lookup or page change superseded this one
       setSummary(result);
       setCurrentPage(page);
     } catch (e) {
-      setError(String(e));
+      if (isCurrent()) setError(String(e));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [startMs, endMs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startMs, endMs, begin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (initialValue) {

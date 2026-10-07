@@ -21,96 +21,120 @@ const FILTER_SECTIONS: FilterSection[] = [
 
 type FilterMode = "include" | "exclude";
 
-interface ActiveFilter {
+export interface ActiveFilter {
   value: string;
   mode: FilterMode;
 }
 
-interface Props {
-  /** Called whenever active filters change. Returns a partial query string fragment. */
-  onFilterChange: (fragment: string) => void;
-  /** Called when a user name is clicked — triggers Identity tab navigation. */
-  onUserSelect?: (user: string) => void;
-  /** Current active query from parent — used to scope field value counts. */
-  query?: string;
+/** One active filter per field. Owned by the parent — see `Props.filters`. */
+export type FilterState = Record<string, ActiveFilter | null>;
+
+/**
+ * Render `filters` as a query fragment, optionally omitting one field's clause.
+ *
+ * Passing `null` yields the fragment applied to the search. Passing a field name
+ * yields the scope used to count *that* field's values: every other filter still
+ * applies, but the field itself is left unconstrained so all of its reachable
+ * values stay listed with true counts — including one you have excluded.
+ */
+export function buildFilterFragment(filters: FilterState, except: string | null = null): string {
+  const parts: string[] = [];
+  for (const { field } of FILTER_SECTIONS) {
+    if (field === except) continue;
+    const f = filters[field];
+    if (!f) continue;
+    const val = f.value.replace(/"/g, '\\"');
+    parts.push(f.mode === "include" ? `${field}="${val}"` : `${field}!="${val}"`);
+  }
+  return parts.join(" AND ");
 }
 
-export function FilterPanel({ onFilterChange, onUserSelect, query }: Props) {
+interface Props {
+  /**
+   * Active filters, owned by the parent.
+   *
+   * This must not be local state. `AppShell` unmounts the search view on every
+   * tab switch, so a local copy is destroyed while the parent keeps applying the
+   * fragment derived from it. The panel would come back empty-handed: the
+   * excluded value missing from its own list, no row to click to undo it, and
+   * `hasAnyActive` false so the Clear button was hidden as well.
+   */
+  filters: FilterState;
+  /** Called with the next filter state whenever the user cycles a value. */
+  onFiltersChange: (next: FilterState) => void;
+  /** Called when a user name is clicked — triggers Identity tab navigation. */
+  onUserSelect?: (user: string) => void;
+  /**
+   * Query text + global time range, **without** the filter fragment.
+   *
+   * The panel re-adds the fragment itself, per field, minus that field's own
+   * clause. Passing the combined query here instead would make every facet
+   * self-scoping and collapse each list to the one value already picked.
+   */
+  baseQuery?: string;
+}
+
+export function FilterPanel({ filters, onFiltersChange, onUserSelect, baseQuery }: Props) {
   const [sections, setSections] = useState<Record<string, FieldValueCount[]>>({});
-  const [filters, setFilters] = useState<Record<string, ActiveFilter | null>>({});
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Facet loads now fire on every filter click, so guard against a slow earlier
+  // batch landing after a newer one and overwriting it.
+  const loadReqRef = useRef(0);
 
-  // Reload field value counts whenever the active query changes (debounced 300ms)
+  // Reload field value counts whenever the base query or the active filters
+  // change (debounced 300ms). Each field is counted against its own scope.
   useEffect(() => {
     if (loadTimer.current) clearTimeout(loadTimer.current);
     loadTimer.current = setTimeout(async () => {
+      const reqId = ++loadReqRef.current;
       const results: Record<string, FieldValueCount[]> = {};
       await Promise.all(
         FILTER_SECTIONS.map(async ({ field }) => {
+          const scoped = [baseQuery ?? "", buildFilterFragment(filters, field)]
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .join(" AND ");
           try {
-            results[field] = await getTopFields(field, query || undefined, 20);
+            results[field] = await getTopFields(field, scoped || undefined, 20);
           } catch {
             results[field] = [];
           }
         })
       );
+      if (reqId !== loadReqRef.current) return; // superseded by a newer load
       setSections(results);
     }, 300);
     return () => {
       if (loadTimer.current) clearTimeout(loadTimer.current);
     };
-  }, [query]);
-
-  const buildFragment = useCallback(
-    (newFilters: Record<string, ActiveFilter | null>) => {
-      const parts: string[] = [];
-      for (const { field } of FILTER_SECTIONS) {
-        const f = newFilters[field];
-        if (!f) continue;
-        const val = f.value.replace(/"/g, '\\"');
-        if (f.mode === "include") {
-          parts.push(`${field}="${val}"`);
-        } else {
-          parts.push(`${field}!="${val}"`);
-        }
-      }
-      return parts.join(" AND ");
-    },
-    []
-  );
+  }, [baseQuery, filters]);
 
   // Cycles: absent → include → exclude → absent
   const toggleValue = useCallback(
     (field: string, value: string) => {
-      setFilters((prev) => {
-        const newFilters = { ...prev };
-        const current = prev[field];
+      const newFilters = { ...filters };
+      const current = filters[field];
 
-        if (!current || current.value !== value) {
-          newFilters[field] = { value, mode: "include" };
-        } else if (current.mode === "include") {
-          newFilters[field] = { value, mode: "exclude" };
-        } else {
-          // exclude → off
-          newFilters[field] = null;
-        }
+      if (!current || current.value !== value) {
+        newFilters[field] = { value, mode: "include" };
+      } else if (current.mode === "include") {
+        newFilters[field] = { value, mode: "exclude" };
+      } else {
+        // exclude → off
+        newFilters[field] = null;
+      }
 
-        onFilterChange(buildFragment(newFilters));
-        return newFilters;
-      });
+      onFiltersChange(newFilters);
     },
-    [buildFragment, onFilterChange]
+    [filters, onFiltersChange]
   );
 
   const toggleCollapse = useCallback((field: string) => {
     setCollapsed((prev) => ({ ...prev, [field]: !prev[field] }));
   }, []);
 
-  const clearAll = useCallback(() => {
-    setFilters({});
-    onFilterChange("");
-  }, [onFilterChange]);
+  const clearAll = useCallback(() => onFiltersChange({}), [onFiltersChange]);
 
   const hasAnyActive = Object.values(filters).some((f) => f !== null);
 
@@ -150,8 +174,10 @@ export function FilterPanel({ onFilterChange, onUserSelect, query }: Props) {
         const activeFilter = filters[field] ?? null;
         const hasActive = activeFilter !== null;
 
-        // Always keep the active filter value visible so the user can click to uncheck it,
-        // even if it drops out of the query-scoped top-N (e.g. after an exclude filter).
+        // Safety net: the field's own clause is excluded from its count query, so
+        // an active value normally comes back with a real count. It can still
+        // fall outside the top-20 if the field is high-cardinality and the picked
+        // value is rare — keep it pinned so it stays clickable to clear.
         const values =
           activeFilter && !rawValues.some((v) => v.value === activeFilter.value)
             ? [{ value: activeFilter.value, count: 0 }, ...rawValues]

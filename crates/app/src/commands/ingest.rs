@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::State;
 use trail_inspector_core::store::{ProgressEvent, Store, IngestWarning};
@@ -11,6 +12,9 @@ pub enum IngestProgress {
     /// Download phase — only emitted by the AWS fetch commands.
     Fetch(FetchProgress),
     Progress(ProgressEvent),
+    // The enum-level `rename_all` renames *variants* only; fields of a struct variant keep
+    // their Rust names unless the variant says otherwise.
+    #[serde(rename_all = "camelCase")]
     Complete { records_total: usize, warnings: Vec<IngestWarning> },
     #[allow(dead_code)]
     Error { message: String },
@@ -49,7 +53,15 @@ pub(crate) async fn ingest_path_into_state(
         // Invalidate cached session index so it is rebuilt on next access
         let mut sidx = state.session_index.write().map_err(|e| format!("Lock error: {e}"))?;
         *sidx = None;
+        // The previous dataset's IPs no longer need to stay in the GeoIP cache.
+        if let Ok(geoip) = state.geoip.read() {
+            if let Some(engine) = geoip.as_ref() {
+                engine.clear_cache();
+            }
+        }
     }
+    // Alerts belong to the dataset they were computed on.
+    state.invalidate_alerts();
 
     let _ = on_progress.send(IngestProgress::Complete {
         records_total: total,
@@ -63,7 +75,23 @@ pub(crate) async fn ingest_path_into_state(
 pub async fn load_directory(
     path: String,
     on_progress: Channel<IngestProgress>,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<usize, String> {
     ingest_path_into_state(PathBuf::from(&path), on_progress, &state).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The UI reads `recordsTotal`; without the variant-level rename the wire key was
+    /// `records_total`.
+    #[test]
+    fn complete_serializes_camel_case_fields() {
+        let v = serde_json::to_value(IngestProgress::Complete { records_total: 3, warnings: vec![] }).unwrap();
+        assert_eq!(v["type"], "complete");
+        assert_eq!(v["recordsTotal"], 3);
+        assert!(v.get("records_total").is_none(), "{v}");
+        assert!(v["warnings"].is_array());
+    }
 }

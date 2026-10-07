@@ -69,6 +69,49 @@ fn s3_client(cfg: &aws_config::SdkConfig, req: &FetchRequest) -> aws_sdk_s3::Cli
     aws_sdk_s3::Client::from_conf(builder.build())
 }
 
+/// Turn an object key into a path that is safe to join onto the staging directory, or say why
+/// not. Empty segments (`a//b`) are dropped as before; the whole key is **rejected** when any
+/// segment could escape or alias a different path:
+///
+/// - contains `\` or `:`: on Windows a `\` separates components, so `..\..\evil` has no `/` and
+///   slips past a `/`-only check, and `C:evil` has a drive prefix that makes `PathBuf::push`
+///   discard the base entirely;
+/// - contains a NUL byte;
+/// - is nothing but dots and spaces (`.`, `..`, `...`, ` .. `): Windows strips trailing dots and
+///   spaces, so these all resolve to a parent or the directory itself.
+fn key_to_relative_path(key: &str) -> Result<PathBuf, String> {
+    let mut rel = PathBuf::new();
+    for seg in key.split('/') {
+        if seg.is_empty() {
+            continue;
+        }
+        if seg.contains(['\\', ':', '\0']) {
+            return Err("unsafe path segment (backslash, colon or NUL); refusing to write it".into());
+        }
+        if seg.trim_matches(|c| c == '.' || c == ' ').is_empty() {
+            return Err("unsafe path segment (dot or parent reference); refusing to write it".into());
+        }
+        rel.push(seg);
+    }
+    if rel.as_os_str().is_empty() {
+        return Err("empty object key".into());
+    }
+    Ok(rel)
+}
+
+/// The bucket's real region: from a successful `HeadBucket`, or from the
+/// `x-amz-bucket-region` header S3 attaches to the redirect/denial when the client is in the
+/// wrong region. `None` when it cannot be determined (the requested region is then kept).
+async fn discover_bucket_region(client: &aws_sdk_s3::Client, bucket: &str) -> Option<String> {
+    match client.head_bucket().bucket(bucket).send().await {
+        Ok(out) => out.bucket_region().map(str::to_string),
+        Err(e) => e
+            .raw_response()
+            .and_then(|r| r.headers().get("x-amz-bucket-region"))
+            .map(str::to_string),
+    }
+}
+
 /// Keep only objects that look like delivered CloudTrail logs and fall inside the
 /// requested window. The date filter reads the `/YYYY/MM/DD/` path segments that
 /// CloudTrail's key layout guarantees; keys that don't match that layout are kept
@@ -79,6 +122,17 @@ fn key_in_window(key: &str, start_ms: Option<i64>, end_ms: Option<i64>) -> bool 
     // and an over-tight filter here drops them before they ever reach the parser.
     let k = key.to_lowercase();
     if !(k.ends_with(".json") || k.ends_with(".gz") || k.ends_with(".log")) {
+        return false;
+    }
+
+    // CloudTrail delivers digest files (`.../CloudTrail-Digest/...`) and Insights events
+    // (`.../CloudTrail-Insight/...`) under the same prefix as the logs. They are not event
+    // records: downloading them wastes bandwidth, inflates the file count, and each one then
+    // fails to parse and raises an ingest warning (one per region per hour for digests).
+    if key
+        .split('/')
+        .any(|seg| seg.eq_ignore_ascii_case("CloudTrail-Digest") || seg.eq_ignore_ascii_case("CloudTrail-Insight"))
+    {
         return false;
     }
 
@@ -166,7 +220,24 @@ where
         None => describe_target(&cfg, &req.region).await?,
     };
 
-    let client = s3_client(&cfg, req);
+    let mut client = s3_client(&cfg, req);
+
+    // The S3 SDK does not follow bucket-region redirects. A trail homed in another region than
+    // the one the user picked would answer every request with PermanentRedirect, so find the
+    // bucket's real region first and rebuild the client for it if it differs.
+    if let Some(region) = discover_bucket_region(&client, &target.bucket)
+        .await
+        .filter(|r| r != &req.region)
+    {
+        on_progress(FetchProgress {
+            phase: FetchPhase::Listing,
+            items_done: 0,
+            items_total: None,
+            message: format!("Bucket is in {region}, not {}; using {region}", req.region),
+        });
+        let cfg = cfg.to_builder().region(aws_config::Region::new(region)).build();
+        client = s3_client(&cfg, req);
+    }
 
     on_progress(FetchProgress {
         phase: FetchPhase::Listing,
@@ -216,31 +287,54 @@ where
 
     let total = keys.len();
     let mut files_written = 0usize;
+    let mut skipped: Vec<String> = Vec::new();
 
     for (i, key) in keys.iter().enumerate() {
-        let resp = client
-            .get_object()
-            .bucket(&target.bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|e| CoreError::aws(format!("GetObject {key}"), aws_message(&e)))?;
+        // `key` is server-supplied. Refuse anything that could land outside `dest` before
+        // spending a request on it.
+        let rel = match key_to_relative_path(key) {
+            Ok(r) => r,
+            Err(why) => {
+                skipped.push(format!("{key}: {why}"));
+                on_progress(FetchProgress {
+                    phase: FetchPhase::Downloading,
+                    items_done: i + 1,
+                    items_total: Some(total),
+                    message: format!("{}/{total} objects ({} skipped)", i + 1, skipped.len()),
+                });
+                continue;
+            }
+        };
 
-        let bytes = resp
-            .body
-            .collect()
-            .await
-            .map_err(|e| CoreError::aws(format!("GetObject {key}"), e))?
-            .into_bytes();
+        // A failed object is skipped and reported, not fatal: one AccessDenied (for instance an
+        // SSE-KMS key this role cannot use) must not throw away the thousands already fetched.
+        let fetched: Result<_, String> = async {
+            let resp = client
+                .get_object()
+                .bucket(&target.bucket)
+                .key(key)
+                .send()
+                .await
+                .map_err(|e| aws_message(&e))?;
+            let body = resp.body.collect().await.map_err(|e| e.to_string())?;
+            Ok(body.into_bytes())
+        }
+        .await;
+        let bytes = match fetched {
+            Ok(b) => b,
+            Err(msg) => {
+                skipped.push(format!("{key}: {msg}"));
+                on_progress(FetchProgress {
+                    phase: FetchPhase::Downloading,
+                    items_done: i + 1,
+                    items_total: Some(total),
+                    message: format!("{}/{total} objects ({} skipped)", i + 1, skipped.len()),
+                });
+                continue;
+            }
+        };
 
-        // Mirror the key path locally. `key` is server-supplied, so strip any
-        // absolute or parent components before joining — an object named
-        // `../../evil` must not escape `dest`.
-        let rel: PathBuf = key
-            .split('/')
-            .filter(|seg| !seg.is_empty() && *seg != "." && *seg != "..")
-            .collect();
-        let out_path = dest.join(rel);
+        let out_path = dest.join(&rel);
 
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| CoreError::Io {
@@ -267,6 +361,7 @@ where
         events_fetched: None,
         trails: target.all_names,
         bucket: Some(target.bucket),
+        skipped,
     })
 }
 
@@ -274,9 +369,247 @@ where
 mod tests {
     use super::*;
 
+    /// Minimal in-process fake S3 (path-style) so the download loop can be tested offline.
+    /// Lists `keys`; serves a small body for each, except keys in `deny`, which get a real
+    /// S3-shaped 403 AccessDenied. Runs on a std thread because core's tokio has no `net`.
+    pub(super) fn spawn_fake_s3(
+        bucket: &'static str,
+        keys: Vec<&'static str>,
+        deny: Vec<&'static str>,
+    ) -> String {
+        spawn_fake_s3_with(bucket, keys, deny, None).endpoint
+    }
+
+    pub(super) struct FakeS3 {
+        pub endpoint: String,
+        /// Raw request heads, in arrival order (method line + headers).
+        pub requests: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    /// As `spawn_fake_s3`, and `HEAD /bucket` answers with `x-amz-bucket-region` when
+    /// `head_region` is set. Every request head is recorded.
+    pub(super) fn spawn_fake_s3_with(
+        bucket: &'static str,
+        keys: Vec<&'static str>,
+        deny: Vec<&'static str>,
+        head_region: Option<&'static str>,
+    ) -> FakeS3 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = std::sync::Arc::clone(&requests);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut req = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    req.extend_from_slice(&buf[..n]);
+                    if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let head = String::from_utf8_lossy(&req).to_string();
+                log.lock().unwrap().push(head.clone());
+                let method = head.split_whitespace().next().unwrap_or("").to_string();
+                let target = head.lines().next().unwrap_or("").split_whitespace().nth(1).unwrap_or("/").to_string();
+                let path = target.split('?').next().unwrap_or("/");
+
+                if method == "HEAD" {
+                    let region_header = head_region
+                        .map(|r| format!("x-amz-bucket-region: {r}\r\n"))
+                        .unwrap_or_default();
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\n{region_header}Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                    continue;
+                }
+
+                let (status, body) = if path == format!("/{bucket}") || path == format!("/{bucket}/") {
+                    let contents: String = keys
+                        .iter()
+                        .map(|k| format!("<Contents><Key>{k}</Key><Size>7</Size></Contents>"))
+                        .collect();
+                    (
+                        "200 OK",
+                        format!(
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>{bucket}</Name><Prefix></Prefix><KeyCount>{}</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>{contents}</ListBucketResult>",
+                            keys.len()
+                        ),
+                    )
+                } else if let Some(key) = path.strip_prefix(&format!("/{bucket}/")) {
+                    if deny.contains(&key) {
+                        (
+                            "403 Forbidden",
+                            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>1</RequestId></Error>".to_string(),
+                        )
+                    } else {
+                        ("200 OK", "payload".to_string())
+                    }
+                } else {
+                    ("404 Not Found", "<Error><Code>NoSuchKey</Code><Message>nope</Message></Error>".to_string())
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        FakeS3 { endpoint: format!("http://{addr}"), requests }
+    }
+
+    pub(super) fn fake_request(endpoint: String) -> FetchRequest {
+        FetchRequest {
+            profile: None,
+            credentials: Some(crate::fetch::AwsCredentials {
+                access_key_id: "AKIATESTTESTTESTTEST".into(),
+                secret_access_key: "test-secret".into(),
+                session_token: None,
+            }),
+            region: "us-east-1".into(),
+            source: crate::fetch::FetchSource::TrailBucket,
+            start_ms: None,
+            end_ms: None,
+            bucket: Some("bkt".into()),
+            prefix: None,
+            endpoint_url: Some(endpoint),
+        }
+    }
+
+    const KEY_A: &str = "AWSLogs/111122223333/CloudTrail/us-east-1/2026/07/25/a.json.gz";
+    const KEY_B: &str = "AWSLogs/111122223333/CloudTrail/us-east-1/2026/07/25/b.json.gz";
+    const KEY_C: &str = "AWSLogs/111122223333/CloudTrail/us-east-1/2026/07/25/c.json.gz";
+
+    /// One AccessDenied object used to abort the whole fetch (and the app then deleted
+    /// everything already downloaded). It is now skipped and reported.
+    #[tokio::test]
+    async fn one_denied_object_is_skipped_not_fatal() {
+        let endpoint = spawn_fake_s3("bkt", vec![KEY_A, KEY_B, KEY_C], vec![KEY_B]);
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = fetch_trail_bucket(&fake_request(endpoint), dir.path(), |_| {}).await.unwrap();
+
+        assert_eq!(out.files_written, 2, "{:?}", out.skipped);
+        assert_eq!(out.skipped.len(), 1);
+        assert!(out.skipped[0].contains("b.json.gz"), "{:?}", out.skipped);
+        assert!(out.skipped[0].to_lowercase().contains("denied"), "{:?}", out.skipped);
+        assert!(dir.path().join(KEY_A).exists());
+        assert!(!dir.path().join(KEY_B).exists());
+        assert!(dir.path().join(KEY_C).exists());
+    }
+
+    /// A trail bucket homed in another region than the one picked: the client must be rebuilt
+    /// for the bucket's region (the SDK does not follow bucket-region redirects itself).
+    #[tokio::test]
+    async fn switches_to_the_buckets_region() {
+        let fake = spawn_fake_s3_with("bkt", vec![KEY_A], vec![], Some("eu-west-1"));
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = fetch_trail_bucket(&fake_request(fake.endpoint.clone()), dir.path(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(out.files_written, 1, "{:?}", out.skipped);
+
+        let reqs = fake.requests.lock().unwrap();
+        let head = reqs.iter().find(|r| r.starts_with("HEAD")).expect("a HeadBucket request");
+        assert!(head.contains("/us-east-1/s3/aws4_request"), "HeadBucket uses the requested region: {head}");
+        let gets: Vec<&String> = reqs.iter().filter(|r| r.starts_with("GET")).collect();
+        assert!(!gets.is_empty());
+        assert!(
+            gets.iter().all(|r| r.contains("/eu-west-1/s3/aws4_request")),
+            "list/get must be signed for the bucket's region: {gets:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_requested_region_when_bucket_region_is_unknown() {
+        let fake = spawn_fake_s3_with("bkt", vec![KEY_A], vec![], None);
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = fetch_trail_bucket(&fake_request(fake.endpoint.clone()), dir.path(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(out.files_written, 1);
+        let reqs = fake.requests.lock().unwrap();
+        assert!(reqs.iter().filter(|r| r.starts_with("GET")).all(|r| r.contains("/us-east-1/s3/aws4_request")));
+    }
+
+    #[tokio::test]
+    async fn all_objects_denied_reports_every_skip() {
+        let endpoint = spawn_fake_s3("bkt", vec![KEY_A, KEY_B], vec![KEY_A, KEY_B]);
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = fetch_trail_bucket(&fake_request(endpoint), dir.path(), |_| {}).await.unwrap();
+        assert_eq!(out.files_written, 0);
+        assert_eq!(out.skipped.len(), 2);
+    }
+
     const DAY: i64 = 86_400_000;
     /// 2026-07-25T00:00:00Z
     const JUL25: i64 = 1_784_937_600_000;
+
+    #[test]
+    fn key_to_relative_path_accepts_normal_keys() {
+        let ok = key_to_relative_path("AWSLogs/111/CloudTrail/us-east-1/2026/07/25/a.json.gz").unwrap();
+        assert_eq!(ok, PathBuf::from("AWSLogs/111/CloudTrail/us-east-1/2026/07/25/a.json.gz"));
+        // A double slash is not a traversal; the empty segment is dropped.
+        assert_eq!(key_to_relative_path("logs//a.json.gz").unwrap(), PathBuf::from("logs/a.json.gz"));
+        // Dots inside a name are fine.
+        assert!(key_to_relative_path("a/b.c/..d/e.json.gz").is_ok());
+    }
+
+    #[test]
+    fn key_to_relative_path_rejects_escapes() {
+        for bad in [
+            "a/../b.json.gz",
+            "../evil.json.gz",
+            "a/./b.json.gz",
+            "a/..\\b.json.gz",
+            "..\\..\\evil.json.gz",
+            "C:evil/x.json.gz",
+            "C:\\Windows\\x.json.gz",
+            "a/ .. /b.json.gz",
+            "a/.../b.json.gz",
+            "a/b\0c.json.gz",
+            "///",
+            "",
+        ] {
+            assert!(key_to_relative_path(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
+
+    #[tokio::test]
+    async fn unsafe_keys_are_skipped_and_nothing_escapes_dest() {
+        let evil = "AWSLogs/111/CloudTrail/us-east-1/2026/07/25/..\\..\\evil.json.gz";
+        let fake = spawn_fake_s3_with("bkt", vec![KEY_A, evil], vec![], None);
+        let outer = tempfile::TempDir::new().unwrap();
+        let dest = outer.path().join("stage");
+        std::fs::create_dir_all(&dest).unwrap();
+        let out = fetch_trail_bucket(&fake_request(fake.endpoint.clone()), &dest, |_| {}).await.unwrap();
+        assert_eq!(out.files_written, 1);
+        assert_eq!(out.skipped.len(), 1);
+        assert!(out.skipped[0].contains("unsafe path segment"), "{:?}", out.skipped);
+        // Nothing was requested for the unsafe key, and nothing exists beside `stage`.
+        assert!(!fake.requests.lock().unwrap().iter().any(|r| r.contains("evil")));
+        assert_eq!(std::fs::read_dir(outer.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn skips_digest_and_insight_objects() {
+        let digest = "AWSLogs/111122223333/CloudTrail-Digest/us-east-1/2026/07/25/111122223333_CloudTrail-Digest_us-east-1_trail_us-east-1_20260725T000000Z.json.gz";
+        let insight = "AWSLogs/111122223333/CloudTrail-Insight/us-east-1/2026/07/25/111122223333_CloudTrail-Insight_us-east-1_20260725T0000Z_abc.json.gz";
+        let log = "AWSLogs/111122223333/CloudTrail/us-east-1/2026/07/25/111122223333_CloudTrail_us-east-1_20260725T0000Z_abc.json.gz";
+        for bounds in [(None, None), (Some(JUL25), Some(JUL25 + DAY))] {
+            assert!(!key_in_window(digest, bounds.0, bounds.1), "digest must be skipped");
+            assert!(!key_in_window(insight, bounds.0, bounds.1), "insight must be skipped");
+            assert!(key_in_window(log, bounds.0, bounds.1), "real log must be kept");
+        }
+        // Only a whole path segment counts; a file merely named like it does not.
+        assert!(key_in_window("logs/2026/06/24/my-CloudTrail-Digest-notes.json.gz", None, None));
+    }
 
     #[test]
     fn rejects_non_log_extensions() {

@@ -1,3 +1,5 @@
+mod window;
+
 pub mod initial_access;
 pub mod persistence;
 pub mod persistence_ext;

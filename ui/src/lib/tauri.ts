@@ -16,7 +16,7 @@ import type {
   IpInfo,
   IpPage,
   AbuseCheckResult,
-  OnlineGeoResult,
+  OnlineGeoResponse,
   S3Summary,
   ProfileInfo,
   FetchSource,
@@ -247,8 +247,8 @@ export async function listIps(
   });
 }
 
-export async function geoLookupOnline(ips: string[]): Promise<OnlineGeoResult[]> {
-  return invoke<OnlineGeoResult[]>("geo_lookup_online", { ips });
+export async function geoLookupOnline(ips: string[]): Promise<OnlineGeoResponse> {
+  return invoke<OnlineGeoResponse>("geo_lookup_online", { ips });
 }
 
 export async function checkAbuseIpdb(apiKey: string, ip: string): Promise<AbuseCheckResult> {

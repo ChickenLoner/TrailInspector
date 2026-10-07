@@ -1,4 +1,5 @@
-use std::io::Write;
+use std::sync::Arc;
+use std::io::BufWriter;
 use tauri::State;
 use trail_inspector_core::export;
 use crate::state::AppState;
@@ -9,22 +10,21 @@ use crate::state::AppState;
 pub async fn export_csv(
     query: Option<String>,
     path: String,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<usize, String> {
-    state.with_store(|store| {
-        let bytes = export::export_csv(store, query.as_deref())
-            .map_err(|e| format!("Export error: {e}"))?;
-
-        // Count newlines minus 1 (header) to get data row count
-        let row_count = bytes.iter().filter(|&&b| b == b'\n').count().saturating_sub(1);
-
-        let mut file = std::fs::File::create(&path)
-            .map_err(|e| format!("Failed to create file {path}: {e}"))?;
-        file.write_all(&bytes)
-            .map_err(|e| format!("Failed to write file {path}: {e}"))?;
-
-        Ok(row_count)
+    // CPU and disk bound; keep it off the async workers. Rows stream straight to the file.
+    let state = Arc::clone(state.inner());
+    tokio::task::spawn_blocking(move || {
+        state.with_store(|store| {
+            let file = std::fs::File::create(&path)
+                .map_err(|e| format!("Failed to create file {path}: {e}"))?;
+            let mut w = BufWriter::new(file);
+            export::export_csv_to(store, query.as_deref(), &mut w)
+                .map_err(|e| format!("Export error: {e}"))
+        })
     })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
 }
 
 /// Export matching records as JSON to the given file path.
@@ -33,23 +33,18 @@ pub async fn export_csv(
 pub async fn export_json(
     query: Option<String>,
     path: String,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<usize, String> {
-    state.with_store(|store| {
-        let bytes = export::export_json(store, query.as_deref())
-            .map_err(|e| format!("Export error: {e}"))?;
-
-        // Count records by parsing the JSON array length
-        let record_count: usize = serde_json::from_slice::<serde_json::Value>(&bytes)
-            .ok()
-            .and_then(|v| v.as_array().map(|a| a.len()))
-            .unwrap_or(0);
-
-        let mut file = std::fs::File::create(&path)
-            .map_err(|e| format!("Failed to create file {path}: {e}"))?;
-        file.write_all(&bytes)
-            .map_err(|e| format!("Failed to write file {path}: {e}"))?;
-
-        Ok(record_count)
+    let state = Arc::clone(state.inner());
+    tokio::task::spawn_blocking(move || {
+        state.with_store(|store| {
+            let file = std::fs::File::create(&path)
+                .map_err(|e| format!("Failed to create file {path}: {e}"))?;
+            let mut w = BufWriter::new(file);
+            export::export_json_to(store, query.as_deref(), &mut w)
+                .map_err(|e| format!("Export error: {e}"))
+        })
     })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
 }

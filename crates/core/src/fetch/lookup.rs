@@ -56,6 +56,7 @@ where
     let mut page_no: usize = 0;
     let mut events_total: usize = 0;
     let mut files_written: usize = 0;
+    let mut skipped: Vec<String> = Vec::new();
 
     loop {
         // Bounds are optional: omitting them lets the API apply its own default
@@ -72,10 +73,21 @@ where
             call = call.next_token(t);
         }
 
-        let resp = call
-            .send()
-            .await
-            .map_err(|e| CoreError::aws("LookupEvents", aws_message(&e)))?;
+        let resp = match call.send().await {
+            Ok(r) => r,
+            // Deep in a long paging run (a 90-day window can take tens of thousands of pages)
+            // a throttling error that outlasts the SDK's retries should not discard every page
+            // already written. Keep them and say where it stopped.
+            Err(e) if files_written > 0 => {
+                skipped.push(format!(
+                    "LookupEvents stopped at page {}: {} ({events_total} events kept)",
+                    page_no + 1,
+                    aws_message(&e)
+                ));
+                break;
+            }
+            Err(e) => return Err(CoreError::aws("LookupEvents", aws_message(&e))),
+        };
 
         // `cloud_trail_event` is the escaped-JSON payload; everything else on the
         // Event struct duplicates fields already inside it, so only this is kept.
@@ -129,5 +141,6 @@ where
         events_fetched: Some(events_total),
         trails: Vec::new(),
         bucket: None,
+        skipped,
     })
 }
