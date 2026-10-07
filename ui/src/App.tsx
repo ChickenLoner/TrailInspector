@@ -1,17 +1,16 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { DropZone } from "./components/ingest/DropZone";
 import { EventTable } from "./components/results/EventTable";
 import { EventDetail } from "./components/results/EventDetail";
 import { StatusBar } from "./components/layout/StatusBar";
 import { QueryBar } from "./components/search/QueryBar";
-import { FilterPanel } from "./components/search/FilterPanel";
+import { FilterPanel, buildFilterFragment, type FilterState } from "./components/search/FilterPanel";
 import { TimelineChart } from "./components/viz/TimelineChart";
 import { AppShell } from "./components/layout/AppShell";
 import { GlobalTimeBar } from "./components/layout/GlobalTimeBar";
 import { search, getTimeline, exportCsv, exportJson } from "./lib/tauri";
-import { buildFilterFragment } from "./lib/query";
-import type { RecordRow, SearchResult, TimeBucket, IngestWarning, GlobalTimeRange, ActiveFilters } from "./types/cloudtrail";
+import type { RecordRow, SearchResult, TimeBucket, IngestWarning, GlobalTimeRange } from "./types/cloudtrail";
 import type { Tab } from "./components/layout/Sidebar";
 import "./styles/globals.css";
 
@@ -153,10 +152,12 @@ export default function App() {
   const [queryText, setQueryText] = useState(
     () => localStorage.getItem(LS_QUERY_KEY) ?? ""
   );
-  // Facet filters live here, not in FilterPanel: the search view unmounts on tab switch, and the
-  // filter they produce must not outlive the checkboxes that show it.
-  const [filters, setFilters] = useState<ActiveFilters>({});
-  const filterFragment = useMemo(() => buildFilterFragment(filters), [filters]);
+  // Sidebar filters live here, not in FilterPanel. AppShell unmounts the search
+  // view on every tab switch, so state held inside the panel is destroyed while
+  // the fragment derived from it keeps filtering results — leaving a filter that
+  // is applied but no longer visible or clearable.
+  const [filters, setFilters] = useState<FilterState>({});
+  const filterFragment = buildFilterFragment(filters);
   const [globalTimeRange, setGlobalTimeRange] = useState<GlobalTimeRange>(() => {
     try {
       const saved = localStorage.getItem("trailinspector_time_range");
@@ -264,7 +265,7 @@ export default function App() {
   );
 
   const handleFiltersChange = useCallback(
-    (next: ActiveFilters) => {
+    (next: FilterState) => {
       setFilters(next);
       runQuery(queryText, buildFilterFragment(next), globalTimeRange);
     },
@@ -355,6 +356,11 @@ export default function App() {
 
   const activeQuery = buildQuery(queryText, filterFragment, globalTimeRange);
   const queryActive = activeQuery.trim().length > 0;
+
+  // Same query without the filter-panel fragment. The panel scopes each field's
+  // value counts itself, re-adding every filter except that field's own, so it
+  // must not be handed a query that already contains them.
+  const filterBaseQuery = buildQuery(queryText, "", globalTimeRange);
 
   if (!loaded) {
     return (
@@ -468,7 +474,12 @@ export default function App() {
 
       {/* Main area: filter panel + table + detail */}
       <div className="flex flex-1 overflow-hidden">
-        <FilterPanel filters={filters} onFiltersChange={handleFiltersChange} onUserSelect={handleUserSelect} query={activeQuery} />
+        <FilterPanel
+          filters={filters}
+          onFiltersChange={handleFiltersChange}
+          onUserSelect={handleUserSelect}
+          baseQuery={filterBaseQuery}
+        />
 
         <div className="flex flex-col flex-1 overflow-hidden">
           {results && (

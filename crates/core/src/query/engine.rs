@@ -38,6 +38,47 @@ pub fn execute(store: &Store, query: &Query, page: usize, page_size: usize) -> Q
     QueryResult { record_ids, total }
 }
 
+/// Matching ids as a bitmap, skipping the time-ordering pass.
+///
+/// Counting callers — facet value counts — do not care about order, and for a
+/// large result set the `O(k log k)` sort in [`compute_matching_ids`] dominates
+/// the whole call. Keeping the set as a bitmap also lets callers answer "how
+/// many of these are also in that posting list?" with a native intersection
+/// instead of walking every record.
+pub fn matching_bitmap(store: &Store, query: &Query) -> RoaringBitmap {
+    let matched: Option<RoaringBitmap> = if query.filter_groups.is_empty() {
+        None
+    } else {
+        let mut acc = RoaringBitmap::new();
+        for group in &query.filter_groups {
+            acc |= compute_and_group(store, group);
+        }
+        Some(acc)
+    };
+
+    match (&query.time_range, matched) {
+        (None, None) => {
+            let mut all = RoaringBitmap::new();
+            all.insert_range(0..store.records.len() as u32);
+            all
+        }
+        (Some(tr), None) => {
+            let (lo, hi) = store.time_range_bounds(tr.start_ms, tr.end_ms);
+            store.time_sorted_ids[lo..hi].iter().copied().collect()
+        }
+        (None, Some(bm)) => bm,
+        (Some(tr), Some(bm)) => bm
+            .iter()
+            .filter(|&id| {
+                store
+                    .get_record(id)
+                    .map(|r| r.timestamp >= tr.start_ms && r.timestamp <= tr.end_ms)
+                    .unwrap_or(false)
+            })
+            .collect(),
+    }
+}
+
 /// Compute the full matching id set, in time-sorted order.
 ///
 /// Posting lists are `RoaringBitmap`s, so AND/OR/NOT are native compressed-bitmap

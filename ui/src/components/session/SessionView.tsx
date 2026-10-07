@@ -5,17 +5,7 @@ import type { SessionSummary, SessionPage } from "../../types/cloudtrail";
 import { SessionDetail } from "./SessionDetail";
 import { formatTs } from "../../lib/time";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function fmtDuration(ms: number): string {
-  if (ms < 1000) return "<1s";
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
-  return `${(ms / 3_600_000).toFixed(1)}h`;
-}
-
+import { fmtDuration } from "../../lib/format";
 
 // ---------------------------------------------------------------------------
 // Session card

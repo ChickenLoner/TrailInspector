@@ -385,17 +385,3 @@ export interface Alert {
   /** Pre-built query — apply to the search bar to see matching events. */
   query: string;
 }
-
-// ---------------------------------------------------------------------------
-// Search facet filters (owned by App so they survive tab switches)
-// ---------------------------------------------------------------------------
-
-export type FilterMode = "include" | "exclude";
-
-export interface ActiveFilter {
-  value: string;
-  mode: FilterMode;
-}
-
-/** Active facet filters keyed by field name; `null` means "cleared". */
-export type ActiveFilters = Record<string, ActiveFilter | null>;

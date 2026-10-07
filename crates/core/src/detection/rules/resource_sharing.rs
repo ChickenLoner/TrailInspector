@@ -1,12 +1,11 @@
-use std::collections::HashMap;
 use crate::store::Store;
-use crate::detection::{Alert, Severity, scoped_ids, jget, json_has_str, adds_public_group};
+use crate::detection::{Finding, adds_public_group, jget, json_has_str, scoped_ids};
 
 /// RS-01: EC2 AMI Made Public
-pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
+pub fn rs_01_ami_made_public(store: &Store) -> Option<Finding> {
     let ids = scoped_ids(store, &["ModifyImageAttribute"], &["ec2.amazonaws.com"], true);
     if ids.is_empty() {
-        return vec![];
+        return None;
     }
 
     let mut matching = vec![];
@@ -19,33 +18,25 @@ pub fn rs_01_ami_made_public(store: &Store) -> Vec<Alert> {
     }
 
     if matching.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "RS-01".to_string(),
-        severity: Severity::High,
-        title: "EC2 AMI Made Public".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} EC2 AMI(s) were made publicly accessible. Public AMIs can be launched by \
              any AWS account and may expose embedded secrets or sensitive configurations.",
             matching.len()
         ),
-        matching_count: 0,
-        matching_record_ids: matching,
-        metadata: HashMap::new(),
-        mitre_tactic: "Exfiltration".to_string(),
-        mitre_technique: "T1537".to_string(),
-        service: "EC2".to_string(),
-        query: "eventName=ModifyImageAttribute eventSource=ec2.amazonaws.com".to_string(),
-    }]
+        matching,
+        "eventName=ModifyImageAttribute",
+    ))
 }
 
 /// RS-02: SSM Document Made Public
-pub fn rs_02_ssm_document_public(store: &Store) -> Vec<Alert> {
+pub fn rs_02_ssm_document_public(store: &Store) -> Option<Finding> {
     let ids = scoped_ids(store, &["ModifyDocumentPermission"], &["ssm.amazonaws.com"], true);
     if ids.is_empty() {
-        return vec![];
+        return None;
     }
 
     let mut matching = vec![];
@@ -59,30 +50,22 @@ pub fn rs_02_ssm_document_public(store: &Store) -> Vec<Alert> {
     }
 
     if matching.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "RS-02".to_string(),
-        severity: Severity::High,
-        title: "SSM Document Made Public".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} SSM document(s) were shared publicly. Public SSM documents can be run \
              against EC2 instances and may contain sensitive automation logic.",
             matching.len()
         ),
-        matching_count: 0,
-        matching_record_ids: matching,
-        metadata: HashMap::new(),
-        mitre_tactic: "Exfiltration".to_string(),
-        mitre_technique: "T1537".to_string(),
-        service: "SSM".to_string(),
-        query: "eventName=ModifyDocumentPermission eventSource=ssm.amazonaws.com".to_string(),
-    }]
+        matching,
+        "eventName=ModifyDocumentPermission",
+    ))
 }
 
 /// RS-03: RDS Snapshot Made Public
-pub fn rs_03_rds_snapshot_public(store: &Store) -> Vec<Alert> {
+pub fn rs_03_rds_snapshot_public(store: &Store) -> Option<Finding> {
     let event_names = [
         "ModifyDBSnapshotAttribute",
         "ModifyDBClusterSnapshotAttribute",
@@ -102,24 +85,16 @@ pub fn rs_03_rds_snapshot_public(store: &Store) -> Vec<Alert> {
     }
 
     if matching.is_empty() {
-        return vec![];
+        return None;
     }
 
-    vec![Alert {
-        rule_id: "RS-03".to_string(),
-        severity: Severity::High,
-        title: "RDS Snapshot Made Public".to_string(),
-        description: format!(
+    Some(Finding::new(
+        format!(
             "{} RDS snapshot(s) were shared publicly. Publicly accessible database \
              snapshots can be restored by any AWS account, exposing all data.",
             matching.len()
         ),
-        matching_count: 0,
-        matching_record_ids: matching,
-        metadata: HashMap::new(),
-        mitre_tactic: "Exfiltration".to_string(),
-        mitre_technique: "T1537".to_string(),
-        service: "RDS".to_string(),
-        query: "eventName=ModifyDBSnapshotAttribute eventSource=rds.amazonaws.com OR eventName=ModifyDBClusterSnapshotAttribute eventSource=rds.amazonaws.com".to_string(),
-    }]
+        matching,
+        "eventName=ModifyDBSnapshotAttribute OR eventName=ModifyDBClusterSnapshotAttribute",
+    ))
 }

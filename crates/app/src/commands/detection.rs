@@ -8,6 +8,11 @@ use crate::state::AppState;
 /// If start_ms/end_ms are provided, alerts are post-filtered to only include
 /// matching records within that time range.
 /// Returns alerts sorted by severity descending (Critical first).
+///
+/// This is the IPC boundary, so it owns the id-list cap. Order matters:
+/// filter by time on the full id set, then truncate. Capping first would
+/// silently drop alerts whose first 100 ids sit outside the window, and would
+/// leave custom-rule alerts uncapped entirely.
 #[tauri::command]
 pub async fn run_detections(
     start_ms: Option<i64>,

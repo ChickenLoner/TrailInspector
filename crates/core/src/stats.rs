@@ -109,6 +109,52 @@ fn top_n_counts(counts: Vec<FieldValueCount>, top_n: usize) -> Vec<FieldValueCou
     result
 }
 
+/// Top-N values of `field` among the records matching `query`.
+///
+/// Counts come from intersecting each value's posting list with the query's
+/// matching bitmap, so the cost scales with the number of *distinct values* in
+/// the field rather than the number of matching records. The previous path
+/// executed the query into a time-sorted `Vec<u32>` and then walked every
+/// matching record building a hash map — for a filter panel issuing one of
+/// these per field on every click, that sort and scan were the bulk of the wait.
+///
+/// `bucketName` is handled here too: it has an inverted index built during
+/// ingestion, so it no longer needs its request-parameters blob parsed per
+/// record.
+///
+/// Returns `None` if `field` has no index.
+pub fn top_field_values_for_query(
+    store: &Store,
+    query: &crate::query::Query,
+    field: &str,
+    top_n: usize,
+) -> Option<Vec<FieldValueCount>> {
+    use rayon::prelude::*;
+
+    let idx = store.index_for(field)?;
+
+    // No filters and no time range: every record matches, so the posting list
+    // length *is* the count — no intersection needed.
+    if query.is_empty() {
+        let mut values: Vec<FieldValueCount> = idx
+            .iter()
+            .map(|(k, v)| FieldValueCount { value: k.to_string(), count: v.len() as usize })
+            .collect();
+        return Some(top_n_counts(values.drain(..).collect(), top_n));
+    }
+
+    let matching = crate::query::matching_bitmap(store, query);
+    let values: Vec<FieldValueCount> = idx
+        .par_iter()
+        .filter_map(|(k, posting)| {
+            let count = posting.intersection_len(&matching) as usize;
+            (count > 0).then(|| FieldValueCount { value: k.to_string(), count })
+        })
+        .collect();
+
+    Some(top_n_counts(values, top_n))
+}
+
 /// Count field values across a slice of record IDs, return top-N by count.
 ///
 /// Parallelized with rayon (per-thread map, then merge). For in-memory fields
@@ -298,4 +344,142 @@ pub fn get_identity_summary(store: &Store, arn: &str, page: usize, page_size: us
         page_size,
         events,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use crate::model::{CloudTrailRecord, IndexedRecord, UserIdentity};
+    use crate::query::{execute, parse_query};
+
+    fn rec(id: u32, event: &str, user: &str, region: &str) -> IndexedRecord {
+        IndexedRecord {
+            id,
+            timestamp: id as i64 * 60_000,
+            source_file: 0,
+            record: CloudTrailRecord {
+                event_time: Arc::from("2024-01-15T10:00:00Z"),
+                event_source: Arc::from("iam.amazonaws.com"),
+                event_name: Arc::from(event),
+                aws_region: Arc::from(region),
+                source_ip_address: Some(Arc::from("1.2.3.4")),
+                user_agent: None,
+                user_identity: UserIdentity {
+                    identity_type: Some(Arc::from("IAMUser")),
+                    principal_id: None,
+                    arn: None,
+                    account_id: None,
+                    access_key_id: None,
+                    user_name: Some(Arc::from(user)),
+                    session_context: None,
+                    invoked_by: None,
+                },
+                request_parameters: None,
+                response_elements: None,
+                additional_event_data: None,
+                error_code: None,
+                error_message: None,
+                request_id: None,
+                event_id: None,
+                event_type: None,
+                read_only: None,
+                management_event: None,
+                recipient_account_id: None,
+                event_category: None,
+                shared_event_id: None,
+                session_credential_from_console: None,
+                resources: vec![],
+            },
+            request_params_ref: None,
+            response_elements_ref: None,
+            additional_event_data_ref: None,
+        }
+    }
+
+    fn store_of(records: Vec<IndexedRecord>) -> Store {
+        let mut store = Store::new();
+        store.blob_store.seal().expect("seal");
+        for r in &records {
+            store.idx_event_name.entry(r.record.event_name.clone()).or_default().insert(r.id);
+            store.idx_region.entry(r.record.aws_region.clone()).or_default().insert(r.id);
+            if let Some(u) = &r.record.user_identity.user_name {
+                store.idx_user_name.entry(u.clone()).or_default().insert(r.id);
+            }
+            if let Some(t) = &r.record.user_identity.identity_type {
+                store.idx_identity_type.entry(t.clone()).or_default().insert(r.id);
+            }
+        }
+        let mut sorted: Vec<(i64, u32)> = records.iter().map(|r| (r.timestamp, r.id)).collect();
+        sorted.sort_unstable_by_key(|(ts, _)| *ts);
+        store.time_sorted_ids = sorted.into_iter().map(|(_, id)| id).collect();
+        store.records = records;
+        store
+    }
+
+    fn sample() -> Store {
+        store_of(vec![
+            rec(0, "CreateUser", "alice", "us-east-1"),
+            rec(1, "CreateUser", "bob", "us-east-1"),
+            rec(2, "DeleteUser", "alice", "eu-west-1"),
+            rec(3, "ListUsers", "carol", "us-east-1"),
+            rec(4, "ListUsers", "alice", "eu-west-1"),
+        ])
+    }
+
+    /// The bitmap-intersection counting path must agree with the old
+    /// execute-then-scan path it replaced, filters and negation included.
+    #[test]
+    fn counting_path_matches_scan_path() {
+        let store = sample();
+        for q in [
+            "eventName=CreateUser",
+            "userName=alice",
+            "awsRegion=us-east-1",
+            "userName!=alice",
+            "eventName=ListUsers AND awsRegion=eu-west-1",
+            "eventName=CreateUser OR eventName=DeleteUser",
+        ] {
+            let parsed = parse_query(q).expect("parse");
+            for field in ["eventName", "userName", "awsRegion"] {
+                let ids = execute(&store, &parsed, 0, usize::MAX).record_ids;
+                let mut want = top_field_values(&store, &ids, field, 100);
+                let mut got = top_field_values_for_query(&store, &parsed, field, 100).unwrap();
+                want.sort_by(|a, b| a.value.cmp(&b.value));
+                got.sort_by(|a, b| a.value.cmp(&b.value));
+                let want: Vec<_> = want.iter().map(|c| (&c.value, c.count)).collect();
+                let got: Vec<_> = got.iter().map(|c| (&c.value, c.count)).collect();
+                assert_eq!(got, want, "query {q:?} field {field:?}");
+            }
+        }
+    }
+
+    /// An excluded value keeps a real count when its own clause is not applied —
+    /// this is what keeps it clickable in the filter sidebar.
+    #[test]
+    fn excluded_value_still_counted_when_its_field_is_unscoped() {
+        let store = sample();
+        // The sidebar counts userName with the userName clause removed, so a
+        // user excluded from the results still appears with their true count.
+        let parsed = parse_query("awsRegion=us-east-1").expect("parse");
+        let counts = top_field_values_for_query(&store, &parsed, "userName", 100).unwrap();
+        let alice = counts.iter().find(|c| c.value == "alice").expect("alice listed");
+        assert_eq!(alice.count, 1);
+    }
+
+    #[test]
+    fn empty_query_counts_whole_index() {
+        let store = sample();
+        let parsed = parse_query("").expect("parse");
+        let counts = top_field_values_for_query(&store, &parsed, "eventName", 100).unwrap();
+        let total: usize = counts.iter().map(|c| c.count).sum();
+        assert_eq!(total, 5);
+    }
+
+    #[test]
+    fn unknown_field_is_none() {
+        let store = sample();
+        let parsed = parse_query("").expect("parse");
+        assert!(top_field_values_for_query(&store, &parsed, "nope", 10).is_none());
+    }
 }

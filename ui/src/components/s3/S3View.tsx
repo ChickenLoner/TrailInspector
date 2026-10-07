@@ -2,24 +2,7 @@ import { useState, useEffect } from "react";
 import { getS3Summary } from "../../lib/tauri";
 import type { S3Summary, BucketStat, ObjectStat, IdentityStat } from "../../types/cloudtrail";
 
-// ---------------------------------------------------------------------------
-// Byte formatting
-// ---------------------------------------------------------------------------
-
-type ByteUnit = "B" | "KB" | "MB" | "GB";
-const BYTE_DIVISORS: Record<ByteUnit, number> = { B: 1, KB: 1024, MB: 1024 * 1024, GB: 1024 * 1024 * 1024 };
-
-function formatBytes(b: number, unit: ByteUnit): string {
-  if (unit === "B") return `${b.toLocaleString()} B`;
-  return `${(b / BYTE_DIVISORS[unit]).toFixed(2)} ${unit}`;
-}
-
-function autoUnit(b: number): ByteUnit {
-  if (b >= 1024 * 1024 * 1024) return "GB";
-  if (b >= 1024 * 1024) return "MB";
-  if (b >= 1024) return "KB";
-  return "B";
-}
+import { type ByteUnit, formatBytes, autoUnit } from "../../lib/format";
 
 // ---------------------------------------------------------------------------
 // Shared primitives
